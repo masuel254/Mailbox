@@ -1,6 +1,6 @@
 {
-  "name": "Mail lisible",
-  "short_name": "Mail",
+  "name": "MailBox",
+  "short_name": "MailBox",
   "description": "Gmail en version lisible",
   "lang": "fr",
   "start_url": "./#/list/INBOX",
@@ -9,8 +9,21 @@
   "background_color": "#121417",
   "theme_color": "#121417",
   "icons": [
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ]
 }
