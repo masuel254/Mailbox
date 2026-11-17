@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '1.5.2';
+const APP_VERSION = '1.6.0';
 const APP_DATE = '17/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -235,12 +235,14 @@ async function renderList(key, q) {
       <a href="#/list/INBOX" class="${key === 'INBOX' ? 'on' : ''}" ${key === 'INBOX' ? 'aria-current="page"' : ''}>Tous</a>
       <a href="#/list/UNREAD" class="${key === 'UNREAD' ? 'on' : ''}" ${key === 'UNREAD' ? 'aria-current="page"' : ''}>Non lus<span class="fcount" id="fcount"></span></a>
     </nav>` : ''}
+    ${title === BLOCK_LABEL ? `<div class="banner"><span>Mails des expéditeurs bloqués</span><button class="btn danger" id="btn-empty">${ICON.trash}Tout supprimer</button></div>` : ''}
     <div id="list"><div class="loading">Chargement…</div></div>`;
   $('#btn-search').onclick = () => { const s = $('#searchbar'); s.hidden = !s.hidden; if (!s.hidden) $('#q').focus(); };
   $('#searchbar').onsubmit = e => { e.preventDefault(); const val = $('#q').value.trim(); if (val) location.hash = '#/search/' + encodeURIComponent(val); $('#q').blur(); };
   $('#btn-refresh').onclick = () => loadList(key, q, cacheKey, plain, true);
   $('#btn-select').onclick = () => state.sel ? exitSelect() : enterSelect();
   state.listCtx = { key, q, cacheKey, plain };
+  const be = $('#btn-empty'); if (be) be.onclick = () => emptyLabel(key, title);
   bindListGestures($('#list'));
   const cached = state.lists[cacheKey];
   if (cached) { drawList(cached, plain); if (Date.now() - cached.at > 60000) loadList(key, q, cacheKey, plain, true); }
@@ -483,6 +485,36 @@ async function renderBlocked(box) {
       `<a class="btn" href="#/list/${encodeURIComponent(l.id)}">Voir les mails « ${BLOCK_LABEL} »</a>`;
     $$('button[data-fid]', box).forEach(b => b.onclick = async () => { b.disabled = true; try { await api('settings/filters/' + b.dataset.fid, { method: 'DELETE' }); toast('Débloqué'); renderBlocked(box); } catch (e) { b.disabled = false; toast('Échec : ' + e.message); } });
   } catch (e) { box.innerHTML = '<p>Liste indisponible.</p>'; }
+}
+
+
+async function emptyLabel(labelId, name) {
+  openSheet(`<span class="grip"></span><h2>Tout supprimer ?</h2>
+    <p style="margin:0;color:var(--muted);font-size:.85rem;line-height:1.5">Tous les mails du libellé « ${esc(name)} » partent dans la corbeille de Gmail. Ils y restent 30 jours avant suppression définitive.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="empty-ok">Tout supprimer</button></div>`);
+  $('#empty-ok').onclick = async () => {
+    const b = $('#empty-ok'); b.disabled = true; b.textContent = 'Suppression…';
+    let total = 0;
+    try {
+      let page = null;
+      do {
+        const p = new URLSearchParams({ labelIds: labelId, maxResults: 500 });
+        if (page) p.set('pageToken', page);
+        const r = (await api('messages?' + p.toString())) || {};
+        const ids = (r.messages || []).map(m => m.id);
+        for (let i = 0; i < ids.length; i += 1000) {
+          await api('messages/batchModify', { method: 'POST', body: { ids: ids.slice(i, i + 1000), addLabelIds: ['TRASH'], removeLabelIds: ['INBOX', 'UNREAD'] } });
+        }
+        total += ids.length;
+        b.textContent = total + ' supprimés…';
+        page = r.nextPageToken;
+      } while (page);
+      closeSheet();
+      Object.keys(state.lists).forEach(k => delete state.lists[k]);
+      toast(total ? total + ' mail' + (total > 1 ? 's' : '') + ' placé' + (total > 1 ? 's' : '') + ' dans la corbeille' : 'Rien à supprimer');
+      route();
+    } catch (e) { closeSheet(); if (e.message !== 'auth') toast('Échec : ' + e.message); }
+  };
 }
 
 /* ---------- Conversation ---------- */
