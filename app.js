@@ -846,6 +846,12 @@ function renderSettings() {
       <h3><span class="dot" style="background:var(--free)"></span>Free<span class="st" style="color:var(--muted)">Version 2</span></h3>
       <p>Le compte Free (identifiant et mot de passe) se configurera ici. Il nécessite un petit relais sur ton serveur, prévu en V2. Les identifiants resteront sur cet iPhone.</p>
     </section>
+    <h2 class="h2">Pastille sur l'icône</h2>
+    <section class="card">
+      <p>Affiche le nombre de mails non lus sur l'icône de l'appli. iOS exige pour cela l'autorisation des notifications, et l'appli doit être installée sur l'écran d'accueil.</p>
+      <p id="s-badge-state" style="font-weight:650;color:var(--text)"></p>
+      <button class="btn primary" id="s-badge">Activer la pastille</button>
+    </section>
     <h2 class="h2">Affichage</h2>
     <section class="card">
       <label class="f"><span>Taille du texte : <b id="s-fs-v">${settings.fontSize}</b> px</span><input type="range" id="s-fs" min="15" max="26" step="1" value="${settings.fontSize}"></label>
@@ -860,6 +866,14 @@ function renderSettings() {
   $('#s-cid').onchange = e => { settings.clientId = e.target.value.trim(); saveSettings(); toast('Identifiant enregistré'); };
   const li = $('#s-login'); if (li) li.onclick = () => { settings.clientId = $('#s-cid').value.trim(); saveSettings(); LS.set('returnTo', '#/list/INBOX'); location.hash = '#/list/INBOX'; };
   const lo = $('#s-logout'); if (lo) lo.onclick = () => { auth.logout(); settings.email = ''; saveSettings(); state.lists = {}; renderSettings(); toast('Déconnecté'); };
+  const bs = $('#s-badge-state'), bb = $('#s-badge');
+  const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+  const perm = 'Notification' in window ? Notification.permission : 'absent';
+  if (!standalone) { bs.textContent = 'Installe d’abord l’appli : Partager › Sur l’écran d’accueil, puis reviens ici depuis l’icône.'; bb.hidden = true; }
+  else if (perm === 'granted') { bs.textContent = 'Pastille active.'; bb.hidden = true; }
+  else if (perm === 'denied') { bs.textContent = 'Refusée. Réglages de l’iPhone › Notifications › Mail lisible › Autoriser.'; bb.hidden = true; }
+  else if (perm === 'absent' || !navigator.setAppBadge) { bs.textContent = 'Non disponible sur cet appareil (iOS 16.4 minimum).'; bb.hidden = true; }
+  bb.onclick = async () => { try { const r = await Notification.requestPermission(); if (r === 'granted') { await updateBadge(); toast('Pastille activée'); } renderSettings(); } catch (e) { toast('Autorisation impossible'); } };
   $('#s-fs').oninput = e => { settings.fontSize = +e.target.value; $('#s-fs-v').textContent = settings.fontSize; saveSettings(); };
   $$('.seg button').forEach(b => b.onclick = () => { settings.theme = b.dataset.th; saveSettings(); renderSettings(); });
   $('#s-read').onchange = e => { settings.readable = e.target.checked; saveSettings(); };
@@ -880,4 +894,5 @@ document.addEventListener('visibilitychange', () => {
   if (h.startsWith('#/list/')) { const key = h.split('/')[2]; const c = state.lists[key]; if (c && Date.now() - c.at > 60000) loadList(key, null, key, !!(SYSTEM[key] && SYSTEM[key].plain), true); }
   updateBadge();
 });
+setInterval(() => { if (document.visibilityState === 'visible' && auth.token()) updateBadge(); }, 120000);
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
