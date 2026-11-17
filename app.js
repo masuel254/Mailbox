@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.6.1';
 const APP_DATE = '17/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -235,14 +235,14 @@ async function renderList(key, q) {
       <a href="#/list/INBOX" class="${key === 'INBOX' ? 'on' : ''}" ${key === 'INBOX' ? 'aria-current="page"' : ''}>Tous</a>
       <a href="#/list/UNREAD" class="${key === 'UNREAD' ? 'on' : ''}" ${key === 'UNREAD' ? 'aria-current="page"' : ''}>Non lus<span class="fcount" id="fcount"></span></a>
     </nav>` : ''}
-    ${title === BLOCK_LABEL ? `<div class="banner"><span>Mails des expéditeurs bloqués</span><button class="btn danger" id="btn-empty">${ICON.trash}Tout supprimer</button></div>` : ''}
+    ${title === BLOCK_LABEL ? `<div class="banner"><span style="display:flex;flex-direction:column;gap:2px"><span>Mails des expéditeurs bloqués</span><b id="lab-size" style="color:var(--accent)">Calcul de la taille…</b></span><button class="btn danger" id="btn-empty">${ICON.trash}Tout supprimer</button></div>` : ''}
     <div id="list"><div class="loading">Chargement…</div></div>`;
   $('#btn-search').onclick = () => { const s = $('#searchbar'); s.hidden = !s.hidden; if (!s.hidden) $('#q').focus(); };
   $('#searchbar').onsubmit = e => { e.preventDefault(); const val = $('#q').value.trim(); if (val) location.hash = '#/search/' + encodeURIComponent(val); $('#q').blur(); };
   $('#btn-refresh').onclick = () => loadList(key, q, cacheKey, plain, true);
   $('#btn-select').onclick = () => state.sel ? exitSelect() : enterSelect();
   state.listCtx = { key, q, cacheKey, plain };
-  const be = $('#btn-empty'); if (be) be.onclick = () => emptyLabel(key, title);
+  const be = $('#btn-empty'); if (be) { be.onclick = () => emptyLabel(key, title); labelSize(key).then(t => { const el = $('#lab-size'); if (el) el.textContent = t; }); }
   bindListGestures($('#list'));
   const cached = state.lists[cacheKey];
   if (cached) { drawList(cached, plain); if (Date.now() - cached.at > 60000) loadList(key, q, cacheKey, plain, true); }
@@ -488,9 +488,28 @@ async function renderBlocked(box) {
 }
 
 
+
+const fmtMo = b => b >= 1073741824 ? (b / 1073741824).toFixed(2).replace('.', ',') + ' Go' : b >= 1048576 ? (b / 1048576).toFixed(1).replace('.', ',') + ' Mo' : Math.max(1, Math.round(b / 1024)) + ' Ko';
+async function labelSize(labelId) {
+  try {
+    const ids = []; let page = null;
+    do {
+      const p = new URLSearchParams({ labelIds: labelId, maxResults: 500 });
+      if (page) p.set('pageToken', page);
+      const r = (await api('messages?' + p.toString())) || {};
+      (r.messages || []).forEach(m => ids.push(m.id));
+      page = r.nextPageToken;
+    } while (page && ids.length < 3000);
+    if (!ids.length) return 'Vide';
+    const sizes = await pool(ids, 10, id => api('messages/' + id + '?format=minimal&fields=sizeEstimate').then(r => (r && r.sizeEstimate) || 0));
+    const total = sizes.reduce((a, b) => a + (b || 0), 0);
+    return fmtMo(total) + ' · ' + ids.length + (ids.length >= 3000 ? '+' : '') + ' mail' + (ids.length > 1 ? 's' : '');
+  } catch (e) { return 'Taille indisponible'; }
+}
+
 async function emptyLabel(labelId, name) {
   openSheet(`<span class="grip"></span><h2>Tout supprimer ?</h2>
-    <p style="margin:0;color:var(--muted);font-size:.85rem;line-height:1.5">Tous les mails du libellé « ${esc(name)} » partent dans la corbeille de Gmail. Ils y restent 30 jours avant suppression définitive.</p>
+    <p style="margin:0;color:var(--muted);font-size:.85rem;line-height:1.5">Tous les mails du libellé « ${esc(name)} » partent dans la corbeille de Gmail. Ils y restent 30 jours avant suppression définitive : la place n'est libérée qu'à ce moment-là, ou plus tôt si tu vides la corbeille dans Gmail.</p>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="empty-ok">Tout supprimer</button></div>`);
   $('#empty-ok').onclick = async () => {
     const b = $('#empty-ok'); b.disabled = true; b.textContent = 'Suppression…';
