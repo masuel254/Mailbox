@@ -39,6 +39,8 @@ const ICON = {
   star: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>',
   starOn: '<svg viewBox="0 0 24 24" aria-hidden="true" style="fill:currentColor"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>',
   clip: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11l-8.5 8.5a5 5 0 0 1-7-7L13 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L14 7"/></svg>',
+  check: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8 12l3 3 5-6"/></svg>',
+  read: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9l9-6 9 6v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 9l9 6 9-6"/></svg>',
   send: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4 18-7z"/></svg>'
 };
 
@@ -172,6 +174,7 @@ function route() {
   const parts = h.slice(2).split('?')[0].split('/');
   const view = parts[0];
   closeSheet();
+  exitSelect(true);
   document.body.classList.toggle('no-tabbar', view === 'thread' || view === 'compose');
   $$('#tabbar a').forEach(a => a.classList.toggle('on', a.dataset.tab === (view === 'list' ? parts[1] : view)));
   $('#view').scrollTop = 0;
@@ -215,7 +218,8 @@ async function renderList(key, q) {
   state.current = cacheKey;
   v.innerHTML = `
     <div class="top">
-      <h1>${esc(key === 'INBOX' ? 'Boîte de réception' : title)}</h1>
+      <h1>${esc(key === 'INBOX' ? 'Réception' : title)}</h1>
+      <button class="icon-btn" id="btn-select" aria-label="Sélectionner plusieurs mails">${ICON.check}</button>
       <button class="icon-btn" id="btn-search" aria-label="Rechercher">${ICON.search}</button>
       <button class="icon-btn" id="btn-refresh" aria-label="Actualiser">${ICON.refresh}</button>
     </div>
@@ -229,6 +233,9 @@ async function renderList(key, q) {
   $('#btn-search').onclick = () => { const s = $('#searchbar'); s.hidden = !s.hidden; if (!s.hidden) $('#q').focus(); };
   $('#searchbar').onsubmit = e => { e.preventDefault(); const val = $('#q').value.trim(); if (val) location.hash = '#/search/' + encodeURIComponent(val); $('#q').blur(); };
   $('#btn-refresh').onclick = () => loadList(key, q, cacheKey, plain, true);
+  $('#btn-select').onclick = () => state.sel ? exitSelect() : enterSelect();
+  state.listCtx = { key, q, cacheKey, plain };
+  bindListGestures($('#list'));
   $$('.accounts button').forEach(b => b.onclick = () => { if (b.dataset.acc !== 'gmail') toast('La boîte Free arrive en V2'); });
   const cached = state.lists[cacheKey];
   if (cached) { drawList(cached, plain); if (Date.now() - cached.at > 60000) loadList(key, q, cacheKey, plain, true); }
@@ -282,7 +289,8 @@ function summarize(t) {
 function itemHTML(it, cls, sentView) {
   const who = sentView && it.to ? 'À : ' + it.to : it.from;
   const chips = it.labels.map(id => { const l = labelById(id); return l ? `<span class="chip lab" style="--c:${esc(labelColor(l))}">${esc(l.name)}</span>` : ''; }).join('');
-  return `<a class="item ${cls}" href="#/thread/${encodeURIComponent(it.id)}">
+  const sel = state.sel && state.sel.has(it.id) ? ' sel' : '';
+  return `<a class="item ${cls}${sel}" data-id="${esc(it.id)}" href="#/thread/${encodeURIComponent(it.id)}">
     <span class="mark" aria-hidden="true"></span>
     <span class="body">
       <span class="row1"><span class="who">${esc(who)}${it.count > 1 ? ` <span class="count">(${it.count})</span>` : ''}</span>${it.starred ? '<span class="star" aria-label="Suivi">★</span>' : ''}<span class="when">${esc(fmtDate(it.date))}</span></span>
@@ -311,6 +319,89 @@ async function updateBadge() {
     const b = $('#badge-inbox'); b.hidden = !n; b.textContent = n > 99 ? '99+' : n;
     if (navigator.setAppBadge) { n ? navigator.setAppBadge(n).catch(() => {}) : navigator.clearAppBadge().catch(() => {}); }
   } catch (e) {}
+}
+
+
+/* ---------- Sélection multiple ---------- */
+function bindListGestures(list) {
+  let timer = null, longDone = false, sx = 0, sy = 0;
+  list.addEventListener('touchstart', e => {
+    const a = e.target.closest('a.item'); if (!a) return;
+    longDone = false; sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+    timer = setTimeout(() => { longDone = true; if (navigator.vibrate) navigator.vibrate(15); if (!state.sel) enterSelect(); toggleSel(a); }, 480);
+  }, { passive: true });
+  list.addEventListener('touchmove', e => { if (timer && (Math.abs(e.touches[0].clientX - sx) > 10 || Math.abs(e.touches[0].clientY - sy) > 10)) { clearTimeout(timer); timer = null; } }, { passive: true });
+  list.addEventListener('touchend', () => { clearTimeout(timer); timer = null; });
+  list.addEventListener('contextmenu', e => { if (e.target.closest('a.item')) e.preventDefault(); });
+  list.addEventListener('click', e => {
+    const a = e.target.closest('a.item'); if (!a) return;
+    if (longDone) { e.preventDefault(); longDone = false; return; }
+    if (state.sel) { e.preventDefault(); toggleSel(a); }
+  });
+}
+function enterSelect() {
+  state.sel = new Set();
+  document.body.classList.add('selecting');
+  let bar = $('#selbar');
+  if (!bar) { bar = document.createElement('div'); bar.id = 'selbar'; document.body.appendChild(bar); }
+  bar.innerHTML = `<div class="selhead"><button class="linkish" id="sel-all">Tout sélectionner</button><span id="sel-n">0 sélectionné</span><button class="linkish" id="sel-cancel">Annuler</button></div>
+    <div class="selact">
+      <button id="sel-read" disabled>${ICON.read}<span>Lu</span></button>
+      <button id="sel-unread" disabled>${ICON.unread}<span>Non lu</span></button>
+      <button id="sel-archive" disabled>${ICON.archive}<span>Archiver</span></button>
+      <button id="sel-trash" disabled>${ICON.trash}<span>Supprimer</span></button>
+    </div>`;
+  $('#sel-cancel').onclick = () => exitSelect();
+  $('#sel-all').onclick = () => {
+    const items = $$('#list a.item');
+    const all = items.length && items.every(a => state.sel.has(a.dataset.id));
+    items.forEach(a => { if (all) { state.sel.delete(a.dataset.id); a.classList.remove('sel'); } else { state.sel.add(a.dataset.id); a.classList.add('sel'); } });
+    updateSelBar();
+  };
+  $('#sel-read').onclick = () => bulk({ removeLabelIds: ['UNREAD'] }, i => Object.assign({}, i, { unread: false }), 'marqué(s) comme lu(s)');
+  $('#sel-unread').onclick = () => bulk({ addLabelIds: ['UNREAD'] }, i => Object.assign({}, i, { unread: true }), 'marqué(s) comme non lu(s)');
+  $('#sel-archive').onclick = () => bulk({ removeLabelIds: ['INBOX'] }, (i, k) => k === 'INBOX' ? null : i, 'archivé(s)');
+  $('#sel-trash').onclick = () => bulk('trash', () => null, 'placé(s) dans la corbeille');
+  const b = $('#btn-select'); if (b) b.classList.add('on');
+  updateSelBar();
+}
+function exitSelect(silent) {
+  if (!state.sel && silent) return;
+  state.sel = null;
+  document.body.classList.remove('selecting');
+  const bar = $('#selbar'); if (bar) bar.remove();
+  $$('#list a.item.sel').forEach(a => a.classList.remove('sel'));
+  const b = $('#btn-select'); if (b) b.classList.remove('on');
+}
+function toggleSel(a) {
+  const id = a.dataset.id;
+  if (state.sel.has(id)) { state.sel.delete(id); a.classList.remove('sel'); } else { state.sel.add(id); a.classList.add('sel'); }
+  updateSelBar();
+}
+function updateSelBar() {
+  const n = state.sel ? state.sel.size : 0;
+  const t = $('#sel-n'); if (t) t.textContent = n + (n > 1 ? ' sélectionnés' : ' sélectionné');
+  $$('#selbar .selact button').forEach(b => b.disabled = !n);
+}
+async function bulk(body, patch, label) {
+  const ids = [...state.sel];
+  if (!ids.length) return;
+  $$('#selbar button').forEach(b => b.disabled = true);
+  let ok = 0;
+  try {
+    await pool(ids, 6, async id => {
+      if (body === 'trash') await api('threads/' + id + '/trash', { method: 'POST' });
+      else await api('threads/' + id + '/modify', { method: 'POST', body });
+      ok++;
+    });
+  } catch (e) { if (e.message === 'auth') return; }
+  const set = new Set(ids);
+  Object.entries(state.lists).forEach(([k, d]) => { d.items = d.items.map(i => set.has(i.id) ? patch(i, k) : i).filter(Boolean); });
+  exitSelect();
+  const c = state.listCtx;
+  if (c && state.lists[c.cacheKey]) drawList(state.lists[c.cacheKey], c.plain);
+  toast(ok + ' mail' + (ok > 1 ? 's ' : ' ') + label + (ok < ids.length ? ' (' + (ids.length - ok) + ' en échec)' : ''));
+  updateBadge();
 }
 
 /* ---------- Conversation ---------- */

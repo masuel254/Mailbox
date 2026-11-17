@@ -165,3 +165,20 @@ input[type=range]{width:100%;accent-color:var(--accent-fill);height:30px}
 code{background:var(--card);padding:1px 6px;border-radius:5px;font-size:.85em;word-break:break-all}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .msg:not(.collapsed) .snippet,.msg.collapsed .content{display:none}
+
+/* Sélection multiple */
+.icon-btn.on{background:var(--accent-fill);color:var(--on-accent)}
+body.selecting #tabbar{display:none}
+body.selecting #view{padding-bottom:calc(150px + var(--safe-bot))}
+body.selecting .item .mark{width:24px;height:24px;border-radius:7px;border:2px solid var(--line2);margin-top:.1rem;background:transparent!important;display:flex;align-items:center;justify-content:center}
+body.selecting .item.u .mark{border-color:var(--accent-fill)}
+body.selecting .item{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.item.sel{outline:3px solid var(--gmail);outline-offset:-3px;border-radius:14px}
+body.selecting .item.sel .mark{background:var(--gmail)!important;border-color:var(--gmail)}
+body.selecting .item.sel .mark::after{content:"";width:10px;height:6px;border-left:3px solid var(--bg);border-bottom:3px solid var(--bg);transform:rotate(-45deg) translate(1px,-1px)}
+#selbar{position:fixed;left:0;right:0;bottom:0;z-index:30;background:var(--surface);border-top:1px solid var(--line2);padding:6px 10px calc(8px + var(--safe-bot));display:flex;flex-direction:column;gap:6px}
+#selbar .selhead{display:flex;align-items:center;justify-content:space-between;font-size:.85rem;font-weight:700}
+#selbar .selact{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+#selbar .selact button{min-height:58px;border-radius:12px;border:1px solid var(--line2);background:var(--bg);color:var(--text);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:.72rem;font-weight:650;cursor:pointer}
+#selbar .selact button:disabled{opacity:.4}
+#selbar #sel-read{background:var(--accent-fill);color:var(--on-accent);border-color:var(--accent-fill)}
