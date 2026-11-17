@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '1.5.1';
+const APP_VERSION = '1.5.2';
 const APP_DATE = '17/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -440,6 +440,9 @@ function blockSheet(ids) {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="blk-ok">Bloquer</button></div>`);
   $('#blk-ok').onclick = async () => {
     const emails = $$('#sheet input[type=checkbox]').filter(i => i.checked).map(i => i.value);
+    const names = LS.get('blockedNames', {});
+    all.forEach(a => { if (emails.includes(a.email) && a.name && a.name !== a.email) names[a.email] = a.name; });
+    LS.set('blockedNames', names);
     if (!emails.length) return closeSheet();
     $('#blk-ok').disabled = true; $('#blk-ok').textContent = 'Blocage…';
     try {
@@ -461,6 +464,11 @@ function blockSheet(ids) {
     }
   };
 }
+function brandOf(email) {
+  const d = (email.split('@')[1] || email).split('.');
+  const core = d.length > 1 ? d[d.length - 2] : d[0];
+  return core.charAt(0).toUpperCase() + core.slice(1);
+}
 async function renderBlocked(box) {
   if (!auth.hasSettingsScope()) { box.innerHTML = '<p>Aucun expéditeur bloqué pour l’instant.</p>'; return; }
   try {
@@ -468,7 +476,10 @@ async function renderBlocked(box) {
     const l = labels.find(x => x.name === BLOCK_LABEL);
     const fs = l ? (((await api('settings/filters')) || {}).filter || []).filter(f => f.action && (f.action.addLabelIds || []).includes(l.id) && f.criteria && f.criteria.from) : [];
     if (!fs.length) { box.innerHTML = '<p>Aucun expéditeur bloqué pour l’instant.</p>'; return; }
-    box.innerHTML = fs.map(f => `<div class="lab-row" style="padding:4px 0"><span class="nm" style="font-size:.85rem;overflow:hidden;text-overflow:ellipsis">${esc(f.criteria.from)}</span><button class="btn" style="height:38px;font-size:.75rem" data-fid="${esc(f.id)}">Débloquer</button></div>`).join('') +
+    const names = LS.get('blockedNames', {});
+    const label = e => names[e.toLowerCase()] || brandOf(e);
+    fs.sort((a, b) => label(a.criteria.from).localeCompare(label(b.criteria.from), 'fr'));
+    box.innerHTML = fs.map(f => `<div class="lab-row" style="padding:6px 0;gap:10px"><span class="nm" style="min-width:0;display:flex;flex-direction:column"><b style="font-size:.95rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label(f.criteria.from))}</b><span style="font-size:.72rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.criteria.from)}</span></span><button class="btn" style="height:38px;font-size:.75rem" data-fid="${esc(f.id)}">Débloquer</button></div>`).join('') +
       `<a class="btn" href="#/list/${encodeURIComponent(l.id)}">Voir les mails « ${BLOCK_LABEL} »</a>`;
     $$('button[data-fid]', box).forEach(b => b.onclick = async () => { b.disabled = true; try { await api('settings/filters/' + b.dataset.fid, { method: 'DELETE' }); toast('Débloqué'); renderBlocked(box); } catch (e) { b.disabled = false; toast('Échec : ' + e.message); } });
   } catch (e) { box.innerHTML = '<p>Liste indisponible.</p>'; }
