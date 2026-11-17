@@ -36,10 +36,11 @@ body.no-tabbar #tabbar{display:none}
 /* Barre du bas */
 #tabbar{position:fixed;left:0;right:0;bottom:0;z-index:20;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));align-items:center;padding:6px 6px calc(6px + var(--safe-bot));background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-top:1px solid var(--line)}
 #tabbar a{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:52px;text-decoration:none;color:var(--dim);font-size:.66rem}
-#tabbar a.on{color:var(--accent)}
+#tabbar a.on{color:var(--on-accent);background:var(--accent-fill);border-radius:14px;margin:0 3px}
 #tabbar a.on span{font-weight:700}
 #tabbar a svg{width:1.45rem;height:1.45rem}
-#tabbar .compose-btn{background:var(--accent-fill);color:var(--on-accent);border-radius:16px;margin:0 4px;font-weight:700}
+#tabbar .compose-btn{color:var(--text)}
+#tabbar .compose-btn svg{width:1.6rem;height:1.6rem;padding:3px;border:2px solid var(--accent-fill);border-radius:9px;color:var(--accent)}
 .badge{position:absolute;top:2px;left:55%;min-width:1.15rem;height:1.15rem;padding:0 .3rem;border-radius:1rem;background:var(--accent-fill);color:var(--on-accent);font-size:.62rem;font-weight:800;display:flex;align-items:center;justify-content:center}
 
 /* En-têtes */
@@ -182,3 +183,8 @@ body.selecting .item.sel .mark::after{content:"";width:10px;height:6px;border-le
 #selbar .selact button{min-height:58px;border-radius:12px;border:1px solid var(--line2);background:var(--bg);color:var(--text);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:.72rem;font-weight:650;cursor:pointer}
 #selbar .selact button:disabled{opacity:.4}
 #selbar #sel-read{background:var(--accent-fill);color:var(--on-accent);border-color:var(--accent-fill)}
+.filters{grid-template-columns:repeat(2,minmax(0,1fr))}
+.filters a{height:40px;border-radius:9px;color:var(--muted);font-size:.85rem;display:flex;align-items:center;justify-content:center;text-decoration:none}
+.filters a.on{background:var(--accent-fill);color:var(--on-accent);font-weight:750}
+#tabbar a.on .badge{background:var(--on-accent);color:var(--accent-fill)}
+.fcount{margin-left:.3em}

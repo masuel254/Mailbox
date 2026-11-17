@@ -102,6 +102,7 @@ async function pool(items, n, fn) {
 /* ---------- Libellés ---------- */
 const SYSTEM = {
   INBOX: { name: 'Réception', ids: ['INBOX'] },
+  UNREAD: { name: 'Non lus', ids: ['INBOX', 'UNREAD'] },
   SENT: { name: 'Envoyés', ids: ['SENT'], plain: true },
   STARRED: { name: 'Suivis', ids: ['STARRED'] },
   IMPORTANT: { name: 'Importants', ids: ['IMPORTANT'] },
@@ -176,7 +177,7 @@ function route() {
   closeSheet();
   exitSelect(true);
   document.body.classList.toggle('no-tabbar', view === 'thread' || view === 'compose');
-  $$('#tabbar a').forEach(a => a.classList.toggle('on', a.dataset.tab === (view === 'list' ? parts[1] : view)));
+  $$('#tabbar a').forEach(a => a.classList.toggle('on', a.dataset.tab === (view === 'list' ? (parts[1] === 'UNREAD' ? 'INBOX' : (parts[1] || 'INBOX')) : view)));
   $('#view').scrollTop = 0;
   if (!settings.clientId && view !== 'settings') return renderWelcome();
   if (view === 'thread') return renderThread(decodeURIComponent(parts[1]));
@@ -224,11 +225,10 @@ async function renderList(key, q) {
       <button class="icon-btn" id="btn-refresh" aria-label="Actualiser">${ICON.refresh}</button>
     </div>
     <form class="searchbar" id="searchbar" ${isSearch ? '' : 'hidden'}><input type="search" id="q" placeholder="Rechercher (ex. from:claire facture)" value="${esc(q || '')}" enterkeyhint="search" autocomplete="off"></form>
-    <div class="accounts" role="tablist" aria-label="Comptes">
-      <button role="tab" aria-selected="false" data-acc="all">Tous</button>
-      <button role="tab" aria-selected="true" class="on" data-acc="gmail"><span class="dot" style="background:var(--gmail)"></span>Gmail</button>
-      <button role="tab" aria-selected="false" data-acc="free"><span class="dot" style="background:var(--free)"></span>Free</button>
-    </div>
+    ${key === 'INBOX' || key === 'UNREAD' ? `<nav class="accounts filters" aria-label="Filtre">
+      <a href="#/list/INBOX" class="${key === 'INBOX' ? 'on' : ''}" ${key === 'INBOX' ? 'aria-current="page"' : ''}>Tous</a>
+      <a href="#/list/UNREAD" class="${key === 'UNREAD' ? 'on' : ''}" ${key === 'UNREAD' ? 'aria-current="page"' : ''}>Non lus<span class="fcount" id="fcount"></span></a>
+    </nav>` : ''}
     <div id="list"><div class="loading">Chargement…</div></div>`;
   $('#btn-search').onclick = () => { const s = $('#searchbar'); s.hidden = !s.hidden; if (!s.hidden) $('#q').focus(); };
   $('#searchbar').onsubmit = e => { e.preventDefault(); const val = $('#q').value.trim(); if (val) location.hash = '#/search/' + encodeURIComponent(val); $('#q').blur(); };
@@ -236,7 +236,6 @@ async function renderList(key, q) {
   $('#btn-select').onclick = () => state.sel ? exitSelect() : enterSelect();
   state.listCtx = { key, q, cacheKey, plain };
   bindListGestures($('#list'));
-  $$('.accounts button').forEach(b => b.onclick = () => { if (b.dataset.acc !== 'gmail') toast('La boîte Free arrive en V2'); });
   const cached = state.lists[cacheKey];
   if (cached) { drawList(cached, plain); if (Date.now() - cached.at > 60000) loadList(key, q, cacheKey, plain, true); }
   else loadList(key, q, cacheKey, plain, true);
@@ -317,6 +316,7 @@ async function updateBadge() {
     const l = await api('labels/INBOX');
     const n = l.threadsUnread || 0;
     const b = $('#badge-inbox'); b.hidden = !n; b.textContent = n > 99 ? '99+' : n;
+    const f = $('#fcount'); if (f) f.textContent = n ? '· ' + n : '';
     if (navigator.setAppBadge) { n ? navigator.setAppBadge(n).catch(() => {}) : navigator.clearAppBadge().catch(() => {}); }
   } catch (e) {}
 }
@@ -358,7 +358,7 @@ function enterSelect() {
     items.forEach(a => { if (all) { state.sel.delete(a.dataset.id); a.classList.remove('sel'); } else { state.sel.add(a.dataset.id); a.classList.add('sel'); } });
     updateSelBar();
   };
-  $('#sel-read').onclick = () => bulk({ removeLabelIds: ['UNREAD'] }, i => Object.assign({}, i, { unread: false }), 'marqué(s) comme lu(s)');
+  $('#sel-read').onclick = () => bulk({ removeLabelIds: ['UNREAD'] }, (i, k) => k === 'UNREAD' ? null : Object.assign({}, i, { unread: false }), 'marqué(s) comme lu(s)');
   $('#sel-unread').onclick = () => bulk({ addLabelIds: ['UNREAD'] }, i => Object.assign({}, i, { unread: true }), 'marqué(s) comme non lu(s)');
   $('#sel-archive').onclick = () => bulk({ removeLabelIds: ['INBOX'] }, (i, k) => k === 'INBOX' ? null : i, 'archivé(s)');
   $('#sel-trash').onclick = () => bulk('trash', () => null, 'placé(s) dans la corbeille');
