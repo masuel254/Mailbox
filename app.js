@@ -167,7 +167,7 @@ const toUrlB64 = s => s.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '
 /* ---------- Routage ---------- */
 const state = { lists: {}, current: null, me: null };
 function route() {
-  if (auth.handleRedirect()) return;
+  auth.handleRedirect();
   const h = location.hash || '#/list/INBOX';
   const parts = h.slice(2).split('?')[0].split('/');
   const view = parts[0];
