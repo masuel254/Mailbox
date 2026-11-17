@@ -29,3 +29,7 @@ Ouvrir l'adresse dans Safari › Partager › **Sur l'écran d'accueil**.
 - La connexion Google dure 1 heure, puis l'appli te renvoie vers l'écran Google : un simple appui suffit.
 - Les mails sont envoyés en texte simple, sans mise en forme.
 - Boîte Free : V2, avec un relais IMAP sur le VPS.
+
+## Publier une nouvelle version
+
+`./release.sh 1.4.1` met à jour le numéro partout (app.js, index.html, sw.js, version.json), puis commit et push. L'appli détecte la nouvelle version à l'ouverture et affiche « Mettre à jour ».

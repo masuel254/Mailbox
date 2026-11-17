@@ -1,6 +1,9 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
+const APP_VERSION = '1.4.0';
+const APP_DATE = '17/11/2026';
+
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify';
 const API = 'https://gmail.googleapis.com/gmail/v1/users/me/';
 const PAGE = 25;
@@ -862,7 +865,13 @@ function renderSettings() {
       <label class="switch">Mode lisible par défaut<input type="checkbox" id="s-read" ${settings.readable ? 'checked' : ''}></label>
       <label class="switch">Afficher les images des mails<input type="checkbox" id="s-img" ${settings.images ? 'checked' : ''}></label>
     </section>
-    <p style="text-align:center;color:var(--dim);font-size:.7rem;margin:20px 0">Mail lisible · V1</p>`;
+    <h2 class="h2">Application</h2>
+    <section class="card">
+      <h3>Version ${esc(APP_VERSION)}<span class="st" style="color:var(--muted)">${esc(APP_DATE)}</span></h3>
+      <p id="s-upd-state">Les mises à jour sont vérifiées à chaque ouverture.</p>
+      <button class="btn primary" id="s-upd">Rechercher une mise à jour</button>
+      <button class="btn" id="s-force">Forcer l'actualisation</button>
+    </section>`;
   $('#s-cid').onchange = e => { settings.clientId = e.target.value.trim(); saveSettings(); toast('Identifiant enregistré'); };
   const li = $('#s-login'); if (li) li.onclick = () => { settings.clientId = $('#s-cid').value.trim(); saveSettings(); LS.set('returnTo', '#/list/INBOX'); location.hash = '#/list/INBOX'; };
   const lo = $('#s-logout'); if (lo) lo.onclick = () => { auth.logout(); settings.email = ''; saveSettings(); state.lists = {}; renderSettings(); toast('Déconnecté'); };
@@ -874,10 +883,43 @@ function renderSettings() {
   else if (perm === 'denied') { bs.textContent = 'Refusée. Réglages de l’iPhone › Notifications › Mail lisible › Autoriser.'; bb.hidden = true; }
   else if (perm === 'absent' || !navigator.setAppBadge) { bs.textContent = 'Non disponible sur cet appareil (iOS 16.4 minimum).'; bb.hidden = true; }
   bb.onclick = async () => { try { const r = await Notification.requestPermission(); if (r === 'granted') { await updateBadge(); toast('Pastille activée'); } renderSettings(); } catch (e) { toast('Autorisation impossible'); } };
+  $('#s-upd').onclick = async () => {
+    const st = $('#s-upd-state'); st.textContent = 'Vérification…';
+    const v = await latestVersion();
+    if (!v) st.textContent = 'Vérification impossible (pas de réseau ?).';
+    else if (v.version !== APP_VERSION) { st.textContent = 'Version ' + v.version + ' disponible.'; $('#s-upd').textContent = 'Installer la version ' + v.version; $('#s-upd').onclick = forceUpdate; }
+    else st.textContent = 'Tu as la dernière version.';
+  };
+  $('#s-force').onclick = forceUpdate;
   $('#s-fs').oninput = e => { settings.fontSize = +e.target.value; $('#s-fs-v').textContent = settings.fontSize; saveSettings(); };
   $$('.seg button').forEach(b => b.onclick = () => { settings.theme = b.dataset.th; saveSettings(); renderSettings(); });
   $('#s-read').onchange = e => { settings.readable = e.target.checked; saveSettings(); };
   $('#s-img').onchange = e => { settings.images = e.target.checked; saveSettings(); };
+}
+
+/* ---------- Mises à jour ---------- */
+async function latestVersion() {
+  try { const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' }); return r.ok ? await r.json() : null; } catch (e) { return null; }
+}
+async function forceUpdate() {
+  toast('Mise à jour…');
+  try {
+    if (window.caches) { const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); }
+    if (navigator.serviceWorker) { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.unregister())); }
+    await Promise.all(['./', 'index.html', 'app.js', 'styles.css', 'sw.js', 'manifest.webmanifest'].map(f => fetch(f, { cache: 'reload' }).catch(() => {})));
+    const v = await latestVersion();
+    if (v && v.assets) await Promise.all(v.assets.map(f => fetch(f, { cache: 'reload' }).catch(() => {})));
+  } catch (e) {}
+  location.replace(location.pathname + '?u=' + Date.now() + (location.hash.startsWith('#/') ? location.hash : '#/list/INBOX'));
+}
+async function checkUpdate() {
+  const v = await latestVersion();
+  if (!v || v.version === APP_VERSION || $('#upd-banner')) return;
+  const b = document.createElement('div');
+  b.id = 'upd-banner'; b.className = 'upd-banner';
+  b.innerHTML = `<span>Nouvelle version ${esc(v.version)} disponible</span><button class="btn primary" type="button">Mettre à jour</button>`;
+  b.querySelector('button').onclick = forceUpdate;
+  document.body.appendChild(b);
 }
 
 /* ---------- Démarrage ---------- */
@@ -895,4 +937,6 @@ document.addEventListener('visibilitychange', () => {
   updateBadge();
 });
 setInterval(() => { if (document.visibilityState === 'visible' && auth.token()) updateBadge(); }, 120000);
+checkUpdate();
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkUpdate(); });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
