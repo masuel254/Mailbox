@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.5.1';
 const APP_DATE = '17/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -444,7 +444,7 @@ function blockSheet(ids) {
     $('#blk-ok').disabled = true; $('#blk-ok').textContent = 'Blocage…';
     try {
       const lab = await blockLabelId();
-      const existing = ((await api('settings/filters')).filter || []).map(f => (f.criteria && f.criteria.from || '').toLowerCase());
+      const existing = (((await api('settings/filters')) || {}).filter || []).map(f => (f.criteria && f.criteria.from || '').toLowerCase());
       await pool(emails.filter(e => !existing.includes(e)), 3, e => api('settings/filters', { method: 'POST', body: { criteria: { from: e }, action: { addLabelIds: [lab], removeLabelIds: ['INBOX', 'UNREAD'] } } }));
       const set = new Set(emails);
       const tids = [];
@@ -466,7 +466,7 @@ async function renderBlocked(box) {
   try {
     const labels = await getLabels();
     const l = labels.find(x => x.name === BLOCK_LABEL);
-    const fs = l ? ((await api('settings/filters')).filter || []).filter(f => f.action && (f.action.addLabelIds || []).includes(l.id) && f.criteria && f.criteria.from) : [];
+    const fs = l ? (((await api('settings/filters')) || {}).filter || []).filter(f => f.action && (f.action.addLabelIds || []).includes(l.id) && f.criteria && f.criteria.from) : [];
     if (!fs.length) { box.innerHTML = '<p>Aucun expéditeur bloqué pour l’instant.</p>'; return; }
     box.innerHTML = fs.map(f => `<div class="lab-row" style="padding:4px 0"><span class="nm" style="font-size:.85rem;overflow:hidden;text-overflow:ellipsis">${esc(f.criteria.from)}</span><button class="btn" style="height:38px;font-size:.75rem" data-fid="${esc(f.id)}">Débloquer</button></div>`).join('') +
       `<a class="btn" href="#/list/${encodeURIComponent(l.id)}">Voir les mails « ${BLOCK_LABEL} »</a>`;
