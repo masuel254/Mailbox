@@ -8,7 +8,7 @@ Aucun identifiant ne se trouve dans ce dépôt. Le Client ID Google se saisit da
 
 ## Mise en ligne (GitHub Pages)
 
-Settings › Pages › Source : branche `main`, dossier `/ (root)`. Adresse : `https://masuel254.github.io/mailbox/`
+Settings › Pages › Source : branche `main`, dossier `/ (root)`. Adresse : `https://masuel254.github.io/Mailbox/`
 
 ## Configuration Google (une seule fois)
 
@@ -17,7 +17,7 @@ Settings › Pages › Source : branche `main`, dossier `/ (root)`. Adresse : `h
 3. Écran de consentement OAuth › type **Externe** › ajouter son adresse Gmail dans **Utilisateurs test**.
 4. Identifiants › Créer des identifiants › **ID client OAuth** › type **Application Web**.
    - Origine JavaScript autorisée : `https://masuel254.github.io`
-   - URI de redirection autorisé : `https://masuel254.github.io/mailbox/`
+   - URI de redirection autorisé : `https://masuel254.github.io/Mailbox/`
 5. Copier l'ID client (`…apps.googleusercontent.com`) et le coller dans l'appli, Réglages › Identifiant Google.
 
 ## Installation sur l'iPhone
