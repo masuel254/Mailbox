@@ -1,10 +1,11 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 const APP_DATE = '17/11/2026';
 
-const SCOPE = 'https://www.googleapis.com/auth/gmail.modify';
+const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
+const BLOCK_LABEL = 'Indésirables';
 const API = 'https://gmail.googleapis.com/gmail/v1/users/me/';
 const PAGE = 25;
 
@@ -44,6 +45,7 @@ const ICON = {
   clip: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11l-8.5 8.5a5 5 0 0 1-7-7L13 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L14 7"/></svg>',
   check: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8 12l3 3 5-6"/></svg>',
   read: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9l9-6 9 6v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 9l9 6 9-6"/></svg>',
+  block: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>',
   send: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4 18-7z"/></svg>'
 };
 
@@ -68,11 +70,12 @@ const auth = {
     const ret = LS.get('returnTo', '#/list/INBOX');
     if (p.get('error')) toast('Connexion refusée : ' + p.get('error'));
     else if (p.get('state') !== LS.get('oauthState', '')) toast('Connexion invalide, réessaie');
-    else LS.set('token', { v: p.get('access_token'), exp: Date.now() + (parseInt(p.get('expires_in'), 10) || 3600) * 1000 });
+    else LS.set('token', { v: p.get('access_token'), scope: p.get('scope') || '', exp: Date.now() + (parseInt(p.get('expires_in'), 10) || 3600) * 1000 });
     LS.del('oauthState');
     history.replaceState(null, '', location.pathname + ret);
     return true;
   },
+  hasSettingsScope() { const t = LS.get('token', null); return !!(t && /gmail\.settings\.basic/.test(t.scope || '')); },
   logout() {
     const t = LS.get('token', null);
     LS.del('token');
@@ -91,7 +94,7 @@ async function api(path, opt) {
     body: opt.body ? JSON.stringify(opt.body) : undefined
   });
   if (r.status === 401) { LS.del('token'); auth.login(); throw new Error('auth'); }
-  if (!r.ok) { let m = 'Erreur ' + r.status; try { m = (await r.json()).error.message; } catch (e) {} throw new Error(m); }
+  if (!r.ok) { let m = 'Erreur ' + r.status; try { m = (await r.json()).error.message; } catch (e) {} if (r.status === 403 && /scope/i.test(m)) m = 'scope'; throw new Error(m); }
   return r.status === 204 ? null : r.json().catch(() => null);
 }
 async function pool(items, n, fn) {
@@ -273,10 +276,13 @@ function summarize(t) {
   const froms = [];
   msgs.forEach(m => { const a = parseAddr(hdr(m, 'From')); const n = shortName(a); if (!froms.includes(n)) froms.push(n); });
   const to = splitAddrs(hdr(last, 'To')).map(parseAddr).map(shortName);
+  const ext = msgs.map(m => parseAddr(hdr(m, 'From'))).filter(a => !isMe(a.email)).pop();
   return {
     id: t.id,
     subject: hdr(msgs[0] || {}, 'Subject') || '(sans objet)',
     from: froms.slice(-3).join(', '),
+    fromEmail: ext ? ext.email.toLowerCase() : '',
+    fromName: ext ? ext.name : '',
     to: to.join(', '),
     sentByMe: isMe(parseAddr(hdr(last, 'From')).email),
     snippet: decodeEntities(last.snippet || ''),
@@ -352,6 +358,7 @@ function enterSelect() {
       <button id="sel-read" disabled>${ICON.read}<span>Lu</span></button>
       <button id="sel-unread" disabled>${ICON.unread}<span>Non lu</span></button>
       <button id="sel-archive" disabled>${ICON.archive}<span>Archiver</span></button>
+      <button id="sel-block" disabled>${ICON.block}<span>Bloquer</span></button>
       <button id="sel-trash" disabled>${ICON.trash}<span>Supprimer</span></button>
     </div>`;
   $('#sel-cancel').onclick = () => exitSelect();
@@ -365,6 +372,7 @@ function enterSelect() {
   $('#sel-unread').onclick = () => bulk({ addLabelIds: ['UNREAD'] }, i => Object.assign({}, i, { unread: true }), 'marqué(s) comme non lu(s)');
   $('#sel-archive').onclick = () => bulk({ removeLabelIds: ['INBOX'] }, (i, k) => k === 'INBOX' ? null : i, 'archivé(s)');
   $('#sel-trash').onclick = () => bulk('trash', () => null, 'placé(s) dans la corbeille');
+  $('#sel-block').onclick = () => blockSheet([...state.sel]);
   const b = $('#btn-select'); if (b) b.classList.add('on');
   updateSelBar();
 }
@@ -405,6 +413,65 @@ async function bulk(body, patch, label) {
   if (c && state.lists[c.cacheKey]) drawList(state.lists[c.cacheKey], c.plain);
   toast(ok + ' mail' + (ok > 1 ? 's ' : ' ') + label + (ok < ids.length ? ' (' + (ids.length - ok) + ' en échec)' : ''));
   updateBadge();
+}
+
+
+/* ---------- Expéditeurs bloqués (règles Gmail) ---------- */
+async function blockLabelId() {
+  const labels = await getLabels(true);
+  let l = labels.find(x => x.name === BLOCK_LABEL);
+  if (!l) { l = await api('labels', { method: 'POST', body: { name: BLOCK_LABEL, labelListVisibility: 'labelShow', messageListVisibility: 'hide' } }); await getLabels(true); }
+  return l.id;
+}
+function needScope() {
+  openSheet(`<span class="grip"></span><h2>Autorisation supplémentaire</h2>
+    <p style="margin:0;color:var(--muted);font-size:.85rem;line-height:1.5">Pour créer des règles de tri dans Gmail, l'appli a besoin d'une autorisation de plus. Google va te la demander : appuie sur Continuer puis coche la case « paramètres Gmail ».</p>
+    <button class="btn primary" id="sc-ok">Autoriser</button><button class="btn" data-close>Plus tard</button>`);
+  $('#sc-ok').onclick = () => { LS.del('token'); auth.login(); };
+}
+function blockSheet(ids) {
+  if (!auth.hasSettingsScope()) return needScope();
+  const all = [];
+  Object.values(state.lists).forEach(d => d.items.forEach(i => { if (ids.includes(i.id) && i.fromEmail && !all.find(a => a.email === i.fromEmail)) all.push({ email: i.fromEmail, name: i.fromName }); }));
+  if (!all.length) { toast('Aucun expéditeur à bloquer'); return; }
+  openSheet(`<span class="grip"></span><h2>Bloquer ${all.length > 1 ? 'ces expéditeurs' : 'cet expéditeur'}</h2>
+    <p style="margin:0 0 4px;color:var(--muted);font-size:.8rem;line-height:1.45">Leurs mails, actuels et futurs, iront dans « ${BLOCK_LABEL} », marqués comme lus : ni boîte de réception, ni pastille. Réglage annulable dans Réglages.</p>
+    ${all.map(a => `<label class="check"><input type="checkbox" value="${esc(a.email)}" checked><span style="display:flex;flex-direction:column;min-width:0"><b style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.name)}</b><span style="font-size:.75rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.email)}</span></span></label>`).join('')}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="blk-ok">Bloquer</button></div>`);
+  $('#blk-ok').onclick = async () => {
+    const emails = $$('#sheet input[type=checkbox]').filter(i => i.checked).map(i => i.value);
+    if (!emails.length) return closeSheet();
+    $('#blk-ok').disabled = true; $('#blk-ok').textContent = 'Blocage…';
+    try {
+      const lab = await blockLabelId();
+      const existing = ((await api('settings/filters')).filter || []).map(f => (f.criteria && f.criteria.from || '').toLowerCase());
+      await pool(emails.filter(e => !existing.includes(e)), 3, e => api('settings/filters', { method: 'POST', body: { criteria: { from: e }, action: { addLabelIds: [lab], removeLabelIds: ['INBOX', 'UNREAD'] } } }));
+      const set = new Set(emails);
+      const tids = [];
+      Object.values(state.lists).forEach(d => d.items.forEach(i => { if (set.has(i.fromEmail) && !tids.includes(i.id)) tids.push(i.id); }));
+      await pool(tids, 6, id => api('threads/' + id + '/modify', { method: 'POST', body: { addLabelIds: [lab], removeLabelIds: ['INBOX', 'UNREAD'] } }));
+      Object.entries(state.lists).forEach(([k, d]) => { d.items = d.items.filter(i => !set.has(i.fromEmail)); });
+      closeSheet(); exitSelect();
+      const c = state.listCtx; if (c && state.lists[c.cacheKey]) drawList(state.lists[c.cacheKey], c.plain);
+      toast(emails.length + (emails.length > 1 ? ' expéditeurs bloqués' : ' expéditeur bloqué'));
+      updateBadge();
+    } catch (e) {
+      closeSheet();
+      if (e.message === 'scope') needScope(); else if (e.message !== 'auth') toast('Échec : ' + e.message);
+    }
+  };
+}
+async function renderBlocked(box) {
+  if (!auth.hasSettingsScope()) { box.innerHTML = '<p>Aucun expéditeur bloqué pour l’instant.</p>'; return; }
+  try {
+    const labels = await getLabels();
+    const l = labels.find(x => x.name === BLOCK_LABEL);
+    const fs = l ? ((await api('settings/filters')).filter || []).filter(f => f.action && (f.action.addLabelIds || []).includes(l.id) && f.criteria && f.criteria.from) : [];
+    if (!fs.length) { box.innerHTML = '<p>Aucun expéditeur bloqué pour l’instant.</p>'; return; }
+    box.innerHTML = fs.map(f => `<div class="lab-row" style="padding:4px 0"><span class="nm" style="font-size:.85rem;overflow:hidden;text-overflow:ellipsis">${esc(f.criteria.from)}</span><button class="btn" style="height:38px;font-size:.75rem" data-fid="${esc(f.id)}">Débloquer</button></div>`).join('') +
+      `<a class="btn" href="#/list/${encodeURIComponent(l.id)}">Voir les mails « ${BLOCK_LABEL} »</a>`;
+    $$('button[data-fid]', box).forEach(b => b.onclick = async () => { b.disabled = true; try { await api('settings/filters/' + b.dataset.fid, { method: 'DELETE' }); toast('Débloqué'); renderBlocked(box); } catch (e) { b.disabled = false; toast('Échec : ' + e.message); } });
+  } catch (e) { box.innerHTML = '<p>Liste indisponible.</p>'; }
 }
 
 /* ---------- Conversation ---------- */
@@ -849,6 +916,8 @@ function renderSettings() {
       <h3><span class="dot" style="background:var(--free)"></span>Free<span class="st" style="color:var(--muted)">Version 2</span></h3>
       <p>Le compte Free (identifiant et mot de passe) se configurera ici. Il nécessite un petit relais sur ton serveur, prévu en V2. Les identifiants resteront sur cet iPhone.</p>
     </section>
+    <h2 class="h2">Expéditeurs bloqués</h2>
+    <section class="card" id="s-blocked"><p>Chargement…</p></section>
     <h2 class="h2">Pastille sur l'icône</h2>
     <section class="card">
       <p>Affiche le nombre de mails non lus sur l'icône de l'appli. iOS exige pour cela l'autorisation des notifications, et l'appli doit être installée sur l'écran d'accueil.</p>
@@ -883,6 +952,7 @@ function renderSettings() {
   else if (perm === 'denied') { bs.textContent = 'Refusée. Réglages de l’iPhone › Notifications › Mail lisible › Autoriser.'; bb.hidden = true; }
   else if (perm === 'absent' || !navigator.setAppBadge) { bs.textContent = 'Non disponible sur cet appareil (iOS 16.4 minimum).'; bb.hidden = true; }
   bb.onclick = async () => { try { const r = await Notification.requestPermission(); if (r === 'granted') { await updateBadge(); toast('Pastille activée'); } renderSettings(); } catch (e) { toast('Autorisation impossible'); } };
+  renderBlocked($('#s-blocked'));
   $('#s-upd').onclick = async () => {
     const st = $('#s-upd-state'); st.textContent = 'Vérification…';
     const v = await latestVersion();
