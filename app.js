@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '1.6.4';
+const APP_VERSION = '1.7.0';
 const APP_DATE = '18/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -431,34 +431,64 @@ function needScope() {
     <button class="btn primary" id="sc-ok">Autoriser</button><button class="btn" data-close>Plus tard</button>`);
   $('#sc-ok').onclick = () => { LS.del('token'); auth.login(); };
 }
+const WEBMAIL = ['gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.fr', 'hotmail.com', 'hotmail.fr', 'outlook.com', 'outlook.fr', 'live.com', 'live.fr', 'msn.com', 'icloud.com', 'me.com', 'mac.com', 'free.fr', 'orange.fr', 'wanadoo.fr', 'sfr.fr', 'neuf.fr', 'laposte.net', 'bbox.fr', 'aol.com', 'gmx.fr', 'gmx.com', 'proton.me', 'protonmail.com'];
+function rootDomain(addr) {
+  const host = (addr.includes('@') ? addr.split('@')[1] : addr).toLowerCase().trim();
+  const p = host.split('.');
+  if (p.length >= 3 && /^(co|com|org|net|gov|ac|gouv)$/.test(p[p.length - 2]) && p[p.length - 1].length === 2) return p.slice(-3).join('.');
+  return p.slice(-2).join('.');
+}
+// Cible du blocage : le domaine de la marque, sauf messageries grand public (adresse exacte)
+function blockTarget(email) { const d = rootDomain(email); return WEBMAIL.includes(d) ? email.toLowerCase() : d; }
+function isCovered(target, froms) { return froms.some(f => f === target || (!f.includes('@') && (target === f || target.endsWith('.' + f) || target.endsWith('@' + f)))); }
+async function moveExisting(target, lab) {
+  let page = null, n = 0;
+  do {
+    const p = new URLSearchParams({ q: 'from:' + target + ' in:inbox', maxResults: 500 });
+    if (page) p.set('pageToken', page);
+    const r = (await api('messages?' + p.toString())) || {};
+    const ids = (r.messages || []).map(m => m.id);
+    if (ids.length) await api('messages/batchModify', { method: 'POST', body: { ids, addLabelIds: [lab], removeLabelIds: ['INBOX', 'UNREAD'] } });
+    n += ids.length; page = r.nextPageToken;
+  } while (page && n < 5000);
+  return n;
+}
 function blockSheet(ids) {
   if (!auth.hasSettingsScope()) return needScope();
-  const all = [];
-  Object.values(state.lists).forEach(d => d.items.forEach(i => { if (ids.includes(i.id) && i.fromEmail && !all.find(a => a.email === i.fromEmail)) all.push({ email: i.fromEmail, name: i.fromName }); }));
-  if (!all.length) { toast('Aucun expéditeur à bloquer'); return; }
-  openSheet(`<span class="grip"></span><h2>Bloquer ${all.length > 1 ? 'ces expéditeurs' : 'cet expéditeur'}</h2>
-    <p style="margin:0 0 4px;color:var(--muted);font-size:.8rem;line-height:1.45">Leurs mails, actuels et futurs, iront dans « ${BLOCK_LABEL} », marqués comme lus : ni boîte de réception, ni pastille. Réglage annulable dans Réglages.</p>
-    ${all.map(a => `<label class="check"><input type="checkbox" value="${esc(a.email)}" checked><span style="display:flex;flex-direction:column;min-width:0"><b style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.name)}</b><span style="font-size:.75rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.email)}</span></span></label>`).join('')}
+  const targets = [];
+  Object.values(state.lists).forEach(d => d.items.forEach(i => {
+    if (!ids.includes(i.id) || !i.fromEmail) return;
+    const t = blockTarget(i.fromEmail);
+    if (!targets.find(x => x.t === t)) targets.push({ t, name: t.includes('@') ? i.fromName : brandOf(t), sender: i.fromName, sample: i.fromEmail });
+  }));
+  if (!targets.length) { toast('Aucun expéditeur à bloquer'); return; }
+  openSheet(`<span class="grip"></span><h2>Bloquer ${targets.length > 1 ? 'ces expéditeurs' : 'cet expéditeur'}</h2>
+    <p style="margin:0 0 4px;color:var(--muted);font-size:.8rem;line-height:1.45">Le blocage vise toute la marque : toutes ses adresses, présentes et futures. Leurs mails iront dans « ${BLOCK_LABEL} », marqués comme lus. Annulable dans Réglages.</p>
+    ${targets.map((a, i) => `<div class="blk-row"><label class="check"><input type="checkbox" class="blk-on" data-i="${i}" checked><span style="display:flex;flex-direction:column;min-width:0"><b style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.name)}</b><span style="font-size:.75rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.sender)} · ${esc(a.sample)}</span></span></label>${a.t.includes('@') ? '' : `<label class="switch blk-dom"><span>Toutes les adresses @${esc(a.t)}</span><input type="checkbox" class="blk-all" data-i="${i}" checked></label>`}</div>`).join('')}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="blk-ok">Bloquer</button></div>`);
   $('#blk-ok').onclick = async () => {
-    const emails = $$('#sheet input[type=checkbox]').filter(i => i.checked).map(i => i.value);
     const names = LS.get('blockedNames', {});
-    all.forEach(a => { if (emails.includes(a.email) && a.name && a.name !== a.email) names[a.email] = a.name; });
+    const chosen = [];
+    $$('#sheet .blk-on').filter(i => i.checked).forEach(i => {
+      const a = targets[+i.dataset.i];
+      const all = $('#sheet .blk-all[data-i="' + i.dataset.i + '"]');
+      const t = all && !all.checked ? a.sample.toLowerCase() : a.t;
+      chosen.push(t); names[t] = t === a.t ? a.name : a.sender;
+    });
+    if (!chosen.length) return closeSheet();
     LS.set('blockedNames', names);
-    if (!emails.length) return closeSheet();
     $('#blk-ok').disabled = true; $('#blk-ok').textContent = 'Blocage…';
     try {
       const lab = await blockLabelId();
-      const existing = (((await api('settings/filters')) || {}).filter || []).map(f => (f.criteria && f.criteria.from || '').toLowerCase());
-      await pool(emails.filter(e => !existing.includes(e)), 3, e => api('settings/filters', { method: 'POST', body: { criteria: { from: e }, action: { addLabelIds: [lab], removeLabelIds: ['INBOX', 'UNREAD'] } } }));
-      const set = new Set(emails);
-      const tids = [];
-      Object.values(state.lists).forEach(d => d.items.forEach(i => { if (set.has(i.fromEmail) && !tids.includes(i.id)) tids.push(i.id); }));
-      await pool(tids, 6, id => api('threads/' + id + '/modify', { method: 'POST', body: { addLabelIds: [lab], removeLabelIds: ['INBOX', 'UNREAD'] } }));
-      Object.entries(state.lists).forEach(([k, d]) => { d.items = d.items.filter(i => !set.has(i.fromEmail)); });
+      const froms = (((await api('settings/filters')) || {}).filter || []).map(f => (f.criteria && f.criteria.from || '').toLowerCase());
+      await pool(chosen.filter(t => !isCovered(t, froms)), 3, t => api('settings/filters', { method: 'POST', body: { criteria: { from: t }, action: { addLabelIds: [lab], removeLabelIds: ['INBOX', 'UNREAD'] } } }));
+      let moved = 0;
+      for (const t of chosen) moved += await moveExisting(t, lab);
+      const hit = e => chosen.some(t => t === e.toLowerCase() || blockTarget(e) === t);
+      Object.values(state.lists).forEach(d => { d.items = d.items.filter(i => !(i.fromEmail && hit(i.fromEmail))); });
       closeSheet(); exitSelect();
       const c = state.listCtx; if (c && state.lists[c.cacheKey]) drawList(state.lists[c.cacheKey], c.plain);
-      toast(emails.length + (emails.length > 1 ? ' expéditeurs bloqués' : ' expéditeur bloqué'));
+      toast(chosen.length + (chosen.length > 1 ? ' expéditeurs bloqués' : ' expéditeur bloqué') + (moved ? ', ' + moved + ' mail' + (moved > 1 ? 's' : '') + ' rangé' + (moved > 1 ? 's' : '') : ''));
       updateBadge();
     } catch (e) {
       closeSheet();
@@ -466,9 +496,28 @@ function blockSheet(ids) {
     }
   };
 }
+// Fusionne les règles par adresse en une règle par marque
+async function mergeBlocked(fs, lab, box) {
+  const names = LS.get('blockedNames', {});
+  const groups = {};
+  fs.forEach(f => { const from = f.criteria.from.toLowerCase(); const t = blockTarget(from); (groups[t] = groups[t] || []).push(f); });
+  let created = 0, removed = 0;
+  for (const [t, list] of Object.entries(groups)) {
+    if (t.includes('@')) continue;
+    const domainRule = list.find(f => f.criteria.from.toLowerCase() === t);
+    const addrRules = list.filter(f => f !== domainRule);
+    if (!addrRules.length) continue;
+    if (!domainRule) { await api('settings/filters', { method: 'POST', body: { criteria: { from: t }, action: { addLabelIds: [lab], removeLabelIds: ['INBOX', 'UNREAD'] } } }); created++; }
+    if (!names[t]) names[t] = brandOf(t);
+    for (const f of addrRules) { await api('settings/filters/' + f.id, { method: 'DELETE' }); removed++; }
+    await moveExisting(t, lab);
+  }
+  LS.set('blockedNames', names);
+  return { created, removed };
+}
 function brandOf(email) {
-  const d = (email.split('@')[1] || email).split('.');
-  const core = d.length > 1 ? d[d.length - 2] : d[0];
+  const d = rootDomain(email).split('.');
+  const core = d[0];
   return core.charAt(0).toUpperCase() + core.slice(1);
 }
 async function renderBlocked(box) {
@@ -479,10 +528,15 @@ async function renderBlocked(box) {
     const fs = l ? (((await api('settings/filters')) || {}).filter || []).filter(f => f.action && (f.action.addLabelIds || []).includes(l.id) && f.criteria && f.criteria.from) : [];
     if (!fs.length) { box.innerHTML = '<p>Aucun expéditeur bloqué pour l’instant.</p>'; return; }
     const names = LS.get('blockedNames', {});
-    const label = e => names[e.toLowerCase()] || brandOf(e);
+    const label = e => names[e.toLowerCase()] || (e.includes('@') && WEBMAIL.includes(rootDomain(e)) ? e.split('@')[0] : brandOf(e));
+    const sub = e => e.includes('@') ? e : 'Toutes les adresses @' + e;
+    const after = new Set(fs.map(f => blockTarget(f.criteria.from.toLowerCase()))).size;
+    const mergeBtn = after < fs.length ? `<button class="btn primary" id="blk-merge">Regrouper par marque (${fs.length} → ${after})</button><p style="margin:0">Une seule règle par marque bloque toutes ses adresses, y compris celles qu'elle utilisera demain.</p>` : '';
     fs.sort((a, b) => label(a.criteria.from).localeCompare(label(b.criteria.from), 'fr'));
-    box.innerHTML = `<details class="acc"><summary><span>${fs.length} expéditeur${fs.length > 1 ? 's' : ''} bloqué${fs.length > 1 ? 's' : ''}</span><span class="chev" aria-hidden="true"></span></summary><div class="acc-body">` + fs.map(f => `<div class="lab-row" style="padding:6px 0;gap:10px"><span class="nm" style="min-width:0;display:flex;flex-direction:column"><b style="font-size:.95rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label(f.criteria.from))}</b><span style="font-size:.72rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.criteria.from)}</span></span><button class="btn" style="height:38px;font-size:.75rem" data-fid="${esc(f.id)}">Débloquer</button></div>`).join('') +
-      `</div></details><a class="btn" href="#/list/${encodeURIComponent(l.id)}">Voir les mails « ${BLOCK_LABEL} »</a>`;
+    box.innerHTML = `<details class="acc"><summary><span>${fs.length} expéditeur${fs.length > 1 ? 's' : ''} bloqué${fs.length > 1 ? 's' : ''}</span><span class="chev" aria-hidden="true"></span></summary><div class="acc-body">` + fs.map(f => `<div class="lab-row" style="padding:6px 0;gap:10px"><span class="nm" style="min-width:0;display:flex;flex-direction:column"><b style="font-size:.95rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label(f.criteria.from))}</b><span style="font-size:.72rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(sub(f.criteria.from))}</span></span><button class="btn" style="height:38px;font-size:.75rem" data-fid="${esc(f.id)}">Débloquer</button></div>`).join('') +
+      `</div></details>${mergeBtn}<a class="btn" href="#/list/${encodeURIComponent(l.id)}">Voir les mails « ${BLOCK_LABEL} »</a>`;
+    const mb = $('#blk-merge', box);
+    if (mb) mb.onclick = async () => { mb.disabled = true; mb.textContent = 'Regroupement…'; try { const r = await mergeBlocked(fs, l.id, box); toast('Règles regroupées : ' + r.removed + ' remplacées'); } catch (e) { toast('Échec : ' + e.message); } renderBlocked(box); };
     if (state.accOpen) { const dt = $('details.acc', box); if (dt) dt.open = true; state.accOpen = false; }
     $$('button[data-fid]', box).forEach(b => b.onclick = async () => { b.disabled = true; try { await api('settings/filters/' + b.dataset.fid, { method: 'DELETE' }); toast('Débloqué'); state.accOpen = true; await renderBlocked(box); } catch (e) { b.disabled = false; toast('Échec : ' + e.message); } });
   } catch (e) { box.innerHTML = '<p>Liste indisponible.</p>'; }

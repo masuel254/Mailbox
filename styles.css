@@ -196,3 +196,6 @@ body.selecting .item.sel .mark::after{content:"";width:10px;height:6px;border-le
 .acc .chev{width:10px;height:10px;border-right:2.5px solid var(--accent);border-bottom:2.5px solid var(--accent);transform:rotate(45deg);transition:transform .2s;margin-right:6px}
 .acc[open] .chev{transform:rotate(-135deg)}
 .acc-body{border-top:1px solid var(--line);margin-top:4px}
+.blk-row{display:flex;flex-direction:column;gap:2px}
+.blk-dom{font-size:.78rem;color:var(--muted);padding:0 12px 0 50px;min-height:40px}
+.blk-dom input{width:44px;height:26px}
