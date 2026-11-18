@@ -1,8 +1,8 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '1.6.3';
-const APP_DATE = '17/11/2026';
+const APP_VERSION = '1.6.4';
+const APP_DATE = '18/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
 const BLOCK_LABEL = 'Indésirables';
@@ -481,9 +481,10 @@ async function renderBlocked(box) {
     const names = LS.get('blockedNames', {});
     const label = e => names[e.toLowerCase()] || brandOf(e);
     fs.sort((a, b) => label(a.criteria.from).localeCompare(label(b.criteria.from), 'fr'));
-    box.innerHTML = fs.map(f => `<div class="lab-row" style="padding:6px 0;gap:10px"><span class="nm" style="min-width:0;display:flex;flex-direction:column"><b style="font-size:.95rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label(f.criteria.from))}</b><span style="font-size:.72rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.criteria.from)}</span></span><button class="btn" style="height:38px;font-size:.75rem" data-fid="${esc(f.id)}">Débloquer</button></div>`).join('') +
-      `<a class="btn" href="#/list/${encodeURIComponent(l.id)}">Voir les mails « ${BLOCK_LABEL} »</a>`;
-    $$('button[data-fid]', box).forEach(b => b.onclick = async () => { b.disabled = true; try { await api('settings/filters/' + b.dataset.fid, { method: 'DELETE' }); toast('Débloqué'); renderBlocked(box); } catch (e) { b.disabled = false; toast('Échec : ' + e.message); } });
+    box.innerHTML = `<details class="acc"><summary><span>${fs.length} expéditeur${fs.length > 1 ? 's' : ''} bloqué${fs.length > 1 ? 's' : ''}</span><span class="chev" aria-hidden="true"></span></summary><div class="acc-body">` + fs.map(f => `<div class="lab-row" style="padding:6px 0;gap:10px"><span class="nm" style="min-width:0;display:flex;flex-direction:column"><b style="font-size:.95rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label(f.criteria.from))}</b><span style="font-size:.72rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.criteria.from)}</span></span><button class="btn" style="height:38px;font-size:.75rem" data-fid="${esc(f.id)}">Débloquer</button></div>`).join('') +
+      `</div></details><a class="btn" href="#/list/${encodeURIComponent(l.id)}">Voir les mails « ${BLOCK_LABEL} »</a>`;
+    if (state.accOpen) { const dt = $('details.acc', box); if (dt) dt.open = true; state.accOpen = false; }
+    $$('button[data-fid]', box).forEach(b => b.onclick = async () => { b.disabled = true; try { await api('settings/filters/' + b.dataset.fid, { method: 'DELETE' }); toast('Débloqué'); state.accOpen = true; await renderBlocked(box); } catch (e) { b.disabled = false; toast('Échec : ' + e.message); } });
   } catch (e) { box.innerHTML = '<p>Liste indisponible.</p>'; }
 }
 

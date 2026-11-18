@@ -191,3 +191,8 @@ body.selecting .item.sel .mark::after{content:"";width:10px;height:6px;border-le
 .upd-banner{position:fixed;left:10px;right:10px;top:calc(var(--safe-top) + 8px);z-index:70;display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;background:var(--card);border:2px solid var(--accent-fill);font-size:.85rem;font-weight:650;box-shadow:0 6px 20px rgba(0,0,0,.4)}
 .upd-banner .btn{height:42px;margin-left:auto;flex:none}
 #btn-empty{white-space:nowrap;padding:0 12px;height:42px;font-size:.8rem;color:var(--danger);border-color:var(--danger)}
+.acc summary{list-style:none;display:flex;align-items:center;justify-content:space-between;min-height:48px;cursor:pointer;font-weight:700;font-size:.95rem}
+.acc summary::-webkit-details-marker{display:none}
+.acc .chev{width:10px;height:10px;border-right:2.5px solid var(--accent);border-bottom:2.5px solid var(--accent);transform:rotate(45deg);transition:transform .2s;margin-right:6px}
+.acc[open] .chev{transform:rotate(-135deg)}
+.acc-body{border-top:1px solid var(--line);margin-top:4px}
