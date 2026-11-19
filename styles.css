@@ -249,3 +249,21 @@ body.selecting .item .av{display:none}
 .unr-pill.on{border-color:var(--accent-fill);color:var(--accent)}
 .unsub-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 4px 10px;padding:8px 12px;border-radius:12px;background:var(--surface);font-size:.82rem;color:var(--muted)}
 .unsub-bar .btn{height:34px;font-size:.8rem;padding:0 12px;width:auto}
+/* Dossiers */
+.card.fold{padding:0;gap:0;overflow:hidden}
+.frow{display:flex;align-items:center;gap:10px;min-height:50px;padding:0 6px 0 14px;border-bottom:1px solid var(--line);text-decoration:none;color:var(--text);font-size:1rem;cursor:pointer}
+.frow:last-child{border-bottom:none}
+.frow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.frow .fic{width:22px;height:22px;flex:none;fill:none;stroke:var(--muted);stroke-width:1.8}
+.frow.d1{padding-left:48px;font-size:.95rem;color:var(--dim);min-height:46px}
+.frow.d2{padding-left:72px;font-size:.92rem;color:var(--dim);min-height:44px}
+.frow.d3{padding-left:94px;font-size:.9rem;color:var(--dim);min-height:44px}
+.frow .dot{width:8px;height:8px;border-radius:4px;flex:none}
+.fnb{font-size:.78rem;font-weight:800;color:var(--on-accent);background:var(--accent-fill);border-radius:10px;padding:2px 8px;flex:none}
+.fstar{background:none;border:none;font-size:1.15rem;color:var(--muted);width:36px;height:40px;flex:none;cursor:pointer;opacity:.55}
+.fstar.on{color:var(--accent);opacity:1}
+.ftog{background:none;border:none;width:36px;height:40px;flex:none;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.ftog .chev{width:9px;height:9px;border-right:2.5px solid var(--accent);border-bottom:2.5px solid var(--accent);transform:rotate(-45deg);transition:transform .2s}
+.ftog[aria-expanded="true"] .chev{transform:rotate(45deg)}
+.fav-t{color:var(--accent)}
+.fhint{margin:4px 8px 12px;font-size:.82rem;color:var(--muted)}

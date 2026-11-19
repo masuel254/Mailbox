@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.5.0';
+const APP_VERSION = '2.6.0';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -225,7 +225,7 @@ const state = { lists: {}, current: null, me: null };
 const keyOf = ck => String(ck).split('|').pop();
 const FREE_FOLDERS = { INBOX: 'INBOX', UNREAD: 'INBOX', SENT: 'SENT', TRASH: 'TRASH', SPAM: 'JUNK' };
 const isBlockLabel = key => { try { return (labelById(key) || {}).name === BLOCK_LABEL; } catch (e) { return false; } };
-const freeFolderOf = key => FREE_FOLDERS[key] || (isBlockLabel(key) ? 'BLOCKED' : null);
+const freeFolderOf = key => FREE_FOLDERS[key] || (String(key).startsWith('F:') ? decodeURIComponent(key.slice(2)) : null) || (isBlockLabel(key) ? 'BLOCKED' : null);
 const curAcc = () => freeOn() ? (settings.acc || 'all') : 'gmail';
 function parseFreeId(id) { const p = id.split(':'); return { uid: +p[1], folder: p.slice(2).join(':') }; }
 function freeItem(x) {
@@ -239,7 +239,8 @@ function route() {
   closeSheet();
   exitSelect(true);
   document.body.classList.toggle('no-tabbar', view === 'thread' || view === 'compose' || view === 'free');
-  $$('#tabbar a').forEach(a => a.classList.toggle('on', a.dataset.tab === (view === 'list' ? (parts[1] === 'UNREAD' ? 'INBOX' : (parts[1] || 'INBOX')) : view)));
+  const lk = parts[1] === 'UNREAD' ? 'INBOX' : (parts[1] || 'INBOX');
+  $$('#tabbar a').forEach(a => a.classList.toggle('on', a.dataset.tab === (view === 'list' ? (['INBOX', 'SENT'].includes(lk) ? lk : 'labels') : view)));
   $('#view').scrollTop = 0;
   if (!settings.clientId && !relayGmailOn() && view !== 'settings') return renderWelcome();
   if (view === 'thread') return renderThread(decodeURIComponent(parts[1]));
@@ -276,9 +277,11 @@ async function renderList(key, q) {
   const isSearch = key === 'SEARCH';
   const sys = SYSTEM[key];
   let title = isSearch ? 'Recherche' : sys ? sys.name : 'Libellé';
-  if (!sys && !isSearch) { try { await getLabels(); const l = labelById(key); if (l) title = l.name; } catch (e) { if (e.message === 'auth') return; } }
+  if (String(key).startsWith('F:')) title = decodeURIComponent(key.slice(2)).split(/[\/.]/).pop();
+  else if (!sys && !isSearch) { try { await getLabels(); const l = labelById(key); if (l) title = l.name; } catch (e) { if (e.message === 'auth') return; } }
   const plain = !!(sys && sys.plain);
-  const acc = freeOn() && (isSearch || freeFolderOf(key)) ? curAcc() : 'gmail';
+  const isFreeDir = String(key).startsWith('F:');
+  const acc = isFreeDir ? 'free' : freeOn() && (isSearch || freeFolderOf(key)) ? curAcc() : 'gmail';
   const cacheKey = (acc !== 'gmail' ? acc + '|' : '') + (isSearch ? 'S:' + q : key);
   state.current = cacheKey;
   v.innerHTML = `
@@ -291,7 +294,7 @@ async function renderList(key, q) {
     <form class="searchbar" id="searchbar" ${isSearch ? '' : 'hidden'}><input type="search" id="q" placeholder="Rechercher (ex. from:claire facture)" value="${esc(q || '')}" enterkeyhint="search" autocomplete="off"></form>
     ${(() => {
       const inboxish = key === 'INBOX' || key === 'UNREAD';
-      const accs = freeOn() && (isSearch || freeFolderOf(key)) ? `<div class="accounts" role="tablist" aria-label="Comptes">
+      const accs = freeOn() && !isFreeDir && (isSearch || freeFolderOf(key)) ? `<div class="accounts" role="tablist" aria-label="Comptes">
       ${[['all', 'Tous', ''], ['gmail', 'Gmail', 'var(--gmail)'], ['free', 'Free', 'var(--free)']].map(([k, n, c]) => `<button role="tab" aria-selected="${acc === k}" class="${acc === k ? 'on' : ''}" data-acc="${k}"><span class="acc-l">${c ? `<span class="dot" style="background:${c}"></span>` : ''}${n}</span>${inboxish ? `<small class="acc-n" data-n="${k}"></small>` : ''}</button>`).join('')}
     </div>` : '';
       if (!inboxish) return accs;
@@ -1174,17 +1177,94 @@ function openSheet(html) {
 function closeSheet() { const s = $('#sheet'); if (s) { s.hidden = true; s.innerHTML = ''; } }
 
 /* ---------- Libellés (navigation) ---------- */
+/* ---------- Dossiers : Gmail + Free, arborescence, favoris, recherche ---------- */
+const FOLD_ICON = '<svg class="fic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+function buildTree(items, sep) {
+  // items : [{ key, full, href, n }] ; regroupe par chemin « A/B/C »
+  const root = { children: new Map() };
+  for (const it of items) {
+    const parts = it.full.split(sep); let node = root, path = '';
+    parts.forEach((p, i) => {
+      path = path ? path + sep + p : p;
+      if (!node.children.has(p)) node.children.set(p, { name: p, path, children: new Map() });
+      node = node.children.get(p);
+      if (i === parts.length - 1) Object.assign(node, it);
+    });
+  }
+  const sum = n => { n.total = (n.n || 0) + [...n.children.values()].reduce((a, c) => a + sum(c), 0); return n.total; };
+  [...root.children.values()].forEach(sum);
+  return root;
+}
 async function renderLabels() {
   const v = $('#view');
-  v.innerHTML = `<div class="top"><h1>Dossiers et libellés</h1></div><div id="labs"><div class="loading">Chargement…</div></div>`;
-  let labels;
-  try { labels = await getLabels(true); } catch (e) { return; }
-  const counts = await pool(labels, 6, l => api('labels/' + l.id)).catch(() => []);
-  const sys = ['INBOX', 'STARRED', 'IMPORTANT', 'SENT', 'DRAFT', 'ALL', 'SPAM', 'TRASH'];
-  const $l = $('#labs'); if (!$l) return;
-  $l.innerHTML = `<div class="card" style="padding:0;gap:0">${sys.map(k => `<a class="lab-row" href="#/list/${k}"><span class="sw" style="--c:var(--accent-fill)"></span><span class="nm">${esc(SYSTEM[k].name)}</span></a>`).join('')}</div>
-    <h2 class="h2">Mes libellés</h2>
-    <div class="card" style="padding:0;gap:0">${labels.length ? labels.map((l, i) => { const c = counts[i]; const n = c && c.threadsUnread; return `<a class="lab-row" href="#/list/${encodeURIComponent(l.id)}"><span class="sw" style="--c:${esc(labelColor(l))}"></span><span class="nm">${esc(l.name)}</span>${n ? `<span class="nb">${n}</span>` : ''}</a>`; }).join('') : '<div class="empty">Aucun libellé personnel.</div>'}</div>`;
+  v.innerHTML = `<div class="top"><h1>Dossiers</h1><button class="icon-btn" id="btn-refresh" aria-label="Actualiser">${ICON.refresh}</button></div>
+    <div class="searchbar"><input type="search" id="fq" placeholder="Chercher un dossier" autocomplete="off" enterkeyhint="search"></div>
+    <div id="labs"><div class="loading">Chargement…</div></div>`;
+  $('#btn-refresh').onclick = () => { state.folders = null; renderLabels(); };
+  const data = state.folders && Date.now() - state.folders.at < 120000 ? state.folders : null;
+  let g = [], f = [];
+  if (data) ({ g, f } = data);
+  else {
+    const jobs = [];
+    jobs.push((async () => {
+      try {
+        const labels = await getLabels(true);
+        const counts = await pool(labels, 4, l => api('labels/' + l.id).catch(() => null));
+        g = labels.map((l, i) => ({ key: 'g:' + l.id, full: l.name, href: '#/list/' + encodeURIComponent(l.id), n: (counts[i] && counts[i].threadsUnread) || 0, acc: 'gmail', color: labelColor(l) }));
+      } catch (e) { if (e.message === 'auth') throw e; }
+    })());
+    if (freeOn()) jobs.push(rapi('/free/folders?tree=1').then(r => { f = (r.folders || []).map(x => ({ key: 'f:' + x.path, full: x.path, delim: x.delim, href: '#/list/F:' + encodeURIComponent(x.path), n: x.unseen || 0, acc: 'free' })); }).catch(e => toast('Free : ' + e.message)));
+    try { await Promise.all(jobs); } catch (e) { return; }
+    state.folders = { at: Date.now(), g, f };
+  }
+  const favs = LS.get('favFolders', []);
+  const opened = new Set(LS.get('openFolders', []));
+  const all = g.concat(f);
+  const byKey = new Map(all.map(x => [x.key, x]));
+  const nb = n => n ? `<span class="fnb">${n > 99 ? '99+' : n}</span>` : '';
+  const star = k => `<button class="fstar ${favs.includes(k) ? 'on' : ''}" data-fav="${esc(k)}" aria-label="${favs.includes(k) ? 'Retirer des favoris' : 'Ajouter aux favoris'}">${favs.includes(k) ? '★' : '☆'}</button>`;
+  const dot = acc => `<span class="dot" style="background:var(--${acc})"></span>`;
+  const rowHTML = (node, depth, acc) => {
+    const kids = [...node.children.values()].sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+    const ok = acc + ':' + node.path, open = opened.has(ok);
+    const chev = kids.length ? `<button class="ftog" data-open="${esc(ok)}" aria-expanded="${open}" aria-label="${open ? 'Replier' : 'Déplier'}"><span class="chev"></span></button>` : '';
+    const inner = `${depth ? '' : FOLD_ICON}<span class="nm">${esc(node.name)}</span>${nb(kids.length && !open ? node.total : node.n)}`;
+    const row = node.href
+      ? `<a class="frow d${Math.min(depth, 3)}" href="${node.href}">${inner}${star(node.key)}${chev}</a>`
+      : `<div class="frow d${Math.min(depth, 3)}" ${kids.length ? `data-open-row="${esc(ok)}"` : ''}>${inner}${chev}</div>`;
+    return row + (open ? kids.map(c => rowHTML(c, depth + 1, acc)).join('') : '');
+  };
+  const section = (title, acc, items) => {
+    if (!items.length) return '';
+    const sep = acc === 'free' ? (items[0].delim || '/') : '/';
+    const tree = buildTree(items, sep);
+    return `<h2 class="sec">${dot(acc)}${title}</h2><div class="card fold">${[...tree.children.values()].sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(n => rowHTML(n, 0, acc)).join('')}</div>`;
+  };
+  const boxes = ['STARRED', 'IMPORTANT', 'DRAFT', 'ALL', 'SPAM', 'TRASH'];
+  const draw = q => {
+    const $l = $('#labs'); if (!$l) return;
+    if (q) {
+      const ql = q.toLowerCase();
+      const hits = all.filter(x => x.full.toLowerCase().includes(ql));
+      $l.innerHTML = hits.length ? `<div class="card fold">${hits.map(x => `<a class="frow" href="${x.href}">${FOLD_ICON}<span class="nm">${esc(x.full.split(x.delim || '/').join(' › '))}</span>${dot(x.acc)}${nb(x.n)}${star(x.key)}</a>`).join('')}</div>` : '<div class="empty">Aucun dossier ne correspond.</div>';
+    } else {
+      const fv = favs.map(k => byKey.get(k)).filter(Boolean);
+      $l.innerHTML = (fv.length ? `<h2 class="sec"><span class="fav-t">★</span>Favoris</h2><div class="card fold">${fv.map(x => `<a class="frow" href="${x.href}">${FOLD_ICON}<span class="nm">${esc(x.full.split(x.delim || '/').join(' › '))}</span>${dot(x.acc)}${nb(x.n)}${star(x.key)}</a>`).join('')}</div>` : '<p class="fhint">Touche ☆ à côté d’un dossier pour l’épingler ici.</p>')
+        + section('Gmail', 'gmail', g) + section('Free', 'free', f)
+        + `<h2 class="sec">Boîtes</h2><div class="card fold">${boxes.map(k => `<a class="frow" href="#/list/${k}">${FOLD_ICON}<span class="nm">${esc(SYSTEM[k].name)}</span></a>`).join('')}</div>`;
+    }
+    $$('[data-fav]', $l).forEach(b => b.onclick = e => {
+      e.preventDefault(); e.stopPropagation();
+      const k = b.dataset.fav, i = favs.indexOf(k);
+      if (i >= 0) favs.splice(i, 1); else favs.push(k);
+      LS.set('favFolders', favs); draw($('#fq').value.trim());
+    });
+    $$('[data-open]', $l).forEach(b => b.onclick = e => { e.preventDefault(); e.stopPropagation(); toggleOpen(b.dataset.open); });
+    $$('[data-open-row]', $l).forEach(b => b.onclick = () => toggleOpen(b.dataset.openRow));
+  };
+  const toggleOpen = k => { opened.has(k) ? opened.delete(k) : opened.add(k); LS.set('openFolders', [...opened]); draw($('#fq').value.trim()); };
+  $('#fq').oninput = e => draw(e.target.value.trim());
+  draw('');
 }
 
 /* ---------- Rédaction ---------- */

@@ -451,7 +451,21 @@ const routes = {
     return { ok: true, email: user };
   },
   'DELETE /free/account': async () => { S.free = null; S.badge.free = 0; save(); startIdle().catch(() => {}); return { ok: true }; },
-  'GET /free/folders': async () => withImap(async c => { const f = await folders(c); return f; }),
+  'GET /free/folders': async q => withImap(async c => {
+    const f = await folders(c);
+    if (q.get('tree') === '1') {
+      const list = await c.list();
+      const skip = new Set(['INBOX', f.sent, f.trash, f.junk, f.drafts]);
+      const user = list.filter(m => !skip.has(m.path) && !(m.flags && m.flags.has('\\Noselect')) && !m.specialUse);
+      const out = [];
+      for (const m of user) {
+        let unseen = 0; try { unseen = (await c.status(m.path, { unseen: true })).unseen || 0; } catch (e) {}
+        out.push({ path: m.path, name: m.name, delim: m.delimiter || '/', unseen });
+      }
+      return { folders: out };
+    }
+    return f;
+  }),
   'GET /free/list': async q => freeList(q.get('folder') || 'INBOX', q.get('unread') === '1', +q.get('before') || 0, Math.min(+q.get('limit') || 25, 50)),
   'GET /free/search': async q => freeSearch((q.get('q') || '').slice(0, 200), Math.min(+q.get('limit') || 30, 50)),
   'GET /free/message': async q => freeMessage(q.get('folder') || 'INBOX', +q.get('uid')),
