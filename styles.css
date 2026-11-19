@@ -296,3 +296,16 @@ details.set .ftog[aria-expanded="true"] .chev{transform:rotate(45deg)}
 #tidy-themes,#tidy-ai{margin-top:6px}
 .tidy-h{display:flex;align-items:center;gap:8px}
 .chip.size{border-color:var(--accent-fill);color:var(--accent);font-weight:750}
+.tgroup{border:1px solid var(--line);border-radius:12px;margin:6px 0 8px;overflow:hidden}
+.tgroup-h{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface);font-weight:750;font-size:.92rem}
+.tgroup-h span:nth-child(2){flex:1;min-width:0}
+.tgroup-h small{color:var(--muted);font-weight:600}
+.tgroup input,.trow input{width:24px;height:24px;flex:none;accent-color:var(--accent-fill)}
+.trow{display:flex;align-items:center;gap:10px;padding:7px 12px;border-top:1px solid var(--line)}
+.tname{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.3;font-size:.9rem}
+.tname b{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tname em{font-style:normal;color:var(--accent);font-size:.8rem}
+.tname small{color:var(--muted);font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tidy-list .switch{align-items:flex-start;padding:4px 0}
+.tidy-list .switch>span{flex:1;min-width:0}
+.tname .tl{display:flex;gap:6px;align-items:baseline;min-width:0}

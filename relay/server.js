@@ -254,6 +254,7 @@ async function aiFolders(list, focus) {
     'Règles : ne supprime jamais de mails ; ne touche pas au dossier « Indésirables » ; garde les noms choisis par l’utilisateur sauf doublon évident ; ' +
     'sors du niveau « INBOX/ » ou « [Imap]/ » les dossiers personnels rangés dessous par un ancien logiciel ; fusionne les doublons (même nom à la casse près, mêmes thèmes évidents) ; ' +
     'regroupe sous quelques grands thèmes en français (ex. Administratif, Travail, Famille, Voyages, Maison, Achats) seulement si cela réduit nettement le nombre de dossiers au premier niveau ; ' +
+    'quand plusieurs sous-dossiers vont ensemble (ex. INBOX/CRYPTO/ATC, INBOX/CRYPTO/Binance), déplace le dossier parent entier (INBOX/CRYPTO → Banque & Assurances/Crypto) : ses sous-dossiers suivent, ne les déplace pas un par un ; ' +
     'n’agis pas sur les dossiers vides (ils sont traités à part) ; ' + (focus === 'themes' ? '80' : '40') + ' actions maximum, les plus utiles d’abord ; "from" doit être recopié exactement depuis la liste.' +
     (focus === 'themes' ? ' PRIORITÉ : remplace le regroupement « INBOX/ » (et « [Imap]/ », « [Gmail]/ » s’ils contiennent des dossiers personnels) par 5 à 8 grands thèmes en français adaptés aux noms rencontrés (par exemple Administratif, Banque & Assurances, Travail, Famille, Voyages, Maison, Santé, Achats). Chaque dossier situé sous INBOX/ doit recevoir une action "move" vers « Thème/NomDuDossier ». Range aussi dans ces thèmes les dossiers de premier niveau qui s’y rattachent clairement (ex. ASSURANCES → Banque & Assurances/Assurances). Ne crée pas de thème pour un seul dossier.' : '');
   const user = names.map(x => x.name + ' (' + (x.n >= 0 ? x.n : '?') + ')').join('\n');
@@ -262,7 +263,9 @@ async function aiFolders(list, focus) {
   const known = new Set(names.map(x => x.name));
   const acts = out.actions.filter(a => a && (a.type === 'move' || a.type === 'merge') && known.has(a.from) && typeof a.to === 'string' && a.to.trim() && a.to.trim() !== a.from && a.from !== BLOCK_LABEL && !a.to.startsWith(BLOCK_LABEL))
     .slice(0, focus === 'themes' ? 80 : 40).map(a => ({ type: a.type, from: a.from, to: a.to.trim().replace(/\s*\/\s*/g, '/').replace(/^\/|\/$/g, ''), why: String(a.why || '').slice(0, 120) }));
-  return { actions: acts };
+  // si un dossier parent est déplacé, ses sous-dossiers suivent : on retire les actions redondantes
+  const moved = acts.map(a => a.from);
+  return { actions: acts.filter(a => !moved.some(p => p !== a.from && a.from.startsWith(p + '/'))) };
 }
 async function aiSearch(question, today) {
   if (!S.ai) throw Object.assign(new Error('IA non configurée'), { code: 400 });

@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.10.1';
+const APP_VERSION = '2.10.2';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -1371,12 +1371,19 @@ function tidySheet(g, f) {
         <h3 class="tidy-h">Dossiers vides · ${dels.length}</h3>
         ${dels.length ? dels.map(l => `<label class="switch"><span><span class="dot tdot" style="background:var(--${l.x.acc})"></span>Supprimer <b>${esc(disp(l.x).split('/').join(' › '))}</b></span><input type="checkbox" data-i="${lines.indexOf(l)}" ${l.on ? 'checked' : ''}></label>`).join('') : '<p class="fhint">Aucun dossier vide.</p>'}
         <h3 class="tidy-h">Proposition de l'IA${ai.length ? ' · ' + ai.length + ` <button class="sec-btn" id="tidy-toggle" type="button">${ai.every(l => l.on) ? 'Tout décocher' : 'Tout cocher'}</button>` : ''}</h3>
-        ${ai.length ? ai.map(l => `<label class="switch"><span><span class="dot tdot" style="background:var(--${l.acc})"></span>${l.kind === 'merge' ? 'Fusionner' : 'Déplacer'} <b>${esc(l.from.split('/').join(' › '))}</b> → <b>${esc(l.to.split('/').join(' › '))}</b>${l.why ? `<small>${esc(l.why)}</small>` : ''}</span><input type="checkbox" data-i="${lines.indexOf(l)}" ${l.on ? 'checked' : ''}></label>`).join('')
+        ${ai.length ? (() => {
+          // regroupé par dossier d'arrivée : un bloc par thème, une ligne courte par dossier déplacé
+          const groups = new Map();
+          ai.forEach(l => { const parts = l.to.split('/'); const dest = (l.kind === 'merge' ? parts : parts.slice(0, -1)).join(' › ') || 'Premier niveau'; const k = l.acc + '|' + dest; if (!groups.has(k)) groups.set(k, { acc: l.acc, dest, items: [] }); groups.get(k).items.push(l); });
+          return [...groups.values()].map(gr => `<div class="tgroup"><div class="tgroup-h"><span class="dot tdot" style="background:var(--${gr.acc})"></span><span>→ ${esc(gr.dest)}</span><small>${gr.items.length}</small><input type="checkbox" class="tg-all" data-g="${esc(gr.acc + '|' + gr.dest)}" ${gr.items.every(l => l.on) ? 'checked' : ''} aria-label="Tout le groupe"></div>
+            ${gr.items.map(l => { const fp = l.from.split('/'), leaf = fp.pop(), np = l.to.split('/').pop(); return `<label class="trow"><span class="tname"><span class="tl"><b>${esc(leaf)}</b>${l.kind === 'merge' ? ' <em>fusionné</em>' : np !== leaf ? ' <em>→ ' + esc(np) + '</em>' : ''}</span><small>${esc(fp.length ? 'depuis ' + fp.join(' › ') : 'depuis le premier niveau')}</small></span><input type="checkbox" data-i="${lines.indexOf(l)}" data-gk="${esc(gr.acc + '|' + gr.dest)}" ${l.on ? 'checked' : ''}></label>`; }).join('')}</div>`).join('');
+        })()
           : settings.ai ? `<button class="btn primary" id="tidy-themes" type="button">✦ Remplacer INBOX par des thèmes</button><button class="btn" id="tidy-ai" type="button">✦ Proposer un rangement général</button><p class="fhint">L’IA ne reçoit que les noms de tes dossiers et leur nombre de mails. Rien n’est appliqué sans ta validation, et aucun mail n’est supprimé.</p>`
           : '<p class="fhint">Active l’assistant IA dans Réglages › Relais et notifications pour obtenir une proposition.</p>'}
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="tidy-ok">Appliquer (${lines.filter(l => l.on).length})</button></div>`);
     $$('.tidy-list input[data-i]').forEach(c => c.onchange = () => { lines[+c.dataset.i].on = c.checked; $('#tidy-ok').textContent = 'Appliquer (' + lines.filter(l => l.on).length + ')'; });
+    $$('.tidy-list .tg-all').forEach(c => c.onchange = () => { $$('.tidy-list input[data-gk]').filter(x => x.dataset.gk === c.dataset.g).forEach(x => { x.checked = c.checked; lines[+x.dataset.i].on = c.checked; }); $('#tidy-ok').textContent = 'Appliquer (' + lines.filter(l => l.on).length + ')'; });
     const tt = $('#tidy-toggle'); if (tt) tt.onclick = () => { const ai = lines.filter(l => l.kind !== 'del'), v = !ai.every(l => l.on); ai.forEach(l => l.on = v); draw(); };
     const runAI = async (ab, focus) => {
       $$('#tidy-ai,#tidy-themes').forEach(x => x.disabled = true); ab.textContent = 'L’IA étudie tes dossiers…';
