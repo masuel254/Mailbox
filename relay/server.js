@@ -24,6 +24,8 @@ const C = {
   vapidSubject: process.env.VAPID_SUBJECT || 'mailto:admin@example.com',
   dataDir: process.env.DATA_DIR || '/data',
   pollMs: +(process.env.POLL_SECONDS || 60) * 1000,
+  aiUrl: process.env.AI_URL || 'https://api.groq.com/openai/v1/chat/completions',
+  aiModel: process.env.AI_MODEL || 'openai/gpt-oss-20b',
   imap: { host: process.env.FREE_IMAP_HOST || 'imap.free.fr', port: +(process.env.FREE_IMAP_PORT || 993), secure: process.env.FREE_IMAP_SECURE !== 'false' },
   smtp: { host: process.env.FREE_SMTP_HOST || 'smtp.free.fr', port: +(process.env.FREE_SMTP_PORT || 465), secure: process.env.FREE_SMTP_SECURE !== 'false', tls: { rejectUnauthorized: process.env.FREE_TLS_STRICT !== 'false' } }
 };
@@ -159,28 +161,33 @@ async function freeList(folderKey, unread, before, limit) {
   });
 }
 async function freeSearch(q, limit) {
-  const crit = {}; const words = [];
+  const crit = {}; const words = []; let anyOf = false;
   for (const tok of (q.match(/\S+:"[^"]*"|\S+:\S+|"[^"]*"|\S+/g) || [])) {
-    const m = tok.match(/^(from|de|to|subject|objet):(.+)$/i);
-    const v = (m ? m[2] : tok).replace(/^"|"$/g, '');
-    if (m && /^(from|de)$/i.test(m[1])) crit.from = v; else if (m && /^to$/i.test(m[1])) crit.to = v; else if (m) crit.subject = v;
-    else if (!/^(is|in|has|label|newer_than|older_than|after|before):/i.test(tok)) words.push(v);
+    const m = tok.match(/^(from|de|to|subject|objet|newer_than|after|before|older_than):(.+)$/i);
+    const v = (m ? m[2] : tok).replace(/^"|"$/g, '').replace(/^\(|\)$/g, '');
+    if (!m) { if (tok === 'OR') anyOf = true; else if (!/^(is|in|has|label|category|-)/i.test(tok)) words.push(v.toLowerCase()); continue; }
+    const k = m[1].toLowerCase();
+    if (k === 'from' || k === 'de') crit.from = v; else if (k === 'to') crit.to = v; else if (k === 'subject' || k === 'objet') crit.subject = v;
+    else if (k === 'newer_than') { const n = v.match(/^(\d+)([dmy])$/); if (n) crit.since = new Date(Date.now() - (+n[1]) * ({ d: 1, m: 30, y: 365 })[n[2]] * 86400000); }
+    else if (k === 'older_than') { const n = v.match(/^(\d+)([dmy])$/); if (n) crit.before = new Date(Date.now() - (+n[1]) * ({ d: 1, m: 30, y: 365 })[n[2]] * 86400000); }
+    else { const d = new Date(v.replace(/\//g, '-')); if (!isNaN(d)) crit[k === 'after' ? 'since' : 'before'] = d; }
   }
-  const text = words.join(' ');
-  const query = Object.assign({}, crit);
-  if (text) query.or = [{ subject: text }, { from: text }, { body: text }];
-  if (!Object.keys(query).length) return { items: [] };
+  const queries = words.length ? (anyOf ? words.map(w => Object.assign({}, crit, { text: w })) : [Object.assign({}, crit, { text: words[0] })]) : [crit];
+  if (!Object.keys(queries[0]).length) return { items: [] };
   return withImap(async client => {
     const f = await folders(client);
-    const items = [];
-    for (const folder of ['INBOX', f.sent, f.archive].filter(Boolean)) {
+    const items = [], seen = new Set();
+    for (const folder of ['INBOX', f.sent, f.archive, BLOCK_LABEL].filter(Boolean)) {
       let lock; try { lock = await client.getMailboxLock(folder); } catch (e) { continue; }
       try {
-        let uids = (await client.search(query, { uid: true })) || [];
-        uids = uids.sort((a, b) => b - a).slice(0, limit);
-        if (uids.length) for await (const m of client.fetch(uids, { envelope: true, flags: true, internalDate: true, source: { start: 0, maxLength: 6000 } }, { uid: true })) {
-          let snippet = '';
-          try { const p = await simpleParser(m.source); snippet = snip(p.text); } catch (e) {}
+        let uids = [];
+        for (const qq of queries) uids.push(...((await client.search(qq, { uid: true })) || []));
+        uids = [...new Set(uids)].sort((a, b) => b - a).slice(0, limit * 2);
+        if (uids.length) for await (const m of client.fetch(uids, { envelope: true, flags: true, internalDate: true, source: { start: 0, maxLength: 8000 } }, { uid: true })) {
+          let snippet = '', text = '';
+          try { const p = await simpleParser(m.source); text = p.text || ''; snippet = snip(text); } catch (e) {}
+          if (!anyOf && words.length > 1) { const hay = ((m.envelope.subject || '') + ' ' + JSON.stringify(m.envelope.from || []) + ' ' + text).toLowerCase(); if (!words.slice(1).every(w => hay.includes(w))) continue; }
+          const key = folder + ':' + m.uid; if (seen.has(key)) continue; seen.add(key);
           items.push({ uid: m.uid, folder, subject: m.envelope.subject || '(sans objet)', from: addr(m.envelope.from), to: (m.envelope.to || []).map(x => x.name || x.address).join(', '), date: +new Date(m.internalDate || m.envelope.date), seen: m.flags.has('\\Seen'), flagged: m.flags.has('\\Flagged'), snippet });
         }
       } finally { lock.release(); }
@@ -188,6 +195,56 @@ async function freeSearch(q, limit) {
     items.sort((a, b) => b.date - a.date);
     return { items: items.slice(0, limit) };
   });
+}
+/* Suivi : mails envoyés sans réponse, mails reçus de personnes sans réponse de ma part */
+async function freeWaiting() {
+  return withImap(async client => {
+    const f = await folders(client);
+    const now = Date.now(), day = 86400000;
+    const sent = [], inbox = [];
+    const grab = async (folder, since, arr, withHead) => {
+      let lock; try { lock = await client.getMailboxLock(folder); } catch (e) { return; }
+      try {
+        const uids = ((await client.search({ since: new Date(since) }, { uid: true })) || []).sort((a, b) => b - a).slice(0, 300);
+        if (uids.length) for await (const m of client.fetch(uids, Object.assign({ envelope: true, flags: true, internalDate: true }, withHead ? { headers: ['list-unsubscribe', 'precedence', 'auto-submitted'] } : {}), { uid: true })) {
+          const h = withHead && m.headers ? m.headers.toString() : '';
+          arr.push({ uid: m.uid, folder, env: m.envelope, flags: m.flags, date: +new Date(m.internalDate || m.envelope.date), bulk: /list-unsubscribe|precedence:\s*(bulk|list)|auto-submitted:\s*auto/i.test(h) });
+        }
+      } finally { lock.release(); }
+    };
+    await grab(f.sent, now - 30 * day, sent, false);
+    await grab('INBOX', now - 45 * day, inbox, true);
+    const me = S.free.user.toLowerCase();
+    const repliedTo = new Set(inbox.map(m => m.env.inReplyTo).filter(Boolean));
+    const answeredIds = new Set(sent.map(m => m.env.inReplyTo).filter(Boolean));
+    const item = (m, who) => ({ uid: m.uid, folder: m.folder, subject: m.env.subject || '(sans objet)', from: who, to: (m.env.to || []).map(x => x.name || x.address).join(', '), date: m.date, seen: m.flags.has('\\Seen'), flagged: m.flags.has('\\Flagged'), snippet: '' });
+    const theirs = sent.filter(m => m.date < now - 3 * day && m.env.messageId && !repliedTo.has(m.env.messageId) && (m.env.to || []).some(x => (x.address || '').toLowerCase() !== me))
+      .map(m => item(m, addr(m.env.to)));
+    const mine = inbox.filter(m => m.date > now - 14 * day && !m.bulk && !m.flags.has('\\Answered') && !answeredIds.has(m.env.messageId) && addr(m.env.from).email !== me && !/no-?reply|ne-pas-repondre|notification|newsletter/i.test(addr(m.env.from).email))
+      .map(m => item(m, addr(m.env.from)));
+    return { theirs: theirs.slice(0, 40), mine: mine.slice(0, 40) };
+  });
+}
+/* Recherche en langage naturel : seule la question part vers l'IA */
+async function aiSearch(question, today) {
+  if (!S.ai) throw Object.assign(new Error('IA non configurée'), { code: 400 });
+  if (!question) throw Object.assign(new Error('Question vide'), { code: 400 });
+  const sys = 'Tu convertis une demande en français en requête de recherche Gmail. Date du jour : ' + (today || new Date().toISOString().slice(0, 10)) + '. ' +
+    'Réponds UNIQUEMENT par un objet JSON {"q": "...", "resume": "..."}. ' +
+    '"q" utilise la syntaxe Gmail : from:, to:, subject:, mots-clés, OR, newer_than:7d/3m/1y, after:AAAA/MM/JJ, before:AAAA/MM/JJ, has:attachment, is:unread. ' +
+    'Garde 1 à 4 mots-clés distinctifs, sans mots vides ; pour une marque, utilise from:marque (sans .com) ; n\'invente pas d\'adresse. ' +
+    '"resume" décrit la recherche en une courte phrase en français, par exemple « Mails de Devred des 3 derniers mois contenant anniversaire ».';
+  const r = await fetch(C.aiUrl, { method: 'POST', headers: { Authorization: 'Bearer ' + dec(S.ai.key), 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(20000),
+    body: JSON.stringify({ model: C.aiModel, temperature: 0.1, max_tokens: 400, messages: [{ role: 'system', content: sys }, { role: 'user', content: question }] }) });
+  if (r.status === 401) throw Object.assign(new Error('Clé Groq refusée'), { code: 502 });
+  if (r.status === 429) throw Object.assign(new Error('Groq demande de patienter un instant'), { code: 503 });
+  if (!r.ok) throw Object.assign(new Error('IA indisponible (' + r.status + ')'), { code: 502 });
+  const j = await r.json();
+  const txt = ((j.choices || [])[0] || {}).message ? j.choices[0].message.content || '' : '';
+  const mm = txt.match(/\{[\s\S]*\}/);
+  let out = null; try { out = JSON.parse(mm ? mm[0] : txt); } catch (e) {}
+  if (!out || !out.q) throw Object.assign(new Error('Réponse de l’IA illisible, reformule'), { code: 502 });
+  return { q: String(out.q).slice(0, 300), resume: String(out.resume || '').slice(0, 200) };
 }
 async function freeMessage(folderKey, uid) {
   return withImap(async client => {
@@ -422,7 +479,7 @@ async function poll() {
 /* ---------- Routes ---------- */
 const routes = {
   'GET /health': async () => ({ ok: true, gmail: !!S.gmail, free: !!S.free, subs: S.subs.length }),
-  'GET /status': async () => ({ gmail: S.gmail ? { email: S.gmail.email } : null, free: S.free ? { email: S.free.user, name: S.free.name || '' } : null, subs: S.subs.length, badge: { gmail: S.badge.gmail, free: S.badge.free, total: total() }, vapid: C.vapidPub }),
+  'GET /status': async () => ({ gmail: S.gmail ? { email: S.gmail.email } : null, free: S.free ? { email: S.free.user, name: S.free.name || '' } : null, subs: S.subs.length, badge: { gmail: S.badge.gmail, free: S.badge.free, total: total() }, vapid: C.vapidPub, ai: !!S.ai }),
   'GET /gmail/token': async () => { const t = await gmailToken(); return { access_token: t.access_token, expires_in: Math.floor((t.exp - Date.now()) / 1000), scope: t.scope, email: S.gmail.email }; },
   'DELETE /gmail': async () => { S.gmail = null; gTok = null; save(); return { ok: true }; },
   'POST /push/subscribe': async (q, b) => { if (!b.subscription || !b.subscription.endpoint) throw Object.assign(new Error('abonnement invalide'), { code: 400 }); S.subs = S.subs.filter(s => s.endpoint !== b.subscription.endpoint).concat([b.subscription]); save(); return { ok: true, count: S.subs.length }; },
@@ -460,8 +517,8 @@ const routes = {
       const user = list.filter(m => !skip.has(m.path) && !(m.flags && m.flags.has('\\Noselect')) && !m.specialUse);
       const out = [];
       for (const m of user) {
-        let unseen = 0; try { unseen = (await c.status(m.path, { unseen: true })).unseen || 0; } catch (e) {}
-        out.push({ path: m.path, name: m.name, delim: m.delimiter || '/', unseen });
+        let unseen = 0, messages = 0; try { const st = await c.status(m.path, { unseen: true, messages: true }); unseen = st.unseen || 0; messages = st.messages || 0; } catch (e) {}
+        out.push({ path: m.path, name: m.name, delim: m.delimiter || '/', unseen, messages });
       }
       return { folders: out };
     }
@@ -496,6 +553,24 @@ const routes = {
     if (!r.ok) throw Object.assign(new Error('L’expéditeur a refusé la demande (' + r.status + ')'), { code: 502 });
     return { ok: true };
   },
+  'POST /free/folder-delete': async (q, b) => withImap(async client => {
+    const path = String(b.path || '');
+    const f = await folders(client);
+    if (!path || ['INBOX', f.sent, f.trash, f.junk, f.drafts, BLOCK_LABEL].includes(path)) throw Object.assign(new Error('Dossier protégé'), { code: 400 });
+    const st = await client.status(path, { messages: true });
+    if (st.messages) throw Object.assign(new Error('Le dossier n’est pas vide'), { code: 409 });
+    await client.mailboxDelete(path);
+    return { ok: true };
+  }),
+  'GET /free/waiting': async () => freeWaiting(),
+  'POST /ai/key': async (q, b) => {
+    const k = String(b.key || '').trim();
+    if (!k) { S.ai = null; save(); return { ok: true, ai: false }; }
+    const r = await fetch(C.aiUrl.replace(/chat\/completions$/, 'models'), { headers: { Authorization: 'Bearer ' + k } }).catch(() => null);
+    if (!r || r.status === 401) throw Object.assign(new Error('Clé refusée par Groq'), { code: 400 });
+    S.ai = { key: enc(k) }; save(); return { ok: true, ai: true };
+  },
+  'POST /ai/search': async (q, b) => aiSearch(String(b.q || '').slice(0, 300), String(b.today || '')),
   'GET /free/size': async q => freeFolderSize(q.get('folder') || 'BLOCKED'),
   'POST /free/empty': async (q, b) => freeEmpty(b.folder || 'BLOCKED'),
   'POST /free/block': async (q, b) => {

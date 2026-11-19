@@ -270,3 +270,10 @@ body.selecting .item .av{display:none}
 details.fsec .set-t{display:flex;align-items:center;gap:8px}
 details.fsec .set-t .dot{width:9px;height:9px;border-radius:5px}
 details.fsec>.card.fold{border-radius:0 0 14px 14px;margin:0}
+.chip.blocked{border-color:#e5534b;color:#ff7b72;font-weight:750}
+.tidy-btn{height:40px;width:auto;padding:0 14px;font-size:.85rem;margin-left:auto;margin-right:8px}
+.tidy-list{display:flex;flex-direction:column;gap:2px;max-height:45vh;overflow:auto}
+.ai-note{margin:0 4px 12px;padding:10px 14px;border-radius:12px;background:var(--surface);border:1px solid var(--accent-fill);display:flex;flex-direction:column;gap:4px;font-size:.82rem;color:var(--muted)}
+.ai-note b{color:var(--accent);font-size:.9rem}
+.ai-note code{color:var(--text);font-size:.8rem}
+.ai-note a{color:var(--accent);font-weight:650}

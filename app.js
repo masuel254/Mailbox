@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.6.1';
+const APP_VERSION = '2.7.0';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -241,13 +241,14 @@ function route() {
   exitSelect(true);
   document.body.classList.toggle('no-tabbar', view === 'thread' || view === 'compose' || view === 'free');
   const lk = parts[1] === 'UNREAD' ? 'INBOX' : (parts[1] || 'INBOX');
-  $$('#tabbar a').forEach(a => a.classList.toggle('on', a.dataset.tab === (view === 'list' ? (['INBOX', 'SENT'].includes(lk) ? lk : 'labels') : view)));
+  $$('#tabbar a').forEach(a => a.classList.toggle('on', a.dataset.tab === (view === 'list' ? (['INBOX', 'SENT'].includes(lk) ? lk : 'labels') : view === 'waiting' ? 'labels' : view)));
   $('#view').scrollTop = 0;
   if (!settings.clientId && !relayGmailOn() && view !== 'settings') return renderWelcome();
   if (view === 'thread') return renderThread(decodeURIComponent(parts[1]));
   if (view === 'free') return renderFree(decodeURIComponent(parts[1]), +parts[2]);
   if (view === 'compose') return renderCompose(new URLSearchParams(h.split('?')[1] || ''));
   if (view === 'labels') return renderLabels();
+  if (view === 'waiting') return renderWaiting();
   if (view === 'settings') return renderSettings();
   if (view === 'search') return renderList('SEARCH', decodeURIComponent(parts.slice(1).join('/')));
   return renderList(parts[1] || 'INBOX');
@@ -292,7 +293,7 @@ async function renderList(key, q) {
       <button class="icon-btn" id="btn-search" aria-label="Rechercher">${ICON.search}</button>
       <button class="icon-btn" id="btn-refresh" aria-label="Actualiser">${ICON.refresh}</button>
     </div>
-    <form class="searchbar" id="searchbar" ${isSearch ? '' : 'hidden'}><input type="search" id="q" placeholder="Rechercher (ex. from:claire facture)" value="${esc(q || '')}" enterkeyhint="search" autocomplete="off"></form>
+    <form class="searchbar" id="searchbar" ${isSearch ? '' : 'hidden'}><input type="search" id="q" placeholder="${settings.ai ? 'Demande : la promo Devred de mon anniversaire' : 'Rechercher (ex. from:claire facture)'}" value="${esc(q || '')}" enterkeyhint="search" autocomplete="off"></form>
     ${(() => {
       const inboxish = key === 'INBOX' || key === 'UNREAD';
       const accs = freeOn() && !isFreeDir && (isSearch || freeFolderOf(key)) ? `<div class="accounts" role="tablist" aria-label="Comptes">
@@ -302,10 +303,20 @@ async function renderList(key, q) {
       const pill = `<a class="unr-pill ${key === 'UNREAD' ? 'on' : ''}" href="#/list/${key === 'UNREAD' ? 'INBOX' : 'UNREAD'}" aria-pressed="${key === 'UNREAD'}">Non lus<span class="fcount" id="fcount"></span></a>`;
       return `<div class="tabrow">${accs || '<div class="accounts one"><button class="on" aria-selected="true">Réception</button></div>'}${pill}</div>`;
     })()}
+    ${isSearch && state.aiNote && state.aiNote.q === q ? `<div class="ai-note"><b>✦ ${esc(state.aiNote.resume || 'Recherche de l’assistant')}</b><span>« ${esc(state.aiNote.ask)} » → <code>${esc(q)}</code></span><a href="#/search/${encodeURIComponent(state.aiNote.ask)}" id="ai-raw">Chercher les mots exacts</a></div>` : ''}
     ${isFolderView(key) ? `<div class="banner"><span style="display:flex;flex-direction:column;gap:2px"><span>${title === BLOCK_LABEL ? 'Mails des expéditeurs bloqués' : 'Dossier « ' + esc(title) + ' »'}</span><b id="lab-size" style="color:var(--accent)">Calcul de la taille…</b></span><button class="btn danger" id="btn-empty">${ICON.trash}Tout supprimer</button></div>` : ''}
     <div id="list"><div class="loading">Chargement…</div></div>`;
   $('#btn-search').onclick = () => { const s = $('#searchbar'); s.hidden = !s.hidden; if (!s.hidden) $('#q').focus(); };
-  $('#searchbar').onsubmit = e => { e.preventDefault(); const val = $('#q').value.trim(); if (val) location.hash = '#/search/' + encodeURIComponent(val); $('#q').blur(); };
+  $('#searchbar').onsubmit = async e => {
+    e.preventDefault(); const val = $('#q').value.trim(); $('#q').blur(); if (!val) return;
+    const natural = settings.ai && relayOn() && !/\w:\S/.test(val) && val.split(/\s+/).length >= 3;
+    if (natural) {
+      toast('L’assistant cherche…');
+      try { const r = await rapi('/ai/search', { method: 'POST', body: { q: val, today: new Date().toISOString().slice(0, 10) } }); state.aiNote = { ask: val, q: r.q, resume: r.resume }; location.hash = '#/search/' + encodeURIComponent(r.q); return; }
+      catch (er) { toast('Assistant : ' + er.message + ' · recherche simple'); }
+    }
+    state.aiNote = null; location.hash = '#/search/' + encodeURIComponent(val);
+  };
   $('#btn-refresh').onclick = () => loadList(key, q, cacheKey, plain, true);
   $('#btn-select').onclick = () => state.sel ? exitSelect() : enterSelect();
   state.listCtx = { key, q, cacheKey, plain };
@@ -392,7 +403,8 @@ function summarize(t) {
 
 function itemHTML(it, cls, sentView) {
   const who = sentView && it.to ? 'À : ' + it.to : it.from;
-  const chips = it.labels.map(id => { const l = labelById(id); return l ? `<span class="chip lab" style="--c:${esc(labelColor(l))}">${esc(l.name)}</span>` : ''; }).join('');
+  const blocked = it.folder === BLOCK_LABEL || it.labels.some(id => (labelById(id) || {}).name === BLOCK_LABEL);
+  const chips = (blocked ? '<span class="chip blocked">Bloqué</span>' : '') + it.labels.map(id => { const l = labelById(id); return l && l.name !== BLOCK_LABEL ? `<span class="chip lab" style="--c:${esc(labelColor(l))}">${esc(l.name)}</span>` : ''; }).join('');
   const sel = state.sel && state.sel.has(it.id) ? ' sel' : '';
   const href = it.acc === 'free' ? '#/free/' + encodeURIComponent(it.folder) + '/' + it.uid : '#/thread/' + encodeURIComponent(it.id);
   const accChip = state.showAcc ? `<span class="chip acc-${it.acc === 'free' ? 'free' : 'gmail'}">${it.acc === 'free' ? 'Free' : 'Gmail'}</span>` : '';
@@ -1201,10 +1213,75 @@ function buildTree(items, sep) {
   [...root.children.values()].forEach(sum);
   return root;
 }
+/* Suivi : en attente de réponse */
+async function renderWaiting() {
+  const v = $('#view');
+  v.innerHTML = `<div class="top"><a class="back" href="#/labels">${ICON.back}Dossiers</a></div><h1 class="thread-title">En attente</h1>
+    <p class="fhint">Tes mails envoyés sans réponse depuis plus de 3 jours, et les mails de vraies personnes (hors newsletters) auxquels tu n'as pas répondu depuis 2 semaines.</p>
+    <div id="list"><div class="loading">Analyse de tes échanges…</div></div>`;
+  const day = 86400000, now = Date.now();
+  const md = '&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=List-Unsubscribe&metadataHeaders=Precedence';
+  const theirs = [], mine = [];
+  const jobs = [];
+  if (settings.clientId || relayGmailOn()) jobs.push((async () => {
+    const [a, b] = await Promise.all([
+      api('threads?' + new URLSearchParams({ q: 'in:sent newer_than:30d older_than:3d', maxResults: 40 })),
+      api('threads?' + new URLSearchParams({ q: 'in:inbox newer_than:14d -category:promotions -category:social -category:updates -category:forums', maxResults: 40 }))]);
+    const ta = await pool((a && a.threads) || [], 4, t => api('threads/' + t.id + '?format=metadata' + md).catch(() => null));
+    const tb = await pool((b && b.threads) || [], 4, t => api('threads/' + t.id + '?format=metadata' + md).catch(() => null));
+    ta.filter(Boolean).forEach(t => { const ms = t.messages || [], last = ms[ms.length - 1] || {}; if ((last.labelIds || []).includes('SENT') && +last.internalDate < now - 3 * day && !splitAddrs(hdr(last, 'To')).map(parseAddr).every(x => isMe(x.email))) theirs.push(Object.assign(summarize(t), { acc: 'gmail' })); });
+    tb.filter(Boolean).forEach(t => { const ms = t.messages || [], last = ms[ms.length - 1] || {}; const fr = parseAddr(hdr(last, 'From')).email || '';
+      if (!(last.labelIds || []).includes('SENT') && !hdr(last, 'List-Unsubscribe') && !/bulk|list/i.test(hdr(last, 'Precedence')) && !isMe(fr) && !/no-?reply|ne-pas-repondre|notification|newsletter/i.test(fr)) mine.push(Object.assign(summarize(t), { acc: 'gmail' })); });
+  })().catch(e => { if (e.message !== 'auth') toast('Gmail : ' + e.message); }));
+  if (freeOn()) jobs.push(rapi('/free/waiting').then(r => { (r.theirs || []).forEach(x => theirs.push(freeItem(x))); (r.mine || []).forEach(x => mine.push(freeItem(x))); }).catch(e => toast('Free : ' + e.message)));
+  await Promise.all(jobs);
+  const l = $('#list'); if (!l) return;
+  state.showAcc = freeOn();
+  theirs.sort((a, b) => a.date - b.date); mine.sort((a, b) => b.date - a.date);
+  const age = d => { const n = Math.floor((now - d) / day); return n <= 0 ? 'aujourd’hui' : n === 1 ? 'depuis hier' : 'depuis ' + n + ' j'; };
+  l.innerHTML = (mine.length ? `<h2 class="sec unread">À traiter · ${mine.length}</h2>` + mine.map(i => itemHTML(Object.assign({}, i, { unread: false }), '')).join('') : '')
+    + (theirs.length ? `<h2 class="sec">Sans réponse de leur part · ${theirs.length}</h2>` + theirs.map(i => itemHTML(Object.assign({}, i, { snippet: 'Envoyé, sans réponse ' + age(i.date) }), '', true)).join('') : '')
+    || '<div class="empty">Rien en attente : tout est à jour.</div>';
+}
+/* Ranger : dossiers vides (eux et tous leurs sous-dossiers), suppression après validation */
+function tidySheet(g, f) {
+  const empties = [];
+  for (const [list, sepOf] of [[g, () => '/'], [f, x => x.delim || '/']]) {
+    for (const x of list) {
+      if (x.m !== 0 || x.full === BLOCK_LABEL) continue;
+      const pre = x.full + sepOf(x);
+      if (list.some(y => y.full.startsWith(pre) && y.m !== 0)) continue;
+      empties.push(x);
+    }
+  }
+  // supprimer d'abord les plus profonds
+  empties.sort((a, b) => b.full.length - a.full.length);
+  if (!empties.length) { toast('Aucun dossier vide : tout est rangé'); return; }
+  openSheet(`<span class="grip"></span><h2>Dossiers vides</h2>
+    <p style="margin:0;color:var(--muted);font-size:.85rem">${empties.length} dossier${empties.length > 1 ? 's' : ''} ne contien${empties.length > 1 ? 'nent' : 't'} aucun mail. Décoche ceux à garder. La suppression est aussi faite dans Gmail et Free.</p>
+    <div class="tidy-list">${empties.map((x, i) => `<label class="switch"><span><span class="dot" style="background:var(--${x.acc});display:inline-block;width:8px;height:8px;border-radius:4px;margin-right:6px"></span>${esc(x.full.split(x.delim || '/').join(' › '))}</span><input type="checkbox" data-i="${i}" checked></label>`).join('')}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="tidy-ok">Supprimer</button></div>`);
+  $('#tidy-ok').onclick = async () => {
+    const b = $('#tidy-ok'); b.disabled = true; b.textContent = 'Suppression…';
+    let ok = 0; const errs = [];
+    for (const c of $$('.tidy-list input:checked')) {
+      const x = empties[+c.dataset.i];
+      try {
+        if (x.acc === 'gmail') await api('labels/' + encodeURIComponent(x.id), { method: 'DELETE' });
+        else await rapi('/free/folder-delete', { method: 'POST', body: { path: x.full } });
+        ok++;
+      } catch (e) { errs.push(x.full + ' : ' + e.message); }
+    }
+    closeSheet(); state.folders = null; labelsCache = null;
+    toast(ok + ' dossier' + (ok > 1 ? 's' : '') + ' supprimé' + (ok > 1 ? 's' : '') + (errs.length ? ' · ' + errs.length + ' en échec' : ''));
+    renderLabels();
+  };
+}
 async function renderLabels() {
   const v = $('#view');
-  v.innerHTML = `<div class="top"><h1>Dossiers</h1><button class="icon-btn" id="btn-refresh" aria-label="Actualiser">${ICON.refresh}</button></div>
+  v.innerHTML = `<div class="top"><h1>Dossiers</h1><button class="btn tidy-btn" id="btn-tidy">Ranger</button><button class="icon-btn" id="btn-refresh" aria-label="Actualiser">${ICON.refresh}</button></div>
     <div class="searchbar"><input type="search" id="fq" placeholder="Chercher un dossier" autocomplete="off" enterkeyhint="search"></div>
+    <a class="set-link" href="#/waiting"><span class="set-t">⏳ En attente de réponse</span><span class="set-s">Suivi Gmail + Free</span><span class="chev-r" aria-hidden="true"></span></a>
     <div id="labs"><div class="loading">Chargement…</div></div>`;
   $('#btn-refresh').onclick = () => { state.folders = null; renderLabels(); };
   const data = state.folders && Date.now() - state.folders.at < 120000 ? state.folders : null;
@@ -1216,10 +1293,10 @@ async function renderLabels() {
       try {
         const labels = await getLabels(true);
         const counts = await pool(labels, 4, l => api('labels/' + l.id).catch(() => null));
-        g = labels.map((l, i) => ({ key: 'g:' + l.id, full: l.name, href: '#/list/' + encodeURIComponent(l.id), n: (counts[i] && counts[i].threadsUnread) || 0, acc: 'gmail', color: labelColor(l) }));
+        g = labels.map((l, i) => ({ key: 'g:' + l.id, full: l.name, href: '#/list/' + encodeURIComponent(l.id), n: (counts[i] && counts[i].threadsUnread) || 0, m: counts[i] && counts[i].id ? counts[i].messagesTotal || 0 : -1, id: l.id, acc: 'gmail', color: labelColor(l) }));
       } catch (e) { if (e.message === 'auth') throw e; }
     })());
-    if (freeOn()) jobs.push(rapi('/free/folders?tree=1').then(r => { f = (r.folders || []).map(x => ({ key: 'f:' + x.path, full: x.path, delim: x.delim, href: '#/list/F:' + encodeURIComponent(x.path), n: x.unseen || 0, acc: 'free' })); }).catch(e => toast('Free : ' + e.message)));
+    if (freeOn()) jobs.push(rapi('/free/folders?tree=1').then(r => { f = (r.folders || []).map(x => ({ key: 'f:' + x.path, full: x.path, delim: x.delim, href: '#/list/F:' + encodeURIComponent(x.path), n: x.unseen || 0, m: typeof x.messages === 'number' ? x.messages : -1, acc: 'free' })); }).catch(e => toast('Free : ' + e.message)));
     try { await Promise.all(jobs); } catch (e) { return; }
     state.folders = { at: Date.now(), g, f };
   }
@@ -1273,6 +1350,7 @@ async function renderLabels() {
   };
   const toggleOpen = k => { opened.has(k) ? opened.delete(k) : opened.add(k); LS.set('openFolders', [...opened]); draw($('#fq').value.trim()); };
   $('#fq').oninput = e => draw(e.target.value.trim());
+  $('#btn-tidy').onclick = () => tidySheet(g, f);
   draw('');
 }
 
@@ -1566,6 +1644,18 @@ async function renderRelay() {
       try { if (Notification.permission === 'granted' && LS.get('pushOn', false)) { await rapi('/push/test', { method: 'POST', body: {} }); toast('Notification de test envoyée'); } else { await enablePush(st.vapid); await rapi('/prefs', { method: 'POST', body: { tz: Intl.DateTimeFormat().resolvedOptions().timeZone } }).catch(() => {}); toast('Notifications activées'); updateBadge(); renderSettings(); } }
       catch (e) { toast(e.message); } p.disabled = false;
     };
+    if (settings.ai !== !!st.ai) { settings.ai = !!st.ai; saveSettings(); }
+    const ai = document.createElement('div');
+    ai.style.cssText = 'display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:8px';
+    ai.innerHTML = st.ai
+      ? `<div class="lab-row" style="padding:0"><span class="nm">Assistant IA (Groq)<br><span style="font-size:.75rem;color:var(--muted)">Recherche en langage naturel active. Seules tes questions partent vers Groq.</span></span><button class="btn" style="height:40px" id="s-ai-off">Retirer</button></div>`
+      : `<span class="nm" style="font-weight:650">Assistant IA (Groq, gratuit)</span>
+        <label class="f">Clé API Groq<input id="s-ai-key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="gsk_…"></label>
+        <p style="margin:0;font-size:.78rem">Crée une clé sur console.groq.com › API Keys. Elle est envoyée à ton serveur, qui la garde chiffrée.</p>
+        <button class="btn primary" id="s-ai-save">Activer l’assistant</button>`;
+    box.appendChild(ai);
+    const aon = $('#s-ai-save'); if (aon) aon.onclick = async () => { aon.disabled = true; try { await rapi('/ai/key', { method: 'POST', body: { key: $('#s-ai-key').value } }); settings.ai = true; saveSettings(); toast('Assistant activé'); renderSettings(); } catch (e) { aon.disabled = false; toast(e.message); } };
+    const aoff = $('#s-ai-off'); if (aoff) aoff.onclick = async () => { try { await rapi('/ai/key', { method: 'POST', body: { key: '' } }); settings.ai = false; saveSettings(); renderSettings(); } catch (e) { toast(e.message); } };
     if (perm === 'granted' && LS.get('pushOn', false)) drawPrefs();
     drawFree(st);
   };
