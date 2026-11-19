@@ -199,3 +199,6 @@ body.selecting .item.sel .mark::after{content:"";width:10px;height:6px;border-le
 .blk-row{display:flex;flex-direction:column;gap:2px}
 .blk-dom{font-size:.78rem;color:var(--muted);padding:0 12px 0 50px;min-height:40px}
 .blk-dom input{width:44px;height:26px}
+.chip.acc-gmail{border-color:var(--gmail);color:var(--gmail)}
+.chip.acc-free{border-color:var(--free);color:var(--free)}
+.accounts{margin-bottom:8px}
