@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.4.0';
+const APP_VERSION = '2.4.1';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -648,24 +648,25 @@ function brandOf(email) {
   return core.charAt(0).toUpperCase() + core.slice(1);
 }
 async function renderBlocked(box) {
+  getLabels().then(ls => { const l = (ls || []).find(x => x.name === BLOCK_LABEL), a = $('#s-junk'); if (a) { if (l) a.href = '#/list/' + encodeURIComponent(l.id); else a.hidden = true; } }).catch(() => {});
   if (!auth.hasSettingsScope()) { box.innerHTML = '<p>Aucun expéditeur bloqué pour l’instant.</p>'; return; }
   try {
     const labels = await getLabels();
     const l = labels.find(x => x.name === BLOCK_LABEL);
     const fs = l ? (((await api('settings/filters')) || {}).filter || []).filter(f => f.action && (f.action.addLabelIds || []).includes(l.id) && f.criteria && f.criteria.from) : [];
-    if (!fs.length) { box.innerHTML = '<p>Aucun expéditeur bloqué pour l’instant.</p>'; return; }
+    if (!fs.length) { const nEl = $('#s-blk-n'); if (nEl) nEl.textContent = '0'; box.innerHTML = '<p>Aucun expéditeur bloqué pour l’instant.</p>'; return; }
     const names = LS.get('blockedNames', {});
     const label = e => names[e.toLowerCase()] || (e.includes('@') && WEBMAIL.includes(rootDomain(e)) ? e.split('@')[0] : brandOf(e));
     const sub = e => e.includes('@') ? e : 'Toutes les adresses @' + e;
     const after = new Set(fs.map(f => blockTarget(f.criteria.from.toLowerCase()))).size;
     const mergeBtn = after < fs.length ? `<button class="btn primary" id="blk-merge">Regrouper par marque (${fs.length} → ${after})</button><p style="margin:0">Une seule règle par marque bloque toutes ses adresses, y compris celles qu'elle utilisera demain.</p>` : '';
     fs.sort((a, b) => label(a.criteria.from).localeCompare(label(b.criteria.from), 'fr'));
-    box.innerHTML = `<details class="acc"><summary><span>${fs.length} expéditeur${fs.length > 1 ? 's' : ''} bloqué${fs.length > 1 ? 's' : ''}</span><span class="chev" aria-hidden="true"></span></summary><div class="acc-body">` + fs.map(f => `<div class="lab-row" style="padding:6px 0;gap:10px"><span class="nm" style="min-width:0;display:flex;flex-direction:column"><b style="font-size:.95rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label(f.criteria.from))}</b><span style="font-size:.72rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(sub(f.criteria.from))}</span></span><button class="btn" style="height:38px;font-size:.75rem" data-fid="${esc(f.id)}">Débloquer</button></div>`).join('') +
-      `</div></details>${mergeBtn}<a class="btn" href="#/list/${encodeURIComponent(l.id)}">Voir les mails « ${BLOCK_LABEL} »</a>`;
+    const nEl = $('#s-blk-n'); if (nEl) nEl.textContent = String(fs.length);
+    box.innerHTML = mergeBtn + `<div>` + fs.map(f => `<div class="lab-row" style="padding:6px 0;gap:10px"><span class="nm" style="min-width:0;display:flex;flex-direction:column"><b style="font-size:.95rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label(f.criteria.from))}</b><span style="font-size:.72rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(sub(f.criteria.from))}</span></span><button class="btn" style="height:38px;font-size:.75rem" data-fid="${esc(f.id)}">Débloquer</button></div>`).join('') +
+      `</div>`;
     const mb = $('#blk-merge', box);
     if (mb) mb.onclick = async () => { mb.disabled = true; mb.textContent = 'Regroupement…'; try { const r = await mergeBlocked(fs, l.id, box); toast('Règles regroupées : ' + r.removed + ' remplacées'); } catch (e) { toast('Échec : ' + e.message); } renderBlocked(box); };
-    if (state.accOpen) { const dt = $('details.acc', box); if (dt) dt.open = true; state.accOpen = false; }
-    $$('button[data-fid]', box).forEach(b => b.onclick = async () => { b.disabled = true; try { await api('settings/filters/' + b.dataset.fid, { method: 'DELETE' }); toast('Débloqué'); state.accOpen = true; await renderBlocked(box); } catch (e) { b.disabled = false; toast('Échec : ' + e.message); } });
+    $$('button[data-fid]', box).forEach(b => b.onclick = async () => { b.disabled = true; try { await api('settings/filters/' + b.dataset.fid, { method: 'DELETE' }); toast('Débloqué'); await renderBlocked(box); } catch (e) { b.disabled = false; toast('Échec : ' + e.message); } });
   } catch (e) { box.innerHTML = '<p>Liste indisponible.</p>'; }
 }
 
@@ -1237,7 +1238,8 @@ function renderSettings() {
   const connected = !!LS.get('token', null) || relayGmailOn();
   $('#view').innerHTML = `
     <div class="top"><h1>Réglages</h1></div>
-    <details class="set" data-set="blocked" open><summary><span class="set-t">Expéditeurs bloqués</span><span class="chev" aria-hidden="true"></span></summary>
+    <a class="set-link" id="s-junk" href="#/labels"><span class="set-t">Voir les mails indésirables</span><span class="set-s">${freeOn() ? 'Gmail + Free' : 'Gmail'}</span><span class="chev-r" aria-hidden="true"></span></a>
+    <details class="set" data-set="blocked"><summary><span class="set-t">Voir les expéditeurs bloqués</span><span class="set-s" id="s-blk-n"></span><span class="chev" aria-hidden="true"></span></summary>
     <section class="card" id="s-blocked"><p>Chargement…</p></section></details>
     <details class="set" data-set="accounts"><summary><span class="set-t">Comptes</span><span class="set-s">${connected ? '<i style="background:var(--gmail)"></i>Gmail' : 'Gmail non connecté'}${freeOn() ? ' <i style="background:var(--free)"></i>Free' : ''}</span><span class="chev" aria-hidden="true"></span></summary>
     <section class="card">

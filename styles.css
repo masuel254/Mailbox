@@ -221,3 +221,8 @@ details.set[open] .chev{transform:rotate(-135deg);margin-bottom:-4px}
 details.set>.card{border-radius:0;margin:0}
 details.set>.card+.card{border-top:1px solid var(--line)}
 details.set>.card:last-child{border-radius:0 0 14px 14px}
+a.set-link{display:flex;align-items:center;gap:10px;min-height:54px;padding:0 16px;margin:0 0 10px;background:var(--surface);border-radius:14px;text-decoration:none;color:var(--text)}
+a.set-link[hidden]{display:none}
+a.set-link .set-t{font-weight:750;font-size:1rem;flex:1;min-width:0}
+a.set-link .set-s{font-size:.78rem;color:var(--muted);white-space:nowrap}
+a.set-link .chev-r{width:9px;height:9px;border-right:2.5px solid var(--accent);border-bottom:2.5px solid var(--accent);transform:rotate(-45deg);margin:0 6px 0 2px;flex:none}
