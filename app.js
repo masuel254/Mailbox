@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.9.5';
+const APP_VERSION = '2.9.6';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -951,6 +951,7 @@ async function renderFree(folder, uid) {
     ${m.unsub ? '<div class="unsub-bar"><span>Mail de liste de diffusion</span><button class="btn" id="t-unsub">Se désabonner</button></div>' : ''}
     <div class="toolbar">
       <button id="t-archive">${ICON.archive}Archiver</button>
+      <button id="t-fmove">${ICON.tag}Classer</button>
       <button id="t-block">${ICON.block}Bloquer</button>
       <button id="t-trash">${ICON.trash}Supprimer</button>
       <button id="t-unread">${ICON.unread}Non lu</button>
@@ -972,6 +973,7 @@ async function renderFree(folder, uid) {
   $('#t-trash').onclick = () => move('TRASH', 'Placé dans la corbeille');
   $('#t-unread').onclick = async () => { try { await rapi('/free/flags', { method: 'POST', body: { folder, uids: [uid], seen: false } }); patchCached(id, i => Object.assign({}, i, { unread: true })); toast('Marqué non lu'); updateBadge(); goBack(); } catch (e) { toast(e.message); } };
   $('#t-block').onclick = () => { goBack(); quickBlock({ id, fromEmail: m.from.email, fromName: m.from.name }); };
+  $('#t-fmove').onclick = () => freeMoveSheet(id, folder, uid);
   const un = $('#t-unsub'); if (un) un.onclick = () => unsubscribe(m.unsub, m.unsubPost, 'free', m.from.name || m.from.email);
   $('#r-reply').onclick = () => openCompose('reply', null, m);
   $('#r-all').onclick = () => openCompose('all', null, m);
@@ -1437,6 +1439,30 @@ function deleteFolderSheet(x, all) {
     closeSheet(); state.folders = null; labelsCache = null; state.lists = {}; LS.del('foldersCache');
     toast(err ? 'Échec : ' + err : 'Dossier supprimé');
     renderLabels();
+  };
+}
+async function freeMoveSheet(id, folder, uid) {
+  openSheet(`<span class="grip"></span><h2>Classer dans…</h2><div id="fm-list"><div class="loading">Chargement…</div></div>
+    <label class="f">Ou nouveau dossier<input id="fm-new" autocomplete="off" placeholder="ex. Factures 2026"></label>
+    <button class="btn primary" id="fm-create">Créer et classer</button>`);
+  const go = async to => {
+    try {
+      await rapi('/free/move', { method: 'POST', body: { folder, uids: [uid], to } });
+      closeSheet(); Object.values(state.lists).forEach(d => { d.items = d.items.filter(i => i.id !== id); });
+      state.folders = null; LS.del('foldersCache');
+      toast('Classé dans « ' + to.split(/[\/.]/).pop() + ' »'); goBack();
+    } catch (e) { toast(e.message); }
+  };
+  let dirs = [];
+  try { dirs = (await rapi('/free/folders?tree=1')).folders || []; } catch (e) { toast('Free : ' + e.message); }
+  const l = $('#fm-list'); if (!l) return;
+  const dl = (dirs[0] || {}).delim || '/';
+  l.innerHTML = `<div class="card fold" style="max-height:45vh;overflow:auto">${[{ path: 'INBOX', name: 'Réception' }].concat(dirs.filter(x => x.path !== folder && x.path !== BLOCK_LABEL).sort((a, b) => a.path.localeCompare(b.path, 'fr'))).map(x => `<button class="frow" style="width:100%;background:none;border:none;border-bottom:1px solid var(--line);text-align:left" data-to="${esc(x.path)}">${FOLD_ICON}<span class="nm">${esc(x.path === 'INBOX' ? 'Réception' : x.path.split(x.delim || '/').join(' › '))}</span></button>`).join('')}</div>`;
+  $$('[data-to]', l).forEach(b => b.onclick = () => go(b.dataset.to));
+  $('#fm-create').onclick = async () => {
+    const n = $('#fm-new').value.trim().replace(/[\/]/g, '-'); if (!n) { toast('Donne un nom au dossier'); return; }
+    try { await rapi('/free/folder-create', { method: 'POST', body: { path: n } }); } catch (e) { if (!/existe/.test(e.message)) { toast(e.message); return; } }
+    go(n);
   };
 }
 function newFolderSheet(g, f) {
