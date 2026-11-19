@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.10.3';
+const APP_VERSION = '2.10.4';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -342,7 +342,9 @@ async function renderList(key, q) {
   $$('.accounts button[data-acc]').forEach(b => b.onclick = () => { settings.acc = b.dataset.acc; saveSettings(); renderList(key, q); });
   const be = $('#btn-empty'); if (be) { be.onclick = () => emptyLabel(key, title); labelSize(key).then(t => { const el = $('#lab-size'); if (el) el.textContent = t; }); }
   bindListGestures($('#list'));
-  const cached = state.lists[cacheKey];
+  let cached = state.lists[cacheKey];
+  // Ouverture instantanée : dernière liste connue gardée sur l'iPhone (réception, non lus, envoyés), actualisée aussitôt
+  if (!cached && !isSearch) { const d = LS.get('list:' + cacheKey, null); if (d && d.items) { cached = Object.assign(d, { at: 0, stale: true }); state.lists[cacheKey] = cached; } }
   if (cached) { drawList(cached, plain); if (Date.now() - cached.at > 60000) loadList(key, q, cacheKey, plain, true); }
   else loadList(key, q, cacheKey, plain, true);
 }
@@ -364,7 +366,7 @@ async function loadList(key, q, cacheKey, plain, reset) {
         if (sys && sys.spamTrash) p.set('includeSpamTrash', 'true');
         if (more && prev.next) p.set('pageToken', prev.next);
         const [r] = await Promise.all([api('threads?' + p.toString()), getLabels().catch(() => [])]);
-        const threads = await pool(r.threads || [], 8, t => api('threads/' + t.id + '?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date'));
+        const threads = await pool(r.threads || [], 12, t => api('threads/' + t.id + '?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date'));
         gItems = threads.filter(Boolean).map(t => Object.assign(summarize(t), { acc: 'gmail' }));
         next = r.nextPageToken || null;
       })());
@@ -387,7 +389,8 @@ async function loadList(key, q, cacheKey, plain, reset) {
     const fresh = gItems.concat(fItems).sort((a, b) => b.date - a.date);
     const data = { at: Date.now(), next, freeBefore, freeMore, items: more ? prev.items.concat(fresh) : fresh };
     state.lists[cacheKey] = data;
-    if (state.current === cacheKey) drawList(data, plain);
+    if (['INBOX', 'UNREAD', 'SENT'].includes(key) && !more) { try { LS.set('list:' + cacheKey, { next: data.next, freeBefore: data.freeBefore, freeMore: data.freeMore, items: data.items.slice(0, 40) }); } catch (e) {} }
+    if (state.current === cacheKey) { const y = scrollY; drawList(data, plain); if (reset && y) scrollTo(0, y); }
     if (key === 'INBOX' || key === 'UNREAD') updateBadge();
   } catch (e) {
     if (e.message === 'auth') return;
