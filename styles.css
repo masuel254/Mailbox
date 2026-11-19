@@ -309,3 +309,6 @@ details.set .ftog[aria-expanded="true"] .chev{transform:rotate(45deg)}
 .tidy-list .switch{align-items:flex-start;padding:4px 0}
 .tidy-list .switch>span{flex:1;min-width:0}
 .tname .tl{display:flex;gap:6px;align-items:baseline;min-width:0}
+/* Le plan de rangement défile : ses blocs ne doivent jamais être écrasés */
+.tidy-list>*{flex-shrink:0}
+.tidy-list{max-height:62vh;-webkit-overflow-scrolling:touch}
