@@ -279,3 +279,8 @@ details.fsec>.card.fold{border-radius:0 0 14px 14px;margin:0}
 .ai-note a{color:var(--accent);font-weight:650}
 details.set .ftog .chev{transform:rotate(-45deg);margin:0}
 details.set .ftog[aria-expanded="true"] .chev{transform:rotate(45deg)}
+.tidy-h{font-size:.78rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:10px 0 4px}
+.tidy-list .switch>span{display:block;line-height:1.35;font-size:.9rem}
+.tidy-list .switch small{display:block;color:var(--muted);font-size:.75rem;margin-top:2px}
+.tdot{display:inline-block;width:8px;height:8px;border-radius:4px;margin-right:6px;vertical-align:middle}
+.tidy-list{max-height:58vh}

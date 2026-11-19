@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.7.2';
+const APP_VERSION = '2.8.0';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -1243,39 +1243,101 @@ async function renderWaiting() {
     + (theirs.length ? `<h2 class="sec">Sans réponse de leur part · ${theirs.length}</h2>` + theirs.map(i => itemHTML(Object.assign({}, i, { snippet: 'Envoyé, sans réponse ' + age(i.date) }), '', true)).join('') : '')
     || '<div class="empty">Rien en attente : tout est à jour.</div>';
 }
-/* Ranger : dossiers vides (eux et tous leurs sous-dossiers), suppression après validation */
-function tidySheet(g, f) {
-  const empties = [];
-  for (const [list, sepOf] of [[g, () => '/'], [f, x => x.delim || '/']]) {
-    for (const x of list) {
-      if (x.m !== 0 || x.full === BLOCK_LABEL) continue;
-      const pre = x.full + sepOf(x);
-      if (list.some(y => y.full.startsWith(pre) && y.m !== 0)) continue;
-      empties.push(x);
-    }
+/* Ranger : dossiers vides + plan de rangement proposé par l'IA, appliqué seulement sur validation */
+function emptyFolders(g, f) {
+  const out = [];
+  for (const list of [g, f]) for (const x of list) {
+    if (x.m !== 0 || x.full === BLOCK_LABEL) continue;
+    const pre = x.full + (x.delim || '/');
+    if (list.some(y => y.full.startsWith(pre) && y.m !== 0)) continue;
+    out.push(x);
   }
-  // supprimer d'abord les plus profonds
-  empties.sort((a, b) => b.full.length - a.full.length);
-  if (!empties.length) { toast('Aucun dossier vide : tout est rangé'); return; }
-  openSheet(`<span class="grip"></span><h2>Dossiers vides</h2>
-    <p style="margin:0;color:var(--muted);font-size:.85rem">${empties.length} dossier${empties.length > 1 ? 's' : ''} ne contien${empties.length > 1 ? 'nent' : 't'} aucun mail. Décoche ceux à garder. La suppression est aussi faite dans Gmail et Free.</p>
-    <div class="tidy-list">${empties.map((x, i) => `<label class="switch"><span><span class="dot" style="background:var(--${x.acc});display:inline-block;width:8px;height:8px;border-radius:4px;margin-right:6px"></span>${esc(x.full.split(x.delim || '/').join(' › '))}</span><input type="checkbox" data-i="${i}" checked></label>`).join('')}</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="tidy-ok">Supprimer</button></div>`);
-  $('#tidy-ok').onclick = async () => {
-    const b = $('#tidy-ok'); b.disabled = true; b.textContent = 'Suppression…';
-    let ok = 0; const errs = [];
-    for (const c of $$('.tidy-list input:checked')) {
-      const x = empties[+c.dataset.i];
+  return out.sort((a, b) => b.full.length - a.full.length);
+}
+const disp = x => x.acc === 'free' && x.delim && x.delim !== '/' ? x.full.split(x.delim).join('/') : x.full;
+async function gEnsureLabel(name) {
+  const labels = await getLabels(true);
+  let l = labels.find(x => x.name.toLowerCase() === name.toLowerCase());
+  if (l) return l;
+  const parts = name.split('/');
+  for (let i = 1; i < parts.length; i++) { const p = parts.slice(0, i).join('/'); if (!labels.some(x => x.name.toLowerCase() === p.toLowerCase())) { try { await api('labels', { method: 'POST', body: { name: p } }); } catch (e) {} } }
+  l = await api('labels', { method: 'POST', body: { name } });
+  await getLabels(true);
+  return l;
+}
+async function gMergeLabel(src, dstName) {
+  const dst = await gEnsureLabel(dstName);
+  let page = null;
+  do {
+    const p = new URLSearchParams({ labelIds: src.id, maxResults: 500 }); if (page) p.set('pageToken', page);
+    const r = (await api('messages?' + p.toString())) || {};
+    const ids = (r.messages || []).map(m => m.id);
+    for (let i = 0; i < ids.length; i += 1000) await api('messages/batchModify', { method: 'POST', body: { ids: ids.slice(i, i + 1000), addLabelIds: [dst.id], removeLabelIds: [src.id] } });
+    page = r.nextPageToken;
+  } while (page);
+  await api('labels/' + encodeURIComponent(src.id), { method: 'DELETE' });
+}
+async function gMove(from, to, mergeRoot) {
+  const labels = await getLabels(true);
+  const sub = labels.filter(l => l.name === from || l.name.startsWith(from + '/')).sort((a, b) => b.name.length - a.name.length);
+  if (!sub.length) throw new Error('dossier introuvable');
+  const parent = to.includes('/') ? to.slice(0, to.lastIndexOf('/')) : '';
+  if (parent) await gEnsureLabel(parent);
+  for (const l of sub) {
+    const nn = to + l.name.slice(from.length);
+    const exists = (await getLabels()).find(x => x.name.toLowerCase() === nn.toLowerCase() && x.id !== l.id);
+    if (exists || (mergeRoot && l.name === from)) await gMergeLabel(l, nn);
+    else await api('labels/' + encodeURIComponent(l.id), { method: 'PATCH', body: { name: nn } });
+  }
+  await getLabels(true);
+}
+function tidySheet(g, f) {
+  const lines = emptyFolders(g, f).map(x => ({ kind: 'del', x, on: true }));
+  const draw = () => {
+    const dels = lines.filter(l => l.kind === 'del'), ai = lines.filter(l => l.kind !== 'del');
+    openSheet(`<span class="grip"></span><h2>Ranger mes dossiers</h2>
+      <div class="tidy-list">
+        <h3 class="tidy-h">Dossiers vides · ${dels.length}</h3>
+        ${dels.length ? dels.map(l => `<label class="switch"><span><span class="dot tdot" style="background:var(--${l.x.acc})"></span>Supprimer <b>${esc(disp(l.x).split('/').join(' › '))}</b></span><input type="checkbox" data-i="${lines.indexOf(l)}" ${l.on ? 'checked' : ''}></label>`).join('') : '<p class="fhint">Aucun dossier vide.</p>'}
+        <h3 class="tidy-h">Proposition de l'IA${ai.length ? ' · ' + ai.length : ''}</h3>
+        ${ai.length ? ai.map(l => `<label class="switch"><span><span class="dot tdot" style="background:var(--${l.acc})"></span>${l.kind === 'merge' ? 'Fusionner' : 'Déplacer'} <b>${esc(l.from.split('/').join(' › '))}</b> → <b>${esc(l.to.split('/').join(' › '))}</b>${l.why ? `<small>${esc(l.why)}</small>` : ''}</span><input type="checkbox" data-i="${lines.indexOf(l)}" ${l.on ? 'checked' : ''}></label>`).join('')
+          : settings.ai ? `<button class="btn" id="tidy-ai" type="button">✦ Proposer un rangement</button><p class="fhint">L’IA ne reçoit que les noms de tes dossiers et leur nombre de mails. Rien n’est appliqué sans ta validation, et aucun mail n’est supprimé.</p>`
+          : '<p class="fhint">Active l’assistant IA dans Réglages › Relais et notifications pour obtenir une proposition.</p>'}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="tidy-ok">Appliquer (${lines.filter(l => l.on).length})</button></div>`);
+    $$('.tidy-list input[data-i]').forEach(c => c.onchange = () => { lines[+c.dataset.i].on = c.checked; $('#tidy-ok').textContent = 'Appliquer (' + lines.filter(l => l.on).length + ')'; });
+    const ab = $('#tidy-ai'); if (ab) ab.onclick = async () => {
+      ab.disabled = true; ab.textContent = 'L’IA étudie tes dossiers…';
+      const ask = (list, acc) => list.length ? rapi('/ai/folders', { method: 'POST', body: { folders: list.map(x => ({ name: disp(x), n: x.m })) } }).then(r => (r.actions || []).map(a => ({ kind: a.type, acc, from: a.from, to: a.to, why: a.why, on: true, x: list.find(x => disp(x) === a.from) }))) : Promise.resolve([]);
       try {
-        if (x.acc === 'gmail') await api('labels/' + encodeURIComponent(x.id), { method: 'DELETE' });
-        else await rapi('/free/folder-delete', { method: 'POST', body: { path: x.full } });
-        ok++;
-      } catch (e) { errs.push(x.full + ' : ' + e.message); }
-    }
-    closeSheet(); state.folders = null; labelsCache = null;
-    toast(ok + ' dossier' + (ok > 1 ? 's' : '') + ' supprimé' + (ok > 1 ? 's' : '') + (errs.length ? ' · ' + errs.length + ' en échec' : ''));
-    renderLabels();
+        const [ga, fa] = await Promise.all([ask(g.filter(x => x.m !== 0), 'gmail'), ask(f.filter(x => x.m !== 0), 'free').catch(e => { toast('Free : ' + e.message); return []; })]);
+        lines.push(...ga, ...fa);
+        if (!ga.length && !fa.length) toast('L’IA ne voit rien à améliorer');
+      } catch (e) { toast('IA : ' + e.message); }
+      draw();
+    };
+    $('#tidy-ok').onclick = async () => {
+      const todo = lines.filter(l => l.on); if (!todo.length) { closeSheet(); return; }
+      const b = $('#tidy-ok'); b.disabled = true; $$('.tidy-list input').forEach(c => c.disabled = true);
+      let ok = 0; const errs = [];
+      for (const [i, l] of todo.entries()) {
+        b.textContent = (i + 1) + ' / ' + todo.length + '…';
+        try {
+          if (l.kind === 'del') {
+            if (l.x.acc === 'gmail') await api('labels/' + encodeURIComponent(l.x.id), { method: 'DELETE' });
+            else await rapi('/free/folder-delete', { method: 'POST', body: { path: l.x.full } });
+          } else if (l.acc === 'gmail') await gMove(l.from, l.to, l.kind === 'merge');
+          else { const dl = (l.x && l.x.delim) || '/'; await rapi('/free/folder-rename', { method: 'POST', body: { from: l.from.split('/').join(dl), to: l.to.split('/').join(dl), delim: dl } }); }
+          ok++;
+        } catch (e) { errs.push((l.kind === 'del' ? disp(l.x) : l.from) + ' : ' + e.message); }
+      }
+      closeSheet(); state.folders = null; labelsCache = null; state.lists = {};
+      toast(ok + ' action' + (ok > 1 ? 's' : '') + ' appliquée' + (ok > 1 ? 's' : '') + (errs.length ? ' · ' + errs.length + ' en échec' : ''));
+      if (errs.length) console.warn(errs);
+      renderLabels();
+    };
   };
+  draw();
 }
 async function renderLabels() {
   const v = $('#view');

@@ -161,19 +161,23 @@ async function freeList(folderKey, unread, before, limit) {
   });
 }
 async function freeSearch(q, limit) {
-  const crit = {}; const words = []; let anyOf = false;
+  const crit = {}; const words = []; const alts = []; let anyOf = false;
   for (const tok of (q.match(/\S+:"[^"]*"|\S+:\S+|"[^"]*"|\S+/g) || [])) {
     const m = tok.match(/^(from|de|to|subject|objet|newer_than|after|before|older_than):(.+)$/i);
     const v = (m ? m[2] : tok).replace(/^"|"$/g, '').replace(/^\(|\)$/g, '');
     if (!m) { if (tok === 'OR') anyOf = true; else if (!/^(is|in|has|label|category|-)/i.test(tok)) words.push(v.toLowerCase()); continue; }
     const k = m[1].toLowerCase();
-    if (k === 'from' || k === 'de') crit.from = v; else if (k === 'to') crit.to = v; else if (k === 'subject' || k === 'objet') crit.subject = v;
+    if (k === 'from' || k === 'de' || k === 'to' || k === 'subject' || k === 'objet') { const kk = k === 'de' ? 'from' : k === 'objet' ? 'subject' : k; alts.push({ [kk]: v }); crit[kk] = v; }
     else if (k === 'newer_than') { const n = v.match(/^(\d+)([dmy])$/); if (n) crit.since = new Date(Date.now() - (+n[1]) * ({ d: 1, m: 30, y: 365 })[n[2]] * 86400000); }
     else if (k === 'older_than') { const n = v.match(/^(\d+)([dmy])$/); if (n) crit.before = new Date(Date.now() - (+n[1]) * ({ d: 1, m: 30, y: 365 })[n[2]] * 86400000); }
     else { const d = new Date(v.replace(/\//g, '-')); if (!isNaN(d)) crit[k === 'after' ? 'since' : 'before'] = d; }
   }
-  const queries = words.length ? (anyOf ? words.map(w => Object.assign({}, crit, { text: w })) : [Object.assign({}, crit, { text: words[0] })]) : [crit];
-  if (!Object.keys(queries[0]).length) return { items: [] };
+  const base = {}; if (crit.since) base.since = crit.since; if (crit.before) base.before = crit.before;
+  const queries = anyOf
+    ? alts.map(x => Object.assign({}, base, x)).concat(words.map(w => Object.assign({}, base, { text: w })))
+    : words.length ? [Object.assign({}, crit, { text: words[0] })] : [crit];
+  if (anyOf) words.length = 0;
+  if (!queries.length || !Object.keys(queries[0]).length) return { items: [] };
   return withImap(async client => {
     const f = await folders(client);
     const items = [], seen = new Set();
@@ -226,6 +230,38 @@ async function freeWaiting() {
   });
 }
 /* Recherche en langage naturel : seule la question part vers l'IA */
+async function aiJSON(sys, user, maxTokens) {
+  const call = async (model, extra) => {
+    const r = await fetch(C.aiUrl, { method: 'POST', headers: { Authorization: 'Bearer ' + dec(S.ai.key), 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(60000),
+      body: JSON.stringify(Object.assign({ model, temperature: 0.1, max_tokens: maxTokens, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: sys }, { role: 'user', content: user }] }, extra)) });
+    if (r.status === 401) throw Object.assign(new Error('Clé Groq refusée'), { code: 502 });
+    if (r.status === 429) throw Object.assign(new Error('Groq demande de patienter un instant'), { code: 503 });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { log('IA', model, r.status, JSON.stringify(j).slice(0, 300)); return null; }
+    const txt = (((j.choices || [])[0] || {}).message || {}).content || '';
+    const mm = txt.match(/\{[\s\S]*\}/);
+    try { return JSON.parse(mm ? mm[0] : txt); } catch (e) { log('IA réponse illisible', model, txt.slice(0, 200)); return null; }
+  };
+  return (await call(C.aiModel, /gpt-oss/.test(C.aiModel) ? { reasoning_effort: 'low', include_reasoning: false } : {})) || (await call('llama-3.3-70b-versatile', {}));
+}
+async function aiFolders(list) {
+  if (!S.ai) throw Object.assign(new Error('IA non configurée'), { code: 400 });
+  const names = list.filter(x => x && typeof x.name === 'string').slice(0, 400);
+  const sys = 'Tu aides à ranger des dossiers de messagerie personnels. Tu reçois la liste des dossiers (chemin, sous-dossiers séparés par « / », et nombre de mails). ' +
+    'Propose un plan pour améliorer la lisibilité. Réponds UNIQUEMENT en JSON : {"actions":[{"type":"move"|"merge","from":"chemin existant","to":"nouveau chemin","why":"raison en 12 mots max"}]}. ' +
+    '"move" déplace ou renomme un dossier avec ses sous-dossiers ; "merge" verse tous les mails de "from" dans "to" puis supprime "from". ' +
+    'Règles : ne supprime jamais de mails ; ne touche pas au dossier « Indésirables » ; garde les noms choisis par l’utilisateur sauf doublon évident ; ' +
+    'sors du niveau « INBOX/ » ou « [Imap]/ » les dossiers personnels rangés dessous par un ancien logiciel ; fusionne les doublons (même nom à la casse près, mêmes thèmes évidents) ; ' +
+    'regroupe sous quelques grands thèmes en français (ex. Administratif, Travail, Famille, Voyages, Maison, Achats) seulement si cela réduit nettement le nombre de dossiers au premier niveau ; ' +
+    'n’agis pas sur les dossiers vides (ils sont traités à part) ; 40 actions maximum, les plus utiles d’abord ; "from" doit être recopié exactement depuis la liste.';
+  const user = names.map(x => x.name + ' (' + (x.n >= 0 ? x.n : '?') + ')').join('\n');
+  const out = await aiJSON(sys, user, 6000);
+  if (!out || !Array.isArray(out.actions)) throw Object.assign(new Error('Réponse de l’IA illisible, réessaie'), { code: 502 });
+  const known = new Set(names.map(x => x.name));
+  const acts = out.actions.filter(a => a && (a.type === 'move' || a.type === 'merge') && known.has(a.from) && typeof a.to === 'string' && a.to.trim() && a.to.trim() !== a.from && a.from !== BLOCK_LABEL && !a.to.startsWith(BLOCK_LABEL))
+    .slice(0, 40).map(a => ({ type: a.type, from: a.from, to: a.to.trim().replace(/\s*\/\s*/g, '/').replace(/^\/|\/$/g, ''), why: String(a.why || '').slice(0, 120) }));
+  return { actions: acts };
+}
 async function aiSearch(question, today) {
   if (!S.ai) throw Object.assign(new Error('IA non configurée'), { code: 400 });
   if (!question) throw Object.assign(new Error('Question vide'), { code: 400 });
@@ -577,6 +613,24 @@ const routes = {
     if (!r || r.status === 401) throw Object.assign(new Error('Clé refusée par Groq'), { code: 400 });
     S.ai = { key: enc(k) }; save(); return { ok: true, ai: true };
   },
+  'POST /ai/folders': async (q, b) => aiFolders(Array.isArray(b.folders) ? b.folders : []),
+  'POST /free/folder-rename': async (q, b) => withImap(async client => {
+    const from = String(b.from || ''), to = String(b.to || '');
+    if (!from || !to || from === 'INBOX' || from === BLOCK_LABEL) throw Object.assign(new Error('Dossier protégé'), { code: 400 });
+    const list = await client.list();
+    if (list.some(m => m.path === to)) {
+      // le dossier cible existe : on y verse les mails puis on supprime l'ancien
+      const lock = await client.getMailboxLock(from);
+      try { const uids = (await client.search({ all: true }, { uid: true })) || []; if (uids.length) await client.messageMove(uids, to, { uid: true }); } finally { lock.release(); }
+      if (!list.some(m => m.path.startsWith(from + (m.delimiter || '/')))) await client.mailboxDelete(from);
+      return { ok: true, merged: true };
+    }
+    const dl = b.delim || '/';
+    const parent = to.includes(dl) ? to.slice(0, to.lastIndexOf(dl)) : '';
+    if (parent && !list.some(m => m.path === parent)) { try { await client.mailboxCreate(parent); } catch (e) {} }
+    await client.mailboxRename(from, to);
+    return { ok: true };
+  }),
   'POST /ai/search': async (q, b) => aiSearch(String(b.q || '').slice(0, 300), String(b.today || '')),
   'GET /free/size': async q => freeFolderSize(q.get('folder') || 'BLOCKED'),
   'POST /free/empty': async (q, b) => freeEmpty(b.folder || 'BLOCKED'),
