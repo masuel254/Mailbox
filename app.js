@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.2.0';
+const APP_VERSION = '2.2.1';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -120,8 +120,8 @@ async function accessToken() {
 }
 
 /* ---------- API Gmail ---------- */
-async function api(path, opt) {
-  opt = opt || {};
+async function api(path, opt, tries) {
+  opt = opt || {}; tries = tries || 0;
   const t = await accessToken();
   if (!t) { auth.login(); throw new Error('auth'); }
   const r = await fetch(API + path, {
@@ -130,7 +130,13 @@ async function api(path, opt) {
     body: opt.body ? JSON.stringify(opt.body) : undefined
   });
   if (r.status === 401) { if (relayGmailOn()) { LS.del('rtoken'); toast('Session Gmail renouvelée, réessaie'); throw new Error('auth'); } LS.del('token'); auth.login(); throw new Error('auth'); }
-  if (!r.ok) { let m = 'Erreur ' + r.status; try { m = (await r.json()).error.message; } catch (e) {} if (r.status === 403 && /scope/i.test(m)) m = 'scope'; throw new Error(m); }
+  if (!r.ok) {
+    let m = 'Erreur ' + r.status; try { m = (await r.json()).error.message; } catch (e) {}
+    // Quota Gmail dépassé : on patiente puis on réessaie, sans afficher le message technique
+    if ((r.status === 429 || (r.status === 403 && /quota|rate/i.test(m))) && tries < 3) { await new Promise(res => setTimeout(res, 1500 * Math.pow(2, tries) + Math.random() * 500)); return api(path, opt, tries + 1); }
+    if (r.status === 429 || /quota|rate limit/i.test(m)) m = 'Gmail demande de ralentir, réessaie dans une minute';
+    if (r.status === 403 && /scope/i.test(m)) m = 'scope'; throw new Error(m);
+  }
   return r.status === 204 ? null : r.json().catch(() => null);
 }
 async function pool(items, n, fn) {
@@ -641,17 +647,20 @@ async function renderBlocked(box) {
 
 const fmtMo = b => b >= 1073741824 ? (b / 1073741824).toFixed(2).replace('.', ',') + ' Go' : b >= 1048576 ? (b / 1048576).toFixed(1).replace('.', ',') + ' Mo' : Math.max(1, Math.round(b / 1024)) + ' Ko';
 async function labelSize(labelId) {
+  // Quota Gmail : pas de lecture mail par mail. Nombre exact via le libellé, taille estimée sur un échantillon, mémorisée 30 min.
   const gmail = (async () => {
-    const ids = []; let page = null;
-    do {
-      const p = new URLSearchParams({ labelIds: labelId, maxResults: 500 });
-      if (page) p.set('pageToken', page);
-      const r = (await api('messages?' + p.toString())) || {};
-      (r.messages || []).forEach(m => ids.push(m.id));
-      page = r.nextPageToken;
-    } while (page && ids.length < 3000);
-    const sizes = ids.length ? await pool(ids, 10, id => api('messages/' + id + '?format=minimal&fields=sizeEstimate').then(r => (r && r.sizeEstimate) || 0)) : [];
-    return { count: ids.length, bytes: sizes.reduce((a, b) => a + (b || 0), 0), capped: ids.length >= 3000 };
+    const lab = (await api('labels/' + encodeURIComponent(labelId))) || {};
+    const count = lab.messagesTotal || 0;
+    if (!count) return { count: 0, bytes: 0 };
+    let memo = null; try { memo = JSON.parse(localStorage.getItem('ml-size-' + labelId) || 'null'); } catch (e) {}
+    if (memo && memo.count === count && Date.now() - memo.at < 30 * 60000) return memo;
+    const r = (await api('messages?' + new URLSearchParams({ labelIds: labelId, maxResults: 60 }).toString())) || {};
+    const ids = (r.messages || []).map(m => m.id);
+    const sizes = (await pool(ids, 3, id => api('messages/' + id + '?format=minimal&fields=sizeEstimate').then(x => (x && x.sizeEstimate) || 0).catch(() => null))).filter(x => x != null);
+    const avg = sizes.length ? sizes.reduce((x, y) => x + y, 0) / sizes.length : 0;
+    const out = { count, bytes: Math.round(avg * count), approx: count > sizes.length, at: Date.now() };
+    try { localStorage.setItem('ml-size-' + labelId, JSON.stringify(out)); } catch (e) {}
+    return out;
   })();
   const free = freeOn() && isBlockLabel(labelId) ? rapi('/free/size?folder=BLOCKED').catch(() => null) : Promise.resolve(null);
   try {
@@ -660,7 +669,7 @@ async function labelSize(labelId) {
     const count = (g ? g.count : 0) + (f ? f.count : 0), bytes = (g ? g.bytes : 0) + (f ? f.bytes : 0);
     if (!count) return 'Vide';
     const parts = freeOn() && f ? ' (Gmail ' + (g ? g.count : '?') + ' · Free ' + f.count + ')' : '';
-    return fmtMo(bytes) + ' · ' + count + (g && g.capped ? '+' : '') + ' mail' + (count > 1 ? 's' : '') + parts;
+    return (g && g.approx ? '≈ ' : '') + fmtMo(bytes) + ' · ' + count + ' mail' + (count > 1 ? 's' : '') + parts;
   } catch (e) { return 'Taille indisponible'; }
 }
 
