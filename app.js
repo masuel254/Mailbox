@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.9.3';
+const APP_VERSION = '2.9.4';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -286,9 +286,12 @@ async function renderList(key, q) {
   const acc = isFreeDir ? 'free' : freeOn() && (isSearch || freeFolderOf(key)) ? curAcc() : 'gmail';
   const cacheKey = (acc !== 'gmail' ? acc + '|' : '') + (isSearch ? 'S:' + q : key);
   state.current = cacheKey;
+  const showTitle = key === 'INBOX' ? 'Réception' : String(title).split(/\//).pop();
+  const backTo = ['INBOX', 'UNREAD', 'SENT'].includes(key) ? null : isSearch ? ['#/list/INBOX', 'Réception'] : ['#/labels', 'Dossiers'];
   v.innerHTML = `<div class="sticky-head">
+    ${backTo ? `<a class="back back-sm" href="${backTo[0]}">${ICON.back}${backTo[1]}</a>` : ''}
     <div class="top">
-      <h1>${esc(key === 'INBOX' ? 'Réception' : title)}</h1>
+      <h1>${esc(showTitle)}</h1>
       <button class="icon-btn" id="btn-select" aria-label="Sélectionner plusieurs mails">${ICON.check}</button>
       <button class="icon-btn" id="btn-search" aria-label="Rechercher">${ICON.search}</button>
       <button class="icon-btn" id="btn-refresh" aria-label="Actualiser">${ICON.refresh}</button>
@@ -403,8 +406,9 @@ function summarize(t) {
 
 function itemHTML(it, cls, sentView) {
   const who = sentView && it.to ? 'À : ' + it.to : it.from;
+  const curKey = keyOf(state.current);
   const blocked = it.folder === BLOCK_LABEL || it.labels.some(id => (labelById(id) || {}).name === BLOCK_LABEL);
-  const chips = (blocked ? '<span class="chip blocked">Bloqué</span>' : '') + it.labels.map(id => { const l = labelById(id); return l && l.name !== BLOCK_LABEL ? `<span class="chip lab" style="--c:${esc(labelColor(l))}">${esc(l.name)}</span>` : ''; }).join('');
+  const chips = (blocked ? '<span class="chip blocked">Bloqué</span>' : '') + it.labels.map(id => { const l = labelById(id); return l && l.name !== BLOCK_LABEL && id !== curKey ? `<span class="chip lab" style="--c:${esc(labelColor(l))}">${esc(l.name)}</span>` : ''; }).join('');
   const sel = state.sel && state.sel.has(it.id) ? ' sel' : '';
   const href = it.acc === 'free' ? '#/free/' + encodeURIComponent(it.folder) + '/' + it.uid : '#/thread/' + encodeURIComponent(it.id);
   const accChip = state.showAcc ? `<span class="chip acc-${it.acc === 'free' ? 'free' : 'gmail'}">${it.acc === 'free' ? 'Free' : 'Gmail'}</span>` : '';
@@ -484,7 +488,7 @@ function bindListGestures(list) {
   let timer = null, longDone = false, sx = 0, sy = 0, cur = null, lock = null, dx = 0, bg = null, swiped = false;
   const reset = () => { if (cur) { cur.style.transition = 'transform .2s'; cur.style.transform = ''; const c = cur; setTimeout(() => { c.style.transition = ''; }, 220); } if (bg) { const g = bg; setTimeout(() => g.remove(), 200); } cur = null; bg = null; lock = null; dx = 0; };
   list.addEventListener('touchstart', e => {
-    const a = e.target.closest('a.item'); if (!a) return;
+    const a = e.target.closest('a.item'); if (!a || e.touches[0].clientX < 24) return;
     longDone = false; swiped = false; sx = e.touches[0].clientX; sy = e.touches[0].clientY; cur = a; lock = null; dx = 0;
     timer = setTimeout(() => { longDone = true; if (navigator.vibrate) navigator.vibrate(15); if (!state.sel) enterSelect(); toggleSel(a); }, 480);
   }, { passive: true });
@@ -1375,6 +1379,16 @@ function tidySheet(g, f) {
   draw();
 }
 /* Balayage à gauche sur un dossier : le supprimer */
+/* Geste iPhone : balayer depuis le bord gauche de l'écran pour revenir */
+(() => {
+  let sx = -1, sy = 0;
+  document.addEventListener('touchstart', e => { const t = e.touches[0]; sx = t.clientX < 24 ? t.clientX : -1; sy = t.clientY; }, { passive: true });
+  document.addEventListener('touchend', e => {
+    if (sx < 0) return; const t = e.changedTouches[0];
+    if (t.clientX - sx > 90 && Math.abs(t.clientY - sy) < 60) { const b = document.querySelector('#view .back'); if (b) b.click(); }
+    sx = -1;
+  }, { passive: true });
+})();
 function bindFolderSwipe(box, find, onDelete) {
   let sx = 0, sy = 0, cur = null, lock = null, dx = 0, bg = null, swiped = false;
   const reset = () => { if (cur) { cur.style.transition = 'transform .2s'; cur.style.transform = ''; } if (bg) { const g = bg; setTimeout(() => g.remove(), 200); } cur = null; bg = null; lock = null; dx = 0; };
