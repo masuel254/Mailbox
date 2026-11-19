@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.10.0';
+const APP_VERSION = '2.10.1';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -37,7 +37,7 @@ function toast(msg, action) {
   if (action) { const b = document.createElement('button'); b.type = 'button'; b.textContent = action.label; b.onclick = () => { t.classList.remove('show'); clearTimeout(toastTimer); action.run(); }; t.appendChild(b); }
   t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), action ? 6000 : 2600);
 }
-const undoToast = (msg, undo) => toast(msg, { label: 'Annuler', run: async () => { try { await undo(); toast('Action annulée'); } catch (e) { toast('Annulation impossible : ' + e.message); } Object.keys(state.lists).forEach(k => delete state.lists[k]); route(); updateBadge(); } });
+const undoToast = (msg, undo) => toast(msg, { label: 'Annuler', run: async () => { try { await undo(); toast('Action annulée'); } catch (e) { toast('Annulation impossible : ' + e.message); } Object.keys(state.lists).forEach(k => delete state.lists[k]); route(); badgeNow(0); } });
 const ICON = {
   folder: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
   plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
@@ -476,14 +476,21 @@ async function readAll(btn) {
   if (errs.length) toast(errs.join(' · '));
   else if (total) undoToast(total + ' mail' + (total > 1 ? 's' : '') + ' marqué' + (total > 1 ? 's' : '') + ' comme lu' + (total > 1 ? 's' : ''), undo);
   else toast('Tout était déjà lu');
-  route(); updateBadge(); setTimeout(updateBadge, 4000);
+  route(); badgeNow(0);
 }
 
-async function updateBadge() {
+let badgeT = null;
+/* Après une lecture/suppression : baisse immédiate du chiffre puis relevé à jour côté relais */
+function badgeNow(delta) {
+  const b = $('#badge-inbox'); const cur = b && !b.hidden ? parseInt(b.textContent, 10) || 0 : 0;
+  if (delta && cur) { const n = Math.max(0, cur - delta); if (b) { b.hidden = !n; b.textContent = n; } if (navigator.setAppBadge) (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {}); }
+  clearTimeout(badgeT); badgeT = setTimeout(() => updateBadge(true), 1500);
+}
+async function updateBadge(fresh) {
   try {
     let n, own, cnt = null;
     if (relayOn() && (relayGmailOn() || freeOn())) {
-      const r = await rapi('/badge');
+      const r = await rapi('/badge' + (fresh === true ? '?fresh=1' : ''));
       n = r.total || 0; cnt = { all: n, gmail: r.gmail || 0, free: r.free || 0 };
       const a = curAcc(); own = a === 'free' ? r.free : a === 'gmail' ? r.gmail : n;
     } else if (settings.primaryOnly) { const t = (await api('threads?' + new URLSearchParams({ q: 'in:inbox category:primary is:unread', maxResults: 100 }))) || {}; n = (t.threads || []).length; own = n; }
@@ -557,7 +564,7 @@ async function swipeAct(id, kind) {
   Object.entries(state.lists).forEach(([k, d]) => { d.items = d.items.map(i => i.id === id ? ACT_PATCH[kind](i, k) : i).filter(Boolean); });
   reDraw();
   undoToast(kind === 'trash' ? 'Mail supprimé' : kind === 'read' ? 'Marqué comme lu' : 'Marqué comme non lu', r.undo);
-  updateBadge();
+  badgeNow(0);
 }
 function reDraw() { const c = state.listCtx; if (c && state.lists[c.cacheKey]) drawList(state.lists[c.cacheKey], c.plain); }
 function enterSelect() {
@@ -651,7 +658,7 @@ async function bulk(body, patch, label) {
   if (c && state.lists[c.cacheKey]) drawList(state.lists[c.cacheKey], c.plain);
   const msg = r.ok + ' mail' + (r.ok > 1 ? 's ' : ' ') + label + (r.ok < ids.length ? ' (' + (ids.length - r.ok) + ' en échec)' : '');
   r.ok ? undoToast(msg, r.undo) : toast(msg);
-  updateBadge();
+  badgeNow(0);
 }
 
 
@@ -706,7 +713,7 @@ async function quickBlock(item) {
     if (freeOn()) { try { moved += (await rapi('/free/block', { method: 'POST', body: { target: t } })).moved || 0; } catch (e) {} }
     const hit = e => e && (e.toLowerCase() === t || blockTarget(e) === t);
     Object.values(state.lists).forEach(d => { d.items = d.items.filter(i => !hit(i.fromEmail)); });
-    reDraw(); updateBadge();
+    reDraw(); badgeNow(0);
     undoToast(names[t] + ' bloqué' + (moved > 1 ? ' · ' + moved + ' mails rangés' : ''), async () => {
       if (filterId) await api('settings/filters/' + filterId, { method: 'DELETE' });
       let page = null;
@@ -758,7 +765,7 @@ function blockSheet(ids, extra) {
       closeSheet(); exitSelect();
       const c = state.listCtx; if (c && state.lists[c.cacheKey]) drawList(state.lists[c.cacheKey], c.plain);
       toast(chosen.length + (chosen.length > 1 ? ' expéditeurs bloqués' : ' expéditeur bloqué') + (moved ? ', ' + moved + ' mail' + (moved > 1 ? 's' : '') + ' rangé' + (moved > 1 ? 's' : '') : ''));
-      updateBadge();
+      badgeNow(0);
     } catch (e) {
       closeSheet();
       if (e.message === 'scope') needScope(); else if (e.message !== 'auth') toast('Échec : ' + e.message);
@@ -909,7 +916,7 @@ async function renderThread(id) {
   const starred = labels.has('STARRED');
   state.thread = { id, msgs, labels, subject };
   if (labels.has('UNREAD')) {
-    api('threads/' + id + '/modify', { method: 'POST', body: { removeLabelIds: ['UNREAD'] } }).then(updateBadge).catch(() => {});
+    api('threads/' + id + '/modify', { method: 'POST', body: { removeLabelIds: ['UNREAD'] } }).then(() => badgeNow(1)).catch(() => {});
     patchCached(id, i => Object.assign({}, i, { unread: false }));
   }
   const lastM = msgs[msgs.length - 1] || {};
@@ -942,7 +949,7 @@ async function renderThread(id) {
   $('#r-all').onclick = () => openCompose('all', last);
   $('#r-fwd').onclick = () => openCompose('fwd', last);
   $('#t-archive').onclick = () => threadAction(id, { removeLabelIds: ['INBOX'] }, 'Archivé', true);
-  $('#t-trash').onclick = async () => { try { await api('threads/' + id + '/trash', { method: 'POST' }); patchCached(id, () => null); toast('Placé dans la corbeille'); goBack(); updateBadge(); } catch (e) { if (e.message !== 'auth') toast(e.message); } };
+  $('#t-trash').onclick = async () => { try { await api('threads/' + id + '/trash', { method: 'POST' }); patchCached(id, () => null); toast('Placé dans la corbeille'); goBack(); badgeNow(0); } catch (e) { if (e.message !== 'auth') toast(e.message); } };
   $('#t-unread').onclick = () => { patchCached(id, i => Object.assign({}, i, { unread: true })); threadAction(id, { addLabelIds: ['UNREAD'] }, 'Marqué non lu', true); };
   $('#t-star').onclick = async () => {
     try {
@@ -964,7 +971,7 @@ async function renderFree(folder, uid) {
   try { m = await rapi('/free/message?' + new URLSearchParams({ folder, uid })); }
   catch (e) { v.querySelector('.loading').outerHTML = `<div class="empty">Impossible d'ouvrir : ${esc(e.message)}</div>`; return; }
   const id = 'f:' + uid + ':' + folder;
-  if (!m.seen) { rapi('/free/flags', { method: 'POST', body: { folder, uids: [uid], seen: true } }).then(updateBadge).catch(() => {}); patchCached(id, i => Object.assign({}, i, { unread: false })); }
+  if (!m.seen) { rapi('/free/flags', { method: 'POST', body: { folder, uids: [uid], seen: true } }).then(() => badgeNow(1)).catch(() => {}); patchCached(id, i => Object.assign({}, i, { unread: false })); }
   state.freeMsg = m;
   v.innerHTML = `
     <div class="top"><a class="back" href="#" id="back">${ICON.back}Retour</a></div>
@@ -990,10 +997,10 @@ async function renderFree(folder, uid) {
   $('#back').onclick = e => { e.preventDefault(); goBack(); };
   const att = a => a.data ? Promise.resolve(a.data) : rapi('/free/attachment?' + new URLSearchParams({ folder, uid, idx: a.idx })).then(r => { a.data = r.data; return r.data; });
   renderBody(null, $('#msgs .content'), { acc: { html: m.html, text: m.text, att: m.attachments || [] }, att });
-  const move = async (to, label) => { try { await rapi('/free/move', { method: 'POST', body: { folder, uids: [uid], to } }); patchCached(id, () => null); toast(label); updateBadge(); goBack(); } catch (e) { toast(e.message); } };
+  const move = async (to, label) => { try { await rapi('/free/move', { method: 'POST', body: { folder, uids: [uid], to } }); patchCached(id, () => null); toast(label); badgeNow(0); goBack(); } catch (e) { toast(e.message); } };
   $('#t-archive').onclick = () => move('ARCHIVE', 'Archivé');
   $('#t-trash').onclick = () => move('TRASH', 'Placé dans la corbeille');
-  $('#t-unread').onclick = async () => { try { await rapi('/free/flags', { method: 'POST', body: { folder, uids: [uid], seen: false } }); patchCached(id, i => Object.assign({}, i, { unread: true })); toast('Marqué non lu'); updateBadge(); goBack(); } catch (e) { toast(e.message); } };
+  $('#t-unread').onclick = async () => { try { await rapi('/free/flags', { method: 'POST', body: { folder, uids: [uid], seen: false } }); patchCached(id, i => Object.assign({}, i, { unread: true })); toast('Marqué non lu'); badgeNow(0); goBack(); } catch (e) { toast(e.message); } };
   $('#t-block').onclick = () => { goBack(); quickBlock({ id, fromEmail: m.from.email, fromName: m.from.name }); };
   $('#t-fmove').onclick = () => freeMoveSheet(id, folder, uid);
   const un = $('#t-unsub'); if (un) un.onclick = () => unsubscribe(m.unsub, m.unsubPost, 'free', m.from.name || m.from.email);
@@ -1033,7 +1040,7 @@ async function threadAction(id, body, msg, leave) {
   try {
     await api('threads/' + id + '/modify', { method: 'POST', body });
     if (body.removeLabelIds && body.removeLabelIds.includes('INBOX')) Object.entries(state.lists).forEach(([k, c]) => { if (['INBOX', 'UNREAD'].includes(keyOf(k))) c.items = c.items.filter(i => i.id !== id); });
-    toast(msg); updateBadge();
+    toast(msg); badgeNow(0);
     if (leave) goBack();
   } catch (e) { if (e.message !== 'auth') toast(e.message); }
 }
@@ -1246,7 +1253,7 @@ async function labelSheet(threadId, current) {
       Object.keys(state.lists).forEach(k => delete state.lists[k]);
       toast('Classé');
       if (rem.includes('INBOX')) goBack(); else renderThread(threadId);
-      updateBadge();
+      badgeNow(0);
     } catch (e) { if (e.message !== 'auth') toast(e.message); }
   };
 }
@@ -2011,6 +2018,7 @@ document.addEventListener('visibilitychange', () => {
   updateBadge();
 });
 setInterval(() => { if (document.visibilityState === 'visible' && (auth.token() || relayOn())) updateBadge(); }, 120000);
+document.addEventListener('visibilitychange', () => { if (auth.token() || relayOn()) updateBadge(document.visibilityState === 'hidden' ? true : false); });
 checkUpdate();
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkUpdate(); });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

@@ -498,7 +498,20 @@ async function pollFree() {
   });
 }
 let polling = false;
-async function poll() {
+let pollP = null, badgeTimer = null;
+/* Pastille seule : quand des mails sont lus ailleurs (PC, Gmail web…), on remet le chiffre de l'iPhone à jour */
+function scheduleBadgeSync() {
+  if (!S.subs.length || isQuiet()) return;
+  clearTimeout(badgeTimer);
+  const wait = Math.max(5000, 120000 - (Date.now() - (S.lastBadgePush || 0)));
+  badgeTimer = setTimeout(async () => {
+    if (isQuiet() || total() === S.lastBadgeSent) return;
+    S.lastBadgePush = Date.now(); S.lastBadgeSent = total(); save();
+    await push({ type: 'badge', badge: total() }).catch(() => {});
+  }, wait);
+}
+function poll() { if (!pollP) pollP = pollOnce().finally(() => { pollP = null; }); return pollP; }
+async function pollOnce() {
   if (polling) return; polling = true;
   try {
     const before = total();
@@ -518,7 +531,8 @@ async function poll() {
       await push({ title: night.length ? all.length + (all.length > 1 ? ' mails reçus' : ' mail reçu') + ' cette nuit' : one ? all[0].from + (S.free && S.gmail ? ' · ' + (all[0].acc === 'free' ? 'Free' : 'Gmail') : '') : all.length + ' nouveaux mails',
         body: one ? all[0].subject : all.slice(-4).reverse().map(n => n.from + ' : ' + n.subject).join('\n'),
         badge: total(), url: one ? all[0].url : C.appUrl + '#/list/INBOX', tag: 'mailbox-new', silent: !!(S.prefs && S.prefs.silent) });
-    } else if (before !== total()) log('pastille', total());
+    } else if (before !== total()) { log('pastille', total()); if (total() < before) scheduleBadgeSync(); }
+    if (news.length) S.lastBadgeSent = total();
   } finally { polling = false; }
 }
 
@@ -541,7 +555,12 @@ const routes = {
     if (typeof b.tz === 'string' && b.tz.length < 60) { try { new Intl.DateTimeFormat('fr', { timeZone: b.tz }); p.tz = b.tz; } catch (e) {} }
     S.prefs = p; save(); return p;
   },
-  'GET /badge': async () => { poll().catch(() => {}); return { gmail: S.badge.gmail, free: S.badge.free, total: total() }; },
+  'GET /badge': async q => {
+    // fresh=1 : l'appli vient de lire/supprimer, on attend un relevé à jour (5 s max)
+    if (q.get('fresh')) await Promise.race([poll().catch(() => {}), new Promise(r => setTimeout(r, 5000))]); else poll().catch(() => {});
+    S.lastBadgeSent = total();
+    return { gmail: S.badge.gmail, free: S.badge.free, total: total() };
+  },
   'POST /free/account': async (q, b) => {
     if (!b.email || !b.password) throw Object.assign(new Error('Adresse et mot de passe requis'), { code: 400 });
     const user = b.email.trim().toLowerCase();
