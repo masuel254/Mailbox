@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.9.1';
+const APP_VERSION = '2.9.2';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -1366,7 +1366,7 @@ function tidySheet(g, f) {
           ok++;
         } catch (e) { errs.push((l.kind === 'del' ? disp(l.x) : l.from) + ' : ' + e.message); }
       }
-      closeSheet(); state.folders = null; labelsCache = null; state.lists = {};
+      closeSheet(); state.folders = null; labelsCache = null; state.lists = {}; LS.del('foldersCache');
       toast(ok + ' action' + (ok > 1 ? 's' : '') + ' appliquée' + (ok > 1 ? 's' : '') + (errs.length ? ' · ' + errs.length + ' en échec' : ''));
       if (errs.length) console.warn(errs);
       renderLabels();
@@ -1380,28 +1380,32 @@ async function renderLabels() {
     <div class="searchbar"><input type="search" id="fq" placeholder="Chercher un dossier" autocomplete="off" enterkeyhint="search"></div></div>
     <a class="set-link" href="#/waiting"><span class="set-t">⏳ En attente de réponse</span><span class="set-s">Suivi Gmail + Free</span><span class="chev-r" aria-hidden="true"></span></a>
     <div id="labs"><div class="loading">Chargement…</div></div>`;
-  $('#btn-refresh').onclick = () => { state.folders = null; renderLabels(); };
-  const data = state.folders && Date.now() - state.folders.at < 120000 ? state.folders : null;
-  let g = [], f = [];
-  if (data) ({ g, f } = data);
-  else {
-    const jobs = [];
-    jobs.push((async () => {
-      try {
-        const labels = await getLabels(true);
-        const counts = await pool(labels, 4, l => api('labels/' + l.id).catch(() => null));
-        g = labels.map((l, i) => ({ key: 'g:' + l.id, full: l.name, href: '#/list/' + encodeURIComponent(l.id), n: (counts[i] && counts[i].threadsUnread) || 0, m: counts[i] && counts[i].id ? counts[i].messagesTotal || 0 : -1, id: l.id, acc: 'gmail', color: labelColor(l) }));
-      } catch (e) { if (e.message === 'auth') throw e; }
-    })());
-    if (freeOn()) jobs.push(rapi('/free/folders?tree=1').then(r => { f = (r.folders || []).map(x => ({ key: 'f:' + x.path, full: x.path, delim: x.delim, href: '#/list/F:' + encodeURIComponent(x.path), n: x.unseen || 0, m: typeof x.messages === 'number' ? x.messages : -1, acc: 'free' })); }).catch(e => toast('Free : ' + e.message)));
-    try { await Promise.all(jobs); } catch (e) { return; }
+  $('#btn-refresh').onclick = () => { state.folders = null; LS.del('foldersCache'); renderLabels(); };
+  // Affichage instantané depuis le cache (mémoire ou appareil), puis mise à jour en arrière-plan
+  const cached = state.folders || LS.get('foldersCache', null);
+  let g = cached ? cached.g : [], f = cached ? cached.f : [];
+  const fresh = state.folders && Date.now() - state.folders.at < 120000;
+  const refresh = async () => {
+    let ng = null, nf = null;
+    const gJob = (async () => {
+      const labels = await getLabels(true);
+      if (!cached) { g = labels.map(l => ({ key: 'g:' + l.id, full: l.name, href: '#/list/' + encodeURIComponent(l.id), n: 0, m: -1, id: l.id, acc: 'gmail', color: labelColor(l) })); redraw(); }
+      const counts = await pool(labels, 10, l => api('labels/' + l.id + '?fields=id,messagesTotal,threadsUnread').catch(() => null));
+      ng = labels.map((l, i) => ({ key: 'g:' + l.id, full: l.name, href: '#/list/' + encodeURIComponent(l.id), n: (counts[i] && counts[i].threadsUnread) || 0, m: counts[i] && counts[i].id ? counts[i].messagesTotal || 0 : -1, id: l.id, acc: 'gmail', color: labelColor(l) }));
+      if (!cached) { g = ng; redraw(); }
+    })().catch(e => { if (e.message !== 'auth') toast('Gmail : ' + e.message); });
+    const fJob = freeOn() ? rapi('/free/folders?tree=1').then(r => { nf = (r.folders || []).map(x => ({ key: 'f:' + x.path, full: x.path, delim: x.delim, href: '#/list/F:' + encodeURIComponent(x.path), n: x.unseen || 0, m: typeof x.messages === 'number' ? x.messages : -1, acc: 'free' })); if (!cached) { f = nf; redraw(); } }).catch(e => toast('Free : ' + e.message)) : Promise.resolve();
+    await Promise.all([gJob, fJob]);
+    if (ng) g = ng; if (nf) f = nf;
     state.folders = { at: Date.now(), g, f };
-  }
+    try { LS.set('foldersCache', { at: Date.now(), g, f }); } catch (e) {}
+    redraw();
+  };
+  let redraw = () => {};
   const favs = LS.get('favFolders', []);
   const opened = new Set(LS.get('openFolders', []));
   const openSecs = LS.get('openSecs', {});
-  const all = g.concat(f);
-  const byKey = new Map(all.map(x => [x.key, x]));
+  let all = g.concat(f), byKey = new Map(all.map(x => [x.key, x]));
   const nb = n => n ? `<span class="fnb">${n > 99 ? '99+' : n}</span>` : '';
   const star = k => `<button class="fstar ${favs.includes(k) ? 'on' : ''}" data-fav="${esc(k)}" aria-label="${favs.includes(k) ? 'Retirer des favoris' : 'Ajouter aux favoris'}">${favs.includes(k) ? '★' : '☆'}</button>`;
   const dot = acc => `<span class="dot" style="background:var(--${acc})"></span>`;
@@ -1448,7 +1452,14 @@ async function renderLabels() {
   const toggleOpen = k => { opened.has(k) ? opened.delete(k) : opened.add(k); LS.set('openFolders', [...opened]); draw($('#fq').value.trim()); };
   $('#fq').oninput = e => draw(e.target.value.trim());
   $('#btn-tidy').onclick = () => tidySheet(g, f);
-  draw('');
+  redraw = () => {
+    if (!location.hash.startsWith('#/labels') || !$('#labs')) return;
+    all = g.concat(f); byKey = new Map(all.map(x => [x.key, x]));
+    if (!all.length && !cached) return;
+    const y = scrollY; draw(($('#fq') || {}).value ? $('#fq').value.trim() : ''); scrollTo(0, y);
+  };
+  if (cached) draw('');
+  if (!fresh) refresh();
 }
 
 /* ---------- Rédaction ---------- */
