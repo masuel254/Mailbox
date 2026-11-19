@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.10.2';
+const APP_VERSION = '2.10.3';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -30,7 +30,7 @@ const $ = (s, el) => (el || document).querySelector(s);
 const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const decodeEntities = s => { const t = document.createElement('textarea'); t.innerHTML = s || ''; return t.value; };
-const cleanSnippet = s => decodeEntities(decodeEntities(s || '')).replace(/(^|\s)[^\s{}][^{}]{0,300}\{[^{}]*\}/g, ' ').replace(/\*\*/g, '').replace(/[\u00a0\u200b-\u200d\u034f\ufeff]/g, ' ').replace(/\(?\s*<?https?:\/\/[^\s)>]*>?\s*\)?/g, ' ').replace(/\[[^\]]*\]/g, ' ').replace(/^\s*(voir|afficher|consulter) (la version|ce (mail|message|courriel)) (en ligne|dans (votre|un) navigateur)\S*\s*/i, '').replace(/\s+/g, ' ').trim();
+const cleanSnippet = s => fixMojibake(decodeEntities(decodeEntities(s || ''))).replace(/(^|\s)[^\s{}][^{}]{0,300}\{[^{}]*\}/g, ' ').replace(/\*\*/g, '').replace(/[\u00a0\u200b-\u200d\u034f\ufeff]/g, ' ').replace(/\(?\s*<?https?:\/\/[^\s)>]*>?\s*\)?/g, ' ').replace(/\[[^\]]*\]/g, ' ').replace(/^\s*(voir|afficher|consulter) (la version|ce (mail|message|courriel)) (en ligne|dans (votre|un) navigateur)\S*\s*/i, '').replace(/\s+/g, ' ').trim();
 let toastTimer;
 function toast(msg, action) {
   const t = $('#toast'); t.textContent = msg; t.classList.toggle('has-act', !!action);
@@ -216,7 +216,21 @@ const fmtSize = b => b > 1048576 ? (b / 1048576).toFixed(1) + ' Mo' : Math.max(1
 function b64ToBytes(s) { const bin = atob((s || '').replace(/-/g, '+').replace(/_/g, '/')); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; }
 function decodeText(data, charset) {
   const bytes = b64ToBytes(data);
-  try { return new TextDecoder((charset || 'utf-8').toLowerCase()).decode(bytes); } catch (e) { return new TextDecoder('utf-8').decode(bytes); }
+  // Certains mails annoncent un jeu de caractères (ISO-8859-1, Windows-1252) mais sont en réalité en UTF-8 : on essaie l'UTF-8 strict d'abord
+  if (charset && !/utf-?8/i.test(charset) && bytes.some(b => b > 127)) { try { return fixMojibake(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); } catch (e) {} }
+  let out; try { out = new TextDecoder((charset || 'utf-8').toLowerCase()).decode(bytes); } catch (e) { out = new TextDecoder('utf-8').decode(bytes); }
+  return fixMojibake(out);
+}
+/* Répare le texte « Ã© / Ã» / â€™ » (UTF-8 lu comme du Latin-1/Windows-1252), y compris dans le HTML déjà mal encodé à l'envoi */
+const CP1252 = { 0x20AC: 0x80, 0x201A: 0x82, 0x0192: 0x83, 0x201E: 0x84, 0x2026: 0x85, 0x2020: 0x86, 0x2021: 0x87, 0x02C6: 0x88, 0x2030: 0x89, 0x0160: 0x8A, 0x2039: 0x8B, 0x0152: 0x8C, 0x017D: 0x8E, 0x2018: 0x91, 0x2019: 0x92, 0x201C: 0x93, 0x201D: 0x94, 0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97, 0x02DC: 0x98, 0x2122: 0x99, 0x0161: 0x9A, 0x203A: 0x9B, 0x0153: 0x9C, 0x017E: 0x9E, 0x0178: 0x9F };
+function fixMojibake(str) {
+  if (!str || !/[ÂÃâ][\u0080-¿Œ-™]/.test(str)) return str;
+  const byteOf = c => { const n = c.charCodeAt(0); return n < 256 ? n : CP1252[n]; };
+  return str.replace(/[Â-ô][\u0080-¿ŒœŠšŸŽžƒˆ˜–-™]{1,3}/g, seq => {
+    const bytes = [...seq].map(byteOf);
+    if (bytes.some(b => b === undefined)) return seq;
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(new Uint8Array(bytes)); } catch (e) { return seq; }
+  });
 }
 function bytesToB64(bytes) { let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(bin); }
 const utf8B64 = s => bytesToB64(new TextEncoder().encode(s));
@@ -232,7 +246,7 @@ const freeFolderOf = key => FREE_FOLDERS[key] || (String(key).startsWith('F:') ?
 const curAcc = () => freeOn() ? (settings.acc || 'all') : 'gmail';
 function parseFreeId(id) { const p = id.split(':'); return { uid: +p[1], folder: p.slice(2).join(':') }; }
 function freeItem(x) {
-  return { id: 'f:' + x.uid + ':' + x.folder, acc: 'free', folder: x.folder, uid: x.uid, subject: x.subject, from: x.from.name || x.from.email, fromEmail: (x.from.email || '').toLowerCase(), fromName: x.from.name || '', to: x.to || '', sentByMe: false, snippet: cleanSnippet(x.snippet), date: x.date, count: 1, size: x.size || 0, unread: !x.seen, starred: !!x.flagged, labels: [] };
+  return { id: 'f:' + x.uid + ':' + x.folder, acc: 'free', folder: x.folder, uid: x.uid, subject: fixMojibake(x.subject), from: x.from.name || x.from.email, fromEmail: (x.from.email || '').toLowerCase(), fromName: x.from.name || '', to: x.to || '', sentByMe: false, snippet: cleanSnippet(x.snippet), date: x.date, count: 1, size: x.size || 0, unread: !x.seen, starred: !!x.flagged, labels: [] };
 }
 function route() {
   auth.handleRedirect();
@@ -391,13 +405,13 @@ function summarize(t) {
   const ext = msgs.map(m => parseAddr(hdr(m, 'From'))).filter(a => !isMe(a.email)).pop();
   return {
     id: t.id,
-    subject: hdr(msgs[0] || {}, 'Subject') || '(sans objet)',
+    subject: fixMojibake(hdr(msgs[0] || {}, 'Subject')) || '(sans objet)',
     from: froms.slice(-3).join(', '),
     fromEmail: ext ? ext.email.toLowerCase() : '',
     fromName: ext ? ext.name : '',
     to: to.join(', '),
     sentByMe: isMe(parseAddr(hdr(last, 'From')).email),
-    snippet: decodeEntities(last.snippet || ''),
+    snippet: fixMojibake(decodeEntities(last.snippet || '')),
     date: +last.internalDate || Date.now(),
     count: msgs.length,
     size: msgs.reduce((a, m) => a + (m.sizeEstimate || 0), 0),
@@ -996,7 +1010,7 @@ async function renderFree(folder, uid) {
     </div>`;
   $('#back').onclick = e => { e.preventDefault(); goBack(); };
   const att = a => a.data ? Promise.resolve(a.data) : rapi('/free/attachment?' + new URLSearchParams({ folder, uid, idx: a.idx })).then(r => { a.data = r.data; return r.data; });
-  renderBody(null, $('#msgs .content'), { acc: { html: m.html, text: m.text, att: m.attachments || [] }, att });
+  renderBody(null, $('#msgs .content'), { acc: { html: fixMojibake(m.html), text: fixMojibake(m.text), att: m.attachments || [] }, att });
   const move = async (to, label) => { try { await rapi('/free/move', { method: 'POST', body: { folder, uids: [uid], to } }); patchCached(id, () => null); toast(label); badgeNow(0); goBack(); } catch (e) { toast(e.message); } };
   $('#t-archive').onclick = () => move('ARCHIVE', 'Archivé');
   $('#t-trash').onclick = () => move('TRASH', 'Placé dans la corbeille');
