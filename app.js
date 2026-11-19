@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.9.6';
+const APP_VERSION = '2.9.7';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -39,6 +39,7 @@ function toast(msg, action) {
 }
 const undoToast = (msg, undo) => toast(msg, { label: 'Annuler', run: async () => { try { await undo(); toast('Action annulée'); } catch (e) { toast('Annulation impossible : ' + e.message); } Object.keys(state.lists).forEach(k => delete state.lists[k]); route(); updateBadge(); } });
 const ICON = {
+  folder: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
   plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
   search: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>',
   refresh: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>',
@@ -1324,7 +1325,7 @@ async function gMove(from, to, mergeRoot) {
   const sub = labels.filter(l => l.name === from || l.name.startsWith(from + '/')).sort((a, b) => b.name.length - a.name.length);
   if (!sub.length) throw new Error('dossier introuvable');
   const parent = to.includes('/') ? to.slice(0, to.lastIndexOf('/')) : '';
-  if (parent) await gEnsureLabel(parent);
+  if (parent) { try { await gEnsureLabel(parent); } catch (e) { /* parent réservé (ex. INBOX) : Gmail accepte quand même le chemin */ } }
   for (const l of sub) {
     const nn = to + l.name.slice(from.length);
     const exists = (await getLabels()).find(x => x.name.toLowerCase() === nn.toLowerCase() && x.id !== l.id);
@@ -1392,26 +1393,53 @@ function tidySheet(g, f) {
     sx = -1;
   }, { passive: true });
 })();
-function bindFolderSwipe(box, find, onDelete) {
+function bindFolderSwipe(box, find, onDelete, onMove) {
   let sx = 0, sy = 0, cur = null, lock = null, dx = 0, bg = null, swiped = false;
   const reset = () => { if (cur) { cur.style.transition = 'transform .2s'; cur.style.transform = ''; } if (bg) { const g = bg; setTimeout(() => g.remove(), 200); } cur = null; bg = null; lock = null; dx = 0; };
   box.addEventListener('touchstart', e => { const a = e.target.closest('a.frow[data-k]'); if (!a || e.target.closest('button')) return; cur = a; swiped = false; lock = null; dx = 0; sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
   box.addEventListener('touchmove', e => {
     if (!cur) return;
     const mx = e.touches[0].clientX - sx, my = e.touches[0].clientY - sy;
-    if (!lock && (Math.abs(mx) > 10 || Math.abs(my) > 10)) lock = Math.abs(mx) > Math.abs(my) * 1.3 && mx < 0 ? 'h' : 'v';
+    if (!lock && (Math.abs(mx) > 10 || Math.abs(my) > 10)) lock = Math.abs(mx) > Math.abs(my) * 1.3 && sx > 24 ? 'h' : 'v';
     if (lock !== 'h') return;
     e.preventDefault();
-    dx = Math.max(-170, Math.min(0, mx));
-    if (!bg) { bg = document.createElement('div'); bg.className = 'swipe-bg left fswipe'; bg.innerHTML = `<span>${ICON.trash}Supprimer</span>`; cur.parentNode.style.position = 'relative'; bg.style.top = cur.offsetTop + 'px'; bg.style.height = cur.offsetHeight + 'px'; cur.parentNode.insertBefore(bg, cur); cur.style.position = 'relative'; cur.style.zIndex = 1; cur.style.background = 'var(--surface)'; }
-    bg.classList.toggle('on', dx < -90);
+    dx = Math.max(-170, Math.min(170, mx));
+    if (bg && (dx < 0) !== bg.classList.contains('left')) { bg.remove(); bg = null; }
+    if (!bg) { bg = document.createElement('div'); bg.className = 'swipe-bg fswipe' + (dx < 0 ? ' left' : ''); bg.innerHTML = dx < 0 ? `<span>${ICON.trash}Supprimer</span>` : `<span>${ICON.folder || ''}Déplacer</span>`; cur.parentNode.style.position = 'relative'; bg.style.top = cur.offsetTop + 'px'; bg.style.height = cur.offsetHeight + 'px'; cur.parentNode.insertBefore(bg, cur); cur.style.position = 'relative'; cur.style.zIndex = 1; cur.style.background = 'var(--surface)'; }
+    bg.classList.toggle('on', Math.abs(dx) > 90);
     cur.style.transform = 'translateX(' + dx + 'px)';
   }, { passive: false });
   box.addEventListener('touchend', () => {
-    if (lock === 'h' && cur) { swiped = true; if (dx < -90) { const x = find(cur.dataset.k); if (navigator.vibrate) navigator.vibrate(10); if (x) onDelete(x); } }
+    if (lock === 'h' && cur) { swiped = true; if (Math.abs(dx) > 90) { const x = find(cur.dataset.k); if (navigator.vibrate) navigator.vibrate(10); if (x) (dx < 0 ? onDelete : onMove)(x); } }
     reset();
   });
   box.addEventListener('click', e => { if (swiped && e.target.closest('a.frow')) { e.preventDefault(); swiped = false; } }, true);
+}
+function moveFolderSheet(x, all) {
+  if (x.full === BLOCK_LABEL) { toast('Le dossier Indésirables est protégé'); return; }
+  const sep = x.delim || '/';
+  const parts = x.full.split(sep), leaf = parts.pop(), curParent = parts.join(sep);
+  const paths = new Set();
+  all.filter(y => y.acc === x.acc).forEach(y => { const ps = y.full.split(y.delim || '/'); for (let i = 1; i <= ps.length; i++) paths.add(ps.slice(0, i).join(sep)); });
+  const targets = [...paths].filter(p => p !== x.full && !p.startsWith(x.full + sep) && p !== BLOCK_LABEL).sort((a, b) => a.localeCompare(b, 'fr')).map(full => ({ full }));
+  openSheet(`<span class="grip"></span><h2>Déplacer « ${esc(leaf)} »</h2>
+    <p style="margin:0;color:var(--muted);font-size:.85rem"><span class="dot tdot" style="background:var(--${x.acc})"></span>Ses mails et sous-dossiers suivent. Si un dossier du même nom existe déjà à l’arrivée, les deux sont fusionnés.</p>
+    <label class="f">Ranger dans<select id="mv-parent"><option value="">— Premier niveau —</option>${targets.map(y => `<option value="${esc(y.full)}" ${y.full === curParent ? 'selected' : ''}>${esc(y.full.split(sep).join(' › '))}</option>`).join('')}</select></label>
+    <label class="f">Nom<input id="mv-name" value="${esc(leaf)}" autocomplete="off"></label>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="mv-ok">Déplacer</button></div>`);
+  $('#mv-ok').onclick = async () => {
+    const name = $('#mv-name').value.trim().replace(/[\/]/g, '-'); if (!name) { toast('Donne un nom'); return; }
+    const parent = $('#mv-parent').value, to = parent ? parent + sep + name : name;
+    if (to === x.full) { closeSheet(); return; }
+    const b = $('#mv-ok'); b.disabled = true; b.textContent = 'Déplacement…';
+    try {
+      if (x.acc === 'gmail') await gMove(x.full, to, false);
+      else await rapi('/free/folder-rename', { method: 'POST', body: { from: x.full, to, delim: sep } });
+      closeSheet(); state.folders = null; labelsCache = null; state.lists = {}; LS.del('foldersCache');
+      if (parent) { const o = new Set(LS.get('openFolders', [])); let p = ''; parent.split(sep).forEach(seg => { p = p ? p + '/' + seg : seg; o.add(x.acc + ':' + p); }); LS.set('openFolders', [...o]); }
+      toast('« ' + name + ' » déplacé' + (parent ? ' dans ' + parent.split(sep).pop() : ' au premier niveau')); renderLabels();
+    } catch (e) { b.disabled = false; b.textContent = 'Déplacer'; toast('Échec : ' + e.message); }
+  };
 }
 function deleteFolderSheet(x, all) {
   if (x.full === BLOCK_LABEL) { toast('Le dossier Indésirables est protégé'); return; }
@@ -1569,7 +1597,7 @@ async function renderLabels() {
   $('#fq').oninput = e => draw(e.target.value.trim());
   $('#btn-tidy').onclick = () => tidySheet(g, f);
   $('#btn-newdir').onclick = () => newFolderSheet(g, f);
-  bindFolderSwipe($('#labs'), k => byKey.get(k), x => deleteFolderSheet(x, all));
+  bindFolderSwipe($('#labs'), k => byKey.get(k), x => deleteFolderSheet(x, all), x => moveFolderSheet(x, all));
   redraw = () => {
     if (!location.hash.startsWith('#/labels') || !$('#labs')) return;
     all = g.concat(f); byKey = new Map(all.map(x => [x.key, x]));
