@@ -291,3 +291,4 @@ details.set .ftog[aria-expanded="true"] .chev{transform:rotate(45deg)}
 .sticky-head{position:sticky;top:0;z-index:30;background:var(--bg);margin:calc(-1 * (var(--safe-top) + 10px)) -12px 6px;padding:calc(var(--safe-top) + 10px) 12px 2px;box-shadow:0 8px 12px -10px rgba(0,0,0,.6)}
 .sticky-head .tabrow,.sticky-head .accounts{margin-bottom:8px}
 .sticky-head .searchbar{margin-bottom:8px}
+.fswipe{border-radius:0}

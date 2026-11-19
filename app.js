@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.9.2';
+const APP_VERSION = '2.9.3';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -1374,6 +1374,56 @@ function tidySheet(g, f) {
   };
   draw();
 }
+/* Balayage à gauche sur un dossier : le supprimer */
+function bindFolderSwipe(box, find, onDelete) {
+  let sx = 0, sy = 0, cur = null, lock = null, dx = 0, bg = null, swiped = false;
+  const reset = () => { if (cur) { cur.style.transition = 'transform .2s'; cur.style.transform = ''; } if (bg) { const g = bg; setTimeout(() => g.remove(), 200); } cur = null; bg = null; lock = null; dx = 0; };
+  box.addEventListener('touchstart', e => { const a = e.target.closest('a.frow[data-k]'); if (!a || e.target.closest('button')) return; cur = a; swiped = false; lock = null; dx = 0; sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
+  box.addEventListener('touchmove', e => {
+    if (!cur) return;
+    const mx = e.touches[0].clientX - sx, my = e.touches[0].clientY - sy;
+    if (!lock && (Math.abs(mx) > 10 || Math.abs(my) > 10)) lock = Math.abs(mx) > Math.abs(my) * 1.3 && mx < 0 ? 'h' : 'v';
+    if (lock !== 'h') return;
+    e.preventDefault();
+    dx = Math.max(-170, Math.min(0, mx));
+    if (!bg) { bg = document.createElement('div'); bg.className = 'swipe-bg left fswipe'; bg.innerHTML = `<span>${ICON.trash}Supprimer</span>`; cur.parentNode.style.position = 'relative'; bg.style.top = cur.offsetTop + 'px'; bg.style.height = cur.offsetHeight + 'px'; cur.parentNode.insertBefore(bg, cur); cur.style.position = 'relative'; cur.style.zIndex = 1; cur.style.background = 'var(--surface)'; }
+    bg.classList.toggle('on', dx < -90);
+    cur.style.transform = 'translateX(' + dx + 'px)';
+  }, { passive: false });
+  box.addEventListener('touchend', () => {
+    if (lock === 'h' && cur) { swiped = true; if (dx < -90) { const x = find(cur.dataset.k); if (navigator.vibrate) navigator.vibrate(10); if (x) onDelete(x); } }
+    reset();
+  });
+  box.addEventListener('click', e => { if (swiped && e.target.closest('a.frow')) { e.preventDefault(); swiped = false; } }, true);
+}
+function deleteFolderSheet(x, all) {
+  if (x.full === BLOCK_LABEL) { toast('Le dossier Indésirables est protégé'); return; }
+  const sep = x.delim || '/';
+  const kids = all.filter(y => y.acc === x.acc && y.full.startsWith(x.full + sep));
+  const name = x.full.split(sep).join(' › ');
+  const nMails = x.m > 0 ? x.m : 0;
+  const cnt = nMails ? `Ses ${nMails} mail${nMails > 1 ? 's' : ''}` : 'Ses mails éventuels';
+  const what = x.m === 0 ? 'Le dossier est vide.' : x.acc === 'gmail'
+    ? `${cnt} ne sont pas effacés : ils restent dans Gmail (« Tous les messages », et la réception pour ceux qui y sont).`
+    : `${cnt} partent dans la corbeille Free.`;
+  openSheet(`<span class="grip"></span><h2>Supprimer « ${esc(name)} » ?</h2>
+    <p style="margin:0;color:var(--muted);font-size:.85rem;line-height:1.5"><span class="dot tdot" style="background:var(--${x.acc})"></span>${x.acc === 'gmail' ? 'Gmail' : 'Free'}. ${what}${kids.length ? ` Ses ${kids.length} sous-dossier${kids.length > 1 ? 's sont' : ' est'} supprimé${kids.length > 1 ? 's' : ''} aussi.` : ''}</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn danger" id="fdel-ok">Supprimer</button></div>`);
+  $('#fdel-ok').onclick = async () => {
+    const b = $('#fdel-ok'); b.disabled = true; b.textContent = 'Suppression…';
+    const list = kids.concat([x]).sort((a, c) => c.full.length - a.full.length);
+    let err = null;
+    for (const y of list) {
+      try {
+        if (y.acc === 'gmail') await api('labels/' + encodeURIComponent(y.id), { method: 'DELETE' });
+        else { if (y.m !== 0) await rapi('/free/empty', { method: 'POST', body: { folder: y.full } }); await rapi('/free/folder-delete', { method: 'POST', body: { path: y.full } }); }
+      } catch (e) { err = y.full + ' : ' + e.message; break; }
+    }
+    closeSheet(); state.folders = null; labelsCache = null; state.lists = {}; LS.del('foldersCache');
+    toast(err ? 'Échec : ' + err : 'Dossier supprimé');
+    renderLabels();
+  };
+}
 async function renderLabels() {
   const v = $('#view');
   v.innerHTML = `<div class="sticky-head"><div class="top"><h1>Dossiers</h1><button class="btn tidy-btn" id="btn-tidy">Ranger</button><button class="icon-btn" id="btn-refresh" aria-label="Actualiser">${ICON.refresh}</button></div>
@@ -1415,7 +1465,7 @@ async function renderLabels() {
     const chev = kids.length ? `<button class="ftog" data-open="${esc(ok)}" aria-expanded="${open}" aria-label="${open ? 'Replier' : 'Déplier'}"><span class="chev"></span></button>` : '';
     const inner = `${depth ? '' : FOLD_ICON}<span class="nm">${esc(node.name)}</span>${nb(kids.length && !open ? node.total : node.n)}`;
     const row = node.href
-      ? `<a class="frow d${Math.min(depth, 3)}" href="${node.href}">${inner}${star(node.key)}${chev}</a>`
+      ? `<a class="frow d${Math.min(depth, 3)}" data-k="${esc(node.key)}" href="${node.href}">${inner}${star(node.key)}${chev}</a>`
       : `<div class="frow d${Math.min(depth, 3)}" ${kids.length ? `data-open-row="${esc(ok)}"` : ''}>${inner}${chev}</div>`;
     return row + (open ? kids.map(c => rowHTML(c, depth + 1, acc)).join('') : '');
   };
@@ -1432,10 +1482,10 @@ async function renderLabels() {
     if (q) {
       const ql = q.toLowerCase();
       const hits = all.filter(x => x.full.toLowerCase().includes(ql));
-      $l.innerHTML = hits.length ? `<div class="card fold">${hits.map(x => `<a class="frow" href="${x.href}">${FOLD_ICON}<span class="nm">${esc(x.full.split(x.delim || '/').join(' › '))}</span>${dot(x.acc)}${nb(x.n)}${star(x.key)}</a>`).join('')}</div>` : '<div class="empty">Aucun dossier ne correspond.</div>';
+      $l.innerHTML = hits.length ? `<div class="card fold">${hits.map(x => `<a class="frow" data-k="${esc(x.key)}" href="${x.href}">${FOLD_ICON}<span class="nm">${esc(x.full.split(x.delim || '/').join(' › '))}</span>${dot(x.acc)}${nb(x.n)}${star(x.key)}</a>`).join('')}</div>` : '<div class="empty">Aucun dossier ne correspond.</div>';
     } else {
       const fv = favs.map(k => byKey.get(k)).filter(Boolean);
-      $l.innerHTML = (fv.length ? `<h2 class="sec"><span class="fav-t">★</span>Favoris</h2><div class="card fold">${fv.map(x => `<a class="frow" href="${x.href}">${FOLD_ICON}<span class="nm">${esc(x.full.split(x.delim || '/').join(' › '))}</span>${dot(x.acc)}${nb(x.n)}${star(x.key)}</a>`).join('')}</div>` : '<p class="fhint">Touche ☆ à côté d’un dossier pour l’épingler ici.</p>')
+      $l.innerHTML = (fv.length ? `<h2 class="sec"><span class="fav-t">★</span>Favoris</h2><div class="card fold">${fv.map(x => `<a class="frow" data-k="${esc(x.key)}" href="${x.href}">${FOLD_ICON}<span class="nm">${esc(x.full.split(x.delim || '/').join(' › '))}</span>${dot(x.acc)}${nb(x.n)}${star(x.key)}</a>`).join('')}</div>` : '<p class="fhint">Touche ☆ à côté d’un dossier pour l’épingler ici.</p>')
         + section('Gmail', 'gmail', g) + section('Free', 'free', f)
         + `<details class="set fsec" data-sec="boxes" ${openSecs.boxes ? 'open' : ''}><summary><span class="set-t">Boîtes</span><span class="set-s">Suivis, Spam, Corbeille…</span><span class="chev" aria-hidden="true"></span></summary><div class="card fold">${boxes.map(k => `<a class="frow" href="#/list/${k}">${FOLD_ICON}<span class="nm">${esc(SYSTEM[k].name)}</span></a>`).join('')}</div></details>`;
       $$('details.fsec', $l).forEach(d => d.addEventListener('toggle', () => { openSecs[d.dataset.sec] = d.open; LS.set('openSecs', openSecs); }));
@@ -1452,6 +1502,7 @@ async function renderLabels() {
   const toggleOpen = k => { opened.has(k) ? opened.delete(k) : opened.add(k); LS.set('openFolders', [...opened]); draw($('#fq').value.trim()); };
   $('#fq').oninput = e => draw(e.target.value.trim());
   $('#btn-tidy').onclick = () => tidySheet(g, f);
+  bindFolderSwipe($('#labs'), k => byKey.get(k), x => deleteFolderSheet(x, all));
   redraw = () => {
     if (!location.hash.startsWith('#/labels') || !$('#labs')) return;
     all = g.concat(f); byKey = new Map(all.map(x => [x.key, x]));
