@@ -234,16 +234,23 @@ async function aiSearch(question, today) {
     '"q" utilise la syntaxe Gmail : from:, to:, subject:, mots-clés, OR, newer_than:7d/3m/1y, after:AAAA/MM/JJ, before:AAAA/MM/JJ, has:attachment, is:unread. ' +
     'Garde 1 à 4 mots-clés distinctifs, sans mots vides ; pour une marque, utilise from:marque (sans .com) ; n\'invente pas d\'adresse. ' +
     '"resume" décrit la recherche en une courte phrase en français, par exemple « Mails de Devred des 3 derniers mois contenant anniversaire ».';
-  const r = await fetch(C.aiUrl, { method: 'POST', headers: { Authorization: 'Bearer ' + dec(S.ai.key), 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(20000),
-    body: JSON.stringify({ model: C.aiModel, temperature: 0.1, max_tokens: 400, messages: [{ role: 'system', content: sys }, { role: 'user', content: question }] }) });
-  if (r.status === 401) throw Object.assign(new Error('Clé Groq refusée'), { code: 502 });
-  if (r.status === 429) throw Object.assign(new Error('Groq demande de patienter un instant'), { code: 503 });
-  if (!r.ok) throw Object.assign(new Error('IA indisponible (' + r.status + ')'), { code: 502 });
-  const j = await r.json();
-  const txt = ((j.choices || [])[0] || {}).message ? j.choices[0].message.content || '' : '';
-  const mm = txt.match(/\{[\s\S]*\}/);
-  let out = null; try { out = JSON.parse(mm ? mm[0] : txt); } catch (e) {}
-  if (!out || !out.q) throw Object.assign(new Error('Réponse de l’IA illisible, reformule'), { code: 502 });
+  const call = async (model, extra) => {
+    const r = await fetch(C.aiUrl, { method: 'POST', headers: { Authorization: 'Bearer ' + dec(S.ai.key), 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(25000),
+      body: JSON.stringify(Object.assign({ model, temperature: 0.1, max_tokens: 1500, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: sys }, { role: 'user', content: question }] }, extra)) });
+    if (r.status === 401) throw Object.assign(new Error('Clé Groq refusée'), { code: 502 });
+    if (r.status === 429) throw Object.assign(new Error('Groq demande de patienter un instant'), { code: 503 });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { log('IA', model, r.status, JSON.stringify(j).slice(0, 300)); return null; }
+    const txt = (((j.choices || [])[0] || {}).message || {}).content || '';
+    const mm = txt.match(/\{[\s\S]*\}/);
+    try { const o = JSON.parse(mm ? mm[0] : txt); if (o && o.q) return o; } catch (e) {}
+    log('IA réponse illisible', model, txt.slice(0, 200));
+    return null;
+  };
+  // modèle à raisonnement : effort bas, raisonnement masqué ; sinon repli sur un modèle rapide
+  let out = await call(C.aiModel, /gpt-oss/.test(C.aiModel) ? { reasoning_effort: 'low', include_reasoning: false } : {});
+  if (!out) out = await call('llama-3.1-8b-instant', {});
+  if (!out) throw Object.assign(new Error('Réponse de l’IA illisible, reformule'), { code: 502 });
   return { q: String(out.q).slice(0, 300), resume: String(out.resume || '').slice(0, 200) };
 }
 async function freeMessage(folderKey, uid) {
