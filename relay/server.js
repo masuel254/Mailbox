@@ -127,6 +127,11 @@ async function resolveFolder(client, key) {
   if (f.all.find(m => m.path === key)) return key;
   throw Object.assign(new Error('Dossier inconnu'), { code: 400 });
 }
+function headerText(src, name) {
+  const head = src.toString('utf8', 0, Math.min(src.length, 65536)).split(/\r?\n\r?\n/)[0].replace(/\r?\n[ \t]+/g, ' ');
+  const m = head.match(new RegExp('^' + name + ':[ \\t]*(.*)$', 'im'));
+  return m ? m[1].trim() : '';
+}
 const addr = a => (a && a[0]) ? { name: a[0].name || a[0].address || '', email: (a[0].address || '').toLowerCase() } : { name: '', email: '' };
 const addrList = a => (a || []).map(x => (x.name ? `"${x.name.replace(/"/g, '')}" <${x.address}>` : x.address)).join(', ');
 async function freeList(folderKey, unread, before, limit) {
@@ -152,6 +157,37 @@ async function freeList(folderKey, unread, before, limit) {
     } finally { lock.release(); }
   });
 }
+async function freeSearch(q, limit) {
+  const crit = {}; const words = [];
+  for (const tok of (q.match(/\S+:"[^"]*"|\S+:\S+|"[^"]*"|\S+/g) || [])) {
+    const m = tok.match(/^(from|de|to|subject|objet):(.+)$/i);
+    const v = (m ? m[2] : tok).replace(/^"|"$/g, '');
+    if (m && /^(from|de)$/i.test(m[1])) crit.from = v; else if (m && /^to$/i.test(m[1])) crit.to = v; else if (m) crit.subject = v;
+    else if (!/^(is|in|has|label|newer_than|older_than|after|before):/i.test(tok)) words.push(v);
+  }
+  const text = words.join(' ');
+  const query = Object.assign({}, crit);
+  if (text) query.or = [{ subject: text }, { from: text }, { body: text }];
+  if (!Object.keys(query).length) return { items: [] };
+  return withImap(async client => {
+    const f = await folders(client);
+    const items = [];
+    for (const folder of ['INBOX', f.sent, f.archive].filter(Boolean)) {
+      let lock; try { lock = await client.getMailboxLock(folder); } catch (e) { continue; }
+      try {
+        let uids = (await client.search(query, { uid: true })) || [];
+        uids = uids.sort((a, b) => b - a).slice(0, limit);
+        if (uids.length) for await (const m of client.fetch(uids, { envelope: true, flags: true, internalDate: true, source: { start: 0, maxLength: 6000 } }, { uid: true })) {
+          let snippet = '';
+          try { const p = await simpleParser(m.source); snippet = (p.text || '').replace(/\s+/g, ' ').trim().slice(0, 160); } catch (e) {}
+          items.push({ uid: m.uid, folder, subject: m.envelope.subject || '(sans objet)', from: addr(m.envelope.from), to: (m.envelope.to || []).map(x => x.name || x.address).join(', '), date: +new Date(m.internalDate || m.envelope.date), seen: m.flags.has('\\Seen'), flagged: m.flags.has('\\Flagged'), snippet });
+        }
+      } finally { lock.release(); }
+    }
+    items.sort((a, b) => b.date - a.date);
+    return { items: items.slice(0, limit) };
+  });
+}
 async function freeMessage(folderKey, uid) {
   return withImap(async client => {
     const folder = await resolveFolder(client, folderKey);
@@ -165,6 +201,8 @@ async function freeMessage(folderKey, uid) {
         fromRaw: p.from ? p.from.text : '', to: p.to ? p.to.text : '', cc: p.cc ? p.cc.text : '', replyTo: p.replyTo ? p.replyTo.text : '',
         date: +(p.date || Date.now()), html: p.html || null, text: p.text || '', messageId: p.messageId || '', references: [].concat(p.references || []).join(' '),
         seen: m.flags.has('\\Seen'),
+        unsub: headerText(m.source, 'List-Unsubscribe'),
+        unsubPost: headerText(m.source, 'List-Unsubscribe-Post'),
         attachments: (p.attachments || []).map((a, i) => ({ idx: i, name: a.filename || 'piece-jointe-' + (i + 1), mime: a.contentType, size: a.size, cid: a.cid || '', data: a.size < 300000 && a.cid ? a.content.toString('base64') : undefined }))
       };
     } finally { lock.release(); }
@@ -203,8 +241,9 @@ async function freeMove(folderKey, uids, toKey) {
     const lock = await client.getMailboxLock(folder);
     try {
       if (toKey === 'BLOCKED' || toKey === 'JUNK') await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true });
-      await client.messageMove(uids, dest, { uid: true });
-      return { ok: true, dest };
+      const r = await client.messageMove(uids, dest, { uid: true });
+      const map = r && r.uidMap ? r.uidMap : null;
+      return { ok: true, dest, from: folder, uids: map ? uids.map(u => map.get(u)).filter(Boolean) : [] };
     } finally { lock.release(); }
   });
 }
@@ -289,9 +328,15 @@ function isQuiet() {
 async function pollGmail() {
   if (!S.gmail) return [];
   const fresh = [];
-  const inbox = await gapi('labels/INBOX');
-  S.badge.gmail = (inbox && inbox.threadsUnread) || 0;
-  const r = (await gapi('messages?' + new URLSearchParams({ q: 'in:inbox is:unread newer_than:2d', maxResults: 25 }))) || {};
+  const primary = !!(S.prefs && S.prefs.primaryOnly);
+  if (primary) {
+    const t = (await gapi('threads?' + new URLSearchParams({ q: 'in:inbox category:primary is:unread', maxResults: 100 }))) || {};
+    S.badge.gmail = (t.threads || []).length;
+  } else {
+    const inbox = await gapi('labels/INBOX');
+    S.badge.gmail = (inbox && inbox.threadsUnread) || 0;
+  }
+  const r = (await gapi('messages?' + new URLSearchParams({ q: 'in:inbox is:unread newer_than:2d' + (primary ? ' category:primary' : ''), maxResults: 25 }))) || {};
   const ids = (r.messages || []).map(m => m.id);
   const known = new Set(S.seen.gmail);
   const first = !S.seen.gmailInit;
@@ -386,6 +431,7 @@ const routes = {
     const p = Object.assign({}, S.prefs);
     if (typeof b.silent === 'boolean') p.silent = b.silent;
     if (typeof b.quiet === 'boolean') p.quiet = b.quiet;
+    if (typeof b.primaryOnly === 'boolean') { p.primaryOnly = b.primaryOnly; S.seen.gmailInit = false; }
     if (Number.isInteger(b.quietStart) && b.quietStart >= 0 && b.quietStart < 24) p.quietStart = b.quietStart;
     if (Number.isInteger(b.quietEnd) && b.quietEnd >= 0 && b.quietEnd < 24) p.quietEnd = b.quietEnd;
     if (typeof b.tz === 'string' && b.tz.length < 60) { try { new Intl.DateTimeFormat('fr', { timeZone: b.tz }); p.tz = b.tz; } catch (e) {} }
@@ -401,16 +447,22 @@ const routes = {
       throw Object.assign(new Error('Serveur Free injoignable : ' + (e.code || e.message)), { code: 502 });
     }
     S.free = { user, pass: enc(b.password), name: (b.name || '').trim() }; S.seen.freeInit = false; S.seen.sweepSig = ''; save();
-    poll().catch(() => {});
+    poll().catch(() => {}); startIdle().catch(() => {});
     return { ok: true, email: user };
   },
-  'DELETE /free/account': async () => { S.free = null; S.badge.free = 0; save(); return { ok: true }; },
+  'DELETE /free/account': async () => { S.free = null; S.badge.free = 0; save(); startIdle().catch(() => {}); return { ok: true }; },
   'GET /free/folders': async () => withImap(async c => { const f = await folders(c); return f; }),
   'GET /free/list': async q => freeList(q.get('folder') || 'INBOX', q.get('unread') === '1', +q.get('before') || 0, Math.min(+q.get('limit') || 25, 50)),
+  'GET /free/search': async q => freeSearch((q.get('q') || '').slice(0, 200), Math.min(+q.get('limit') || 30, 50)),
   'GET /free/message': async q => freeMessage(q.get('folder') || 'INBOX', +q.get('uid')),
   'GET /free/attachment': async q => freeAttachment(q.get('folder') || 'INBOX', +q.get('uid'), +q.get('idx')),
   'POST /free/flags': async (q, b) => freeFlags(b.folder || 'INBOX', b.uids || [], b.seen, b.flagged),
-  'POST /free/move': async (q, b) => freeMove(b.folder || 'INBOX', b.uids || [], b.to),
+  'POST /free/move': async (q, b) => {
+    const r = await freeMove(b.folder || 'INBOX', b.uids || [], b.to);
+    // un mail remis en réception (annulation) n'est pas un nouveau mail : pas de notification
+    if (r.dest === 'INBOX' && r.uids.length) { S.seen.freeUid = Math.max(S.seen.freeUid || 0, ...r.uids); save(); }
+    return r;
+  },
   'POST /free/send': async (q, b) => freeSend(b),
   'POST /free/readall': async () => withImap(async client => {
     const lock = await client.getMailboxLock('INBOX');
@@ -418,9 +470,16 @@ const routes = {
       const uids = (await client.search({ seen: false }, { uid: true })) || [];
       if (uids.length) await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true });
       S.badge.free = 0; save();
-      return { ok: true, count: uids.length };
+      return { ok: true, count: uids.length, uids };
     } finally { lock.release(); }
   }),
+  'POST /unsubscribe': async (q, b) => {
+    const url = String(b.url || '');
+    if (!/^https:\/\//i.test(url)) throw Object.assign(new Error('Lien de désabonnement invalide'), { code: 400 });
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'List-Unsubscribe=One-Click', redirect: 'follow', signal: AbortSignal.timeout(15000) });
+    if (!r.ok) throw Object.assign(new Error('L’expéditeur a refusé la demande (' + r.status + ')'), { code: 502 });
+    return { ok: true };
+  },
   'GET /free/size': async q => freeFolderSize(q.get('folder') || 'BLOCKED'),
   'POST /free/empty': async (q, b) => freeEmpty(b.folder || 'BLOCKED'),
   'POST /free/block': async (q, b) => {
@@ -474,5 +533,23 @@ const server = http.createServer(async (req, res) => {
     send(res, e.code && e.code >= 400 && e.code < 600 ? e.code : 500, { error: e.message });
   }
 });
-server.listen(C.port, () => { log('Relais MailBox prêt sur le port ' + C.port); setTimeout(() => poll().catch(() => {}), 3000); setInterval(() => poll().catch(() => {}), C.pollMs); });
+/* ---------- Free en temps réel (IMAP IDLE) ---------- */
+let idle = null, idleUser = null, idleTimer = null, idleDebounce = null;
+async function startIdle() {
+  clearTimeout(idleTimer);
+  if (idle && (!S.free || S.free.user !== idleUser)) { const c = idle; idle = null; await c.logout().catch(() => {}); }
+  if (!S.free || idle) return;
+  const client = new ImapFlow(Object.assign({}, C.imap, { auth: { user: S.free.user, pass: dec(S.free.pass) }, logger: false, maxIdleTime: 9 * 60000 }));
+  idle = client; idleUser = S.free.user;
+  const again = () => { if (idle === client) { idle = null; idleTimer = setTimeout(() => startIdle().catch(() => {}), 30000); } };
+  client.on('close', again); client.on('error', e => log('IDLE Free', e.message));
+  client.on('exists', () => { clearTimeout(idleDebounce); idleDebounce = setTimeout(() => poll().catch(() => {}), 1500); });
+  try { await client.connect(); await client.mailboxOpen('INBOX'); log('Free en temps réel (IDLE) actif'); } catch (e) { log('IDLE Free impossible', e.message); again(); }
+}
+server.listen(C.port, () => {
+  log('Relais MailBox prêt sur le port ' + C.port);
+  setTimeout(() => poll().catch(() => {}), 3000);
+  setInterval(() => poll().catch(() => {}), C.pollMs);
+  setTimeout(() => startIdle().catch(() => {}), 5000);
+});
 process.on('SIGTERM', () => { save(); process.exit(0); });
