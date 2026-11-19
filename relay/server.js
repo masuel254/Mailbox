@@ -412,6 +412,15 @@ const routes = {
   'POST /free/flags': async (q, b) => freeFlags(b.folder || 'INBOX', b.uids || [], b.seen, b.flagged),
   'POST /free/move': async (q, b) => freeMove(b.folder || 'INBOX', b.uids || [], b.to),
   'POST /free/send': async (q, b) => freeSend(b),
+  'POST /free/readall': async () => withImap(async client => {
+    const lock = await client.getMailboxLock('INBOX');
+    try {
+      const uids = (await client.search({ seen: false }, { uid: true })) || [];
+      if (uids.length) await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true });
+      S.badge.free = 0; save();
+      return { ok: true, count: uids.length };
+    } finally { lock.release(); }
+  }),
   'GET /free/size': async q => freeFolderSize(q.get('folder') || 'BLOCKED'),
   'POST /free/empty': async (q, b) => freeEmpty(b.folder || 'BLOCKED'),
   'POST /free/block': async (q, b) => {

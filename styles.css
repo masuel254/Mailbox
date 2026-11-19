@@ -56,6 +56,12 @@ body.no-tabbar #tabbar{display:none}
 /* Onglets comptes */
 .accounts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));background:var(--surface);border-radius:12px;padding:4px;margin:0 4px 12px}
 .accounts button{height:40px;border:none;border-radius:9px;background:transparent;color:var(--muted);font-size:.85rem;display:flex;align-items:center;justify-content:center;gap:6px;cursor:pointer}
+.accounts button{flex-direction:column;gap:1px;height:auto;min-height:40px;padding:5px 2px}
+.accounts .acc-l{display:flex;align-items:center;gap:6px}
+.accounts .acc-n{font-size:.68rem;font-weight:500;opacity:.75;line-height:1.1}
+.accounts .acc-n:empty{display:none}
+.sec-btn{margin-left:auto;text-transform:none;letter-spacing:0;font-size:.78rem;font-weight:650;color:var(--accent);background:transparent;border:1px solid var(--accent);border-radius:999px;padding:5px 11px;cursor:pointer}
+.sec-btn:disabled{opacity:.6}
 .accounts button.on{background:var(--accent-fill);color:var(--on-accent);font-weight:750}
 .dot{width:8px;height:8px;border-radius:4px;display:inline-block}
 

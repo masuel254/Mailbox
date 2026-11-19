@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.2.1';
+const APP_VERSION = '2.3.0';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -285,7 +285,7 @@ async function renderList(key, q) {
     </div>
     <form class="searchbar" id="searchbar" ${isSearch ? '' : 'hidden'}><input type="search" id="q" placeholder="Rechercher (ex. from:claire facture)" value="${esc(q || '')}" enterkeyhint="search" autocomplete="off"></form>
     ${freeOn() && freeFolderOf(key) && !isSearch ? `<div class="accounts" role="tablist" aria-label="Comptes">
-      ${[['all', 'Tous', ''], ['gmail', 'Gmail', 'var(--gmail)'], ['free', 'Free', 'var(--free)']].map(([k, n, c]) => `<button role="tab" aria-selected="${acc === k}" class="${acc === k ? 'on' : ''}" data-acc="${k}">${c ? `<span class="dot" style="background:${c}"></span>` : ''}${n}</button>`).join('')}
+      ${[['all', 'Tous', ''], ['gmail', 'Gmail', 'var(--gmail)'], ['free', 'Free', 'var(--free)']].map(([k, n, c]) => `<button role="tab" aria-selected="${acc === k}" class="${acc === k ? 'on' : ''}" data-acc="${k}"><span class="acc-l">${c ? `<span class="dot" style="background:${c}"></span>` : ''}${n}</span>${key === 'INBOX' || key === 'UNREAD' ? `<small class="acc-n" data-n="${k}"></small>` : ''}</button>`).join('')}
     </div>` : ''}
     ${key === 'INBOX' || key === 'UNREAD' ? `<nav class="accounts filters" aria-label="Filtre">
       <a href="#/list/INBOX" class="${key === 'INBOX' ? 'on' : ''}" ${key === 'INBOX' ? 'aria-current="page"' : ''}>Tous</a>
@@ -344,7 +344,7 @@ async function loadList(key, q, cacheKey, plain, reset) {
     const data = { at: Date.now(), next, freeBefore, freeMore, items: more ? prev.items.concat(fresh) : fresh };
     state.lists[cacheKey] = data;
     if (state.current === cacheKey) drawList(data, plain);
-    if (key === 'INBOX') updateBadge();
+    if (key === 'INBOX' || key === 'UNREAD') updateBadge();
   } catch (e) {
     if (e.message === 'auth') return;
     const l = $('#list'); if (l && state.current === cacheKey) l.innerHTML = `<div class="empty">Impossible de charger : ${esc(e.message)}</div>`;
@@ -396,25 +396,51 @@ function drawList(data, plain) {
   if (!data.items.length) { l.innerHTML = '<div class="empty">Aucun message ici.</div>'; return; }
   const unread = data.items.filter(i => i.unread), read = data.items.filter(i => !i.unread);
   let h = '';
-  if (unread.length) h += `<h2 class="sec unread">Non lus · ${unread.length}</h2>` + unread.map(i => itemHTML(i, 'u')).join('');
+  const inboxView = ['INBOX', 'UNREAD'].includes(keyOf(state.current));
+  if (unread.length) h += `<h2 class="sec unread">Non lus · ${unread.length}${inboxView ? '<button class="sec-btn" id="btn-readall" type="button">Tout marquer lu</button>' : ''}</h2>` + unread.map(i => itemHTML(i, 'u')).join('');
   if (read.length) h += (unread.length ? '<h2 class="sec">Déjà lus</h2>' : '') + read.map(i => itemHTML(i, plain ? 'plain' : '', keyOf(state.current) === 'SENT')).join('');
   if (data.next || data.freeMore) h += '<button class="more" id="more">Afficher plus</button>';
   l.innerHTML = h;
+  const ra = $('#btn-readall'); if (ra) ra.onclick = e => { e.stopPropagation(); readAll(ra); };
   const m = $('#more');
   if (m) m.onclick = () => { m.disabled = true; m.textContent = 'Chargement…'; const base = keyOf(state.current); loadList(base.startsWith('S:') ? 'SEARCH' : base, base.startsWith('S:') ? base.slice(2) : null, state.current, plain, false); };
 }
 function patchCached(id, fn) { Object.values(state.lists).forEach(d => { d.items = d.items.map(i => i.id === id ? fn(i) : i).filter(Boolean); }); }
 
+async function readAll(btn) {
+  const ck = String(state.current), acc = ck.includes('|') ? ck.split('|')[0] : 'gmail';
+  btn.disabled = true; btn.textContent = 'En cours…';
+  let total = 0; const errs = [];
+  const jobs = [];
+  if (acc !== 'free') jobs.push((async () => {
+    let page = null;
+    do {
+      const p = new URLSearchParams({ q: 'in:inbox is:unread', maxResults: 500 });
+      if (page) p.set('pageToken', page);
+      const r = (await api('messages?' + p.toString())) || {};
+      const ids = (r.messages || []).map(m => m.id);
+      for (let i = 0; i < ids.length; i += 1000) await api('messages/batchModify', { method: 'POST', body: { ids: ids.slice(i, i + 1000), removeLabelIds: ['UNREAD'] } });
+      total += ids.length; page = r.nextPageToken;
+    } while (page);
+  })().catch(e => { if (e.message !== 'auth') errs.push('Gmail : ' + e.message); }));
+  if (acc !== 'gmail' && freeOn()) jobs.push(rapi('/free/readall', { method: 'POST', body: {} }).then(r => { total += r.count || 0; }).catch(e => errs.push('Free : ' + e.message)));
+  await Promise.all(jobs);
+  Object.keys(state.lists).forEach(k => delete state.lists[k]);
+  toast(errs.length ? errs.join(' · ') : total ? total + ' mail' + (total > 1 ? 's' : '') + ' marqué' + (total > 1 ? 's' : '') + ' comme lu' + (total > 1 ? 's' : '') : 'Tout était déjà lu');
+  route(); updateBadge(); setTimeout(updateBadge, 4000);
+}
+
 async function updateBadge() {
   try {
-    let n, own;
+    let n, own, cnt = null;
     if (relayOn() && (relayGmailOn() || freeOn())) {
       const r = await rapi('/badge');
-      n = r.total || 0;
+      n = r.total || 0; cnt = { all: n, gmail: r.gmail || 0, free: r.free || 0 };
       const a = curAcc(); own = a === 'free' ? r.free : a === 'gmail' ? r.gmail : n;
     } else { const l = await api('labels/INBOX'); n = l.threadsUnread || 0; own = n; }
     const b = $('#badge-inbox'); b.hidden = !n; b.textContent = n > 99 ? '99+' : n;
     const f = $('#fcount'); if (f) f.textContent = own ? '· ' + own : '';
+    if (cnt) $$('.acc-n').forEach(el => { const v = cnt[el.dataset.n] || 0; el.textContent = v ? v + ' non lu' + (v > 1 ? 's' : '') : 'à jour'; });
     if (navigator.setAppBadge) { n ? navigator.setAppBadge(n).catch(() => {}) : navigator.clearAppBadge().catch(() => {}); }
   } catch (e) {}
 }
