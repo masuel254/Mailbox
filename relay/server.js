@@ -105,7 +105,7 @@ function withImap(fn) {
 }
 async function folders(client) {
   const list = await client.list();
-  const find = (use, re) => (list.find(m => m.specialUse === use) || list.find(m => re.test(m.path)) || {}).path;
+  const find = (use, re) => (list.find(m => m.specialUse === use) || list.find(m => re.test(m.path)) || list.find(m => re.test(m.name)) || {}).path;
   return {
     all: list.map(m => ({ path: m.path, name: m.name, special: m.specialUse || '' })),
     sent: find('\\Sent', /^(sent|envoy|éléments envoyés|sent messages|sent items)/i) || 'Sent',
@@ -127,6 +127,7 @@ async function resolveFolder(client, key) {
   if (f.all.find(m => m.path === key)) return key;
   throw Object.assign(new Error('Dossier inconnu'), { code: 400 });
 }
+const snip = t => (t || '').replace(/(^|\s)[^\s{}][^{}]{0,300}\{[^{}]*\}/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
 function headerText(src, name) {
   const head = src.toString('utf8', 0, Math.min(src.length, 65536)).split(/\r?\n\r?\n/)[0].replace(/\r?\n[ \t]+/g, ' ');
   const m = head.match(new RegExp('^' + name + ':[ \\t]*(.*)$', 'im'));
@@ -148,7 +149,7 @@ async function freeList(folderKey, unread, before, limit) {
       if (uids.length) {
         for await (const m of client.fetch(uids, { envelope: true, flags: true, internalDate: true, source: { start: 0, maxLength: 6000 } }, { uid: true })) {
           let snippet = '';
-          try { const p = await simpleParser(m.source); snippet = (p.text || '').replace(/\s+/g, ' ').trim().slice(0, 160); } catch (e) {}
+          try { const p = await simpleParser(m.source); snippet = snip(p.text); } catch (e) {}
           items.push({ uid: m.uid, folder, subject: m.envelope.subject || '(sans objet)', from: addr(m.envelope.from), to: (m.envelope.to || []).map(x => x.name || x.address).join(', '), date: +new Date(m.internalDate || m.envelope.date), seen: m.flags.has('\\Seen'), flagged: m.flags.has('\\Flagged'), snippet });
         }
       }
@@ -179,7 +180,7 @@ async function freeSearch(q, limit) {
         uids = uids.sort((a, b) => b - a).slice(0, limit);
         if (uids.length) for await (const m of client.fetch(uids, { envelope: true, flags: true, internalDate: true, source: { start: 0, maxLength: 6000 } }, { uid: true })) {
           let snippet = '';
-          try { const p = await simpleParser(m.source); snippet = (p.text || '').replace(/\s+/g, ' ').trim().slice(0, 160); } catch (e) {}
+          try { const p = await simpleParser(m.source); snippet = snip(p.text); } catch (e) {}
           items.push({ uid: m.uid, folder, subject: m.envelope.subject || '(sans objet)', from: addr(m.envelope.from), to: (m.envelope.to || []).map(x => x.name || x.address).join(', '), date: +new Date(m.internalDate || m.envelope.date), seen: m.flags.has('\\Seen'), flagged: m.flags.has('\\Flagged'), snippet });
         }
       } finally { lock.release(); }
@@ -478,13 +479,14 @@ const routes = {
     return r;
   },
   'POST /free/send': async (q, b) => freeSend(b),
-  'POST /free/readall': async () => withImap(async client => {
-    const lock = await client.getMailboxLock('INBOX');
+  'POST /free/readall': async (q, b) => withImap(async client => {
+    const folder = await resolveFolder(client, (b && b.folder) || 'INBOX');
+    const lock = await client.getMailboxLock(folder);
     try {
       const uids = (await client.search({ seen: false }, { uid: true })) || [];
       if (uids.length) await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true });
-      S.badge.free = 0; save();
-      return { ok: true, count: uids.length, uids };
+      if (folder === 'INBOX') { S.badge.free = 0; save(); }
+      return { ok: true, count: uids.length, uids, folder };
     } finally { lock.release(); }
   }),
   'POST /unsubscribe': async (q, b) => {

@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.6.0';
+const APP_VERSION = '2.6.1';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -30,7 +30,7 @@ const $ = (s, el) => (el || document).querySelector(s);
 const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const decodeEntities = s => { const t = document.createElement('textarea'); t.innerHTML = s || ''; return t.value; };
-const cleanSnippet = s => decodeEntities(decodeEntities(s || '')).replace(/[\u00a0\u200b-\u200d\u034f\ufeff]/g, ' ').replace(/\(?\s*<?https?:\/\/[^\s)>]*>?\s*\)?/g, ' ').replace(/\[[^\]]*\]/g, ' ').replace(/^\s*(voir|afficher|consulter) (la version|ce (mail|message|courriel)) (en ligne|dans (votre|un) navigateur)\S*\s*/i, '').replace(/\s+/g, ' ').trim();
+const cleanSnippet = s => decodeEntities(decodeEntities(s || '')).replace(/(^|\s)[^\s{}][^{}]{0,300}\{[^{}]*\}/g, ' ').replace(/\*\*/g, '').replace(/[\u00a0\u200b-\u200d\u034f\ufeff]/g, ' ').replace(/\(?\s*<?https?:\/\/[^\s)>]*>?\s*\)?/g, ' ').replace(/\[[^\]]*\]/g, ' ').replace(/^\s*(voir|afficher|consulter) (la version|ce (mail|message|courriel)) (en ligne|dans (votre|un) navigateur)\S*\s*/i, '').replace(/\s+/g, ' ').trim();
 let toastTimer;
 function toast(msg, action) {
   const t = $('#toast'); t.textContent = msg; t.classList.toggle('has-act', !!action);
@@ -225,6 +225,7 @@ const state = { lists: {}, current: null, me: null };
 const keyOf = ck => String(ck).split('|').pop();
 const FREE_FOLDERS = { INBOX: 'INBOX', UNREAD: 'INBOX', SENT: 'SENT', TRASH: 'TRASH', SPAM: 'JUNK' };
 const isBlockLabel = key => { try { return (labelById(key) || {}).name === BLOCK_LABEL; } catch (e) { return false; } };
+const isFolderView = key => String(key).startsWith('F:') || (!SYSTEM[key] && key !== 'SEARCH' && !String(key).startsWith('S:'));
 const freeFolderOf = key => FREE_FOLDERS[key] || (String(key).startsWith('F:') ? decodeURIComponent(key.slice(2)) : null) || (isBlockLabel(key) ? 'BLOCKED' : null);
 const curAcc = () => freeOn() ? (settings.acc || 'all') : 'gmail';
 function parseFreeId(id) { const p = id.split(':'); return { uid: +p[1], folder: p.slice(2).join(':') }; }
@@ -301,7 +302,7 @@ async function renderList(key, q) {
       const pill = `<a class="unr-pill ${key === 'UNREAD' ? 'on' : ''}" href="#/list/${key === 'UNREAD' ? 'INBOX' : 'UNREAD'}" aria-pressed="${key === 'UNREAD'}">Non lus<span class="fcount" id="fcount"></span></a>`;
       return `<div class="tabrow">${accs || '<div class="accounts one"><button class="on" aria-selected="true">Réception</button></div>'}${pill}</div>`;
     })()}
-    ${title === BLOCK_LABEL ? `<div class="banner"><span style="display:flex;flex-direction:column;gap:2px"><span>Mails des expéditeurs bloqués</span><b id="lab-size" style="color:var(--accent)">Calcul de la taille…</b></span><button class="btn danger" id="btn-empty">${ICON.trash}Tout supprimer</button></div>` : ''}
+    ${isFolderView(key) ? `<div class="banner"><span style="display:flex;flex-direction:column;gap:2px"><span>${title === BLOCK_LABEL ? 'Mails des expéditeurs bloqués' : 'Dossier « ' + esc(title) + ' »'}</span><b id="lab-size" style="color:var(--accent)">Calcul de la taille…</b></span><button class="btn danger" id="btn-empty">${ICON.trash}Tout supprimer</button></div>` : ''}
     <div id="list"><div class="loading">Chargement…</div></div>`;
   $('#btn-search').onclick = () => { const s = $('#searchbar'); s.hidden = !s.hidden; if (!s.hidden) $('#q').focus(); };
   $('#searchbar').onsubmit = e => { e.preventDefault(); const val = $('#q').value.trim(); if (val) location.hash = '#/search/' + encodeURIComponent(val); $('#q').blur(); };
@@ -406,11 +407,11 @@ function itemHTML(it, cls, sentView) {
 }
 function drawList(data, plain) {
   const l = $('#list'); if (!l) return;
-  state.showAcc = String(state.current).startsWith('all|');
+  state.showAcc = freeOn();
   if (!data.items.length) { l.innerHTML = '<div class="empty">Aucun message ici.</div>'; return; }
   const unread = data.items.filter(i => i.unread), read = data.items.filter(i => !i.unread);
   let h = '';
-  const inboxView = ['INBOX', 'UNREAD'].includes(keyOf(state.current));
+  const inboxView = ['INBOX', 'UNREAD'].includes(keyOf(state.current)) || isFolderView(keyOf(state.current));
   if (unread.length) h += `<h2 class="sec unread">Non lus · ${unread.length}${inboxView ? '<button class="sec-btn" id="btn-readall" type="button">Tout marquer lu</button>' : ''}</h2>` + unread.map(i => itemHTML(i, 'u')).join('');
   if (read.length) h += (unread.length ? '<h2 class="sec">Déjà lus</h2>' : '') + read.map(i => itemHTML(i, plain ? 'plain' : '', keyOf(state.current) === 'SENT')).join('');
   if (data.next || data.freeMore) h += '<button class="more" id="more">Afficher plus</button>';
@@ -422,14 +423,16 @@ function drawList(data, plain) {
 function patchCached(id, fn) { Object.values(state.lists).forEach(d => { d.items = d.items.map(i => i.id === id ? fn(i) : i).filter(Boolean); }); }
 
 async function readAll(btn) {
-  const ck = String(state.current), acc = ck.includes('|') ? ck.split('|')[0] : 'gmail';
+  const ck = String(state.current), acc = ck.includes('|') ? ck.split('|')[0] : 'gmail', key = keyOf(ck);
+  const inbox = key === 'INBOX' || key === 'UNREAD', fFolder = inbox ? 'INBOX' : freeFolderOf(key);
   btn.disabled = true; btn.textContent = 'En cours…';
   let total = 0; const errs = [], gDone = [], fDone = [];
   const jobs = [];
-  if (acc !== 'free') jobs.push((async () => {
+  if (acc !== 'free' && !String(key).startsWith('F:')) jobs.push((async () => {
     let page = null;
     do {
-      const p = new URLSearchParams({ q: 'in:inbox is:unread', maxResults: 500 });
+      const p = new URLSearchParams({ q: inbox ? 'in:inbox is:unread' : 'is:unread', maxResults: 500 });
+      if (!inbox) p.set('labelIds', key);
       if (page) p.set('pageToken', page);
       const r = (await api('messages?' + p.toString())) || {};
       const ids = (r.messages || []).map(m => m.id);
@@ -437,10 +440,10 @@ async function readAll(btn) {
       total += ids.length; page = r.nextPageToken;
     } while (page);
   })().catch(e => { if (e.message !== 'auth') errs.push('Gmail : ' + e.message); }));
-  if (acc !== 'gmail' && freeOn()) jobs.push(rapi('/free/readall', { method: 'POST', body: {} }).then(r => { total += r.count || 0; if (r.uids && r.uids.length) fDone.push(r.uids); }).catch(e => errs.push('Free : ' + e.message)));
+  if (acc !== 'gmail' && freeOn() && fFolder) jobs.push(rapi('/free/readall', { method: 'POST', body: { folder: fFolder } }).then(r => { total += r.count || 0; if (r.uids && r.uids.length) fDone.push({ folder: r.folder || fFolder, uids: r.uids }); }).catch(e => errs.push('Free : ' + e.message)));
   await Promise.all(jobs);
   Object.keys(state.lists).forEach(k => delete state.lists[k]);
-  const undo = () => Promise.all(gDone.map(ids => api('messages/batchModify', { method: 'POST', body: { ids, addLabelIds: ['UNREAD'] } })).concat(fDone.map(uids => rapi('/free/flags', { method: 'POST', body: { folder: 'INBOX', uids, seen: false } }))));
+  const undo = () => Promise.all(gDone.map(ids => api('messages/batchModify', { method: 'POST', body: { ids, addLabelIds: ['UNREAD'] } })).concat(fDone.map(d => rapi('/free/flags', { method: 'POST', body: { folder: d.folder, uids: d.uids, seen: false } }))));
   if (errs.length) toast(errs.join(' · '));
   else if (total) undoToast(total + ' mail' + (total > 1 ? 's' : '') + ' marqué' + (total > 1 ? 's' : '') + ' comme lu' + (total > 1 ? 's' : ''), undo);
   else toast('Tout était déjà lu');
@@ -749,6 +752,7 @@ async function renderBlocked(box) {
 
 const fmtMo = b => b >= 1073741824 ? (b / 1073741824).toFixed(2).replace('.', ',') + ' Go' : b >= 1048576 ? (b / 1048576).toFixed(1).replace('.', ',') + ' Mo' : Math.max(1, Math.round(b / 1024)) + ' Ko';
 async function labelSize(labelId) {
+  if (String(labelId).startsWith('F:')) { try { const f = await rapi('/free/size?' + new URLSearchParams({ folder: freeFolderOf(labelId) })); return f.count ? fmtMo(f.bytes) + ' · ' + f.count + ' mail' + (f.count > 1 ? 's' : '') : 'Vide'; } catch (e) { return 'Taille indisponible'; } }
   // Quota Gmail : pas de lecture mail par mail. Nombre exact via le libellé, taille estimée sur un échantillon, mémorisée 30 min.
   const gmail = (async () => {
     const lab = (await api('labels/' + encodeURIComponent(labelId))) || {};
@@ -777,14 +781,16 @@ async function labelSize(labelId) {
 
 async function emptyLabel(labelId, name) {
   openSheet(`<span class="grip"></span><h2>Tout supprimer ?</h2>
-    <p style="margin:0;color:var(--muted);font-size:.85rem;line-height:1.5">Tous les mails « ${esc(name)} » partent dans la corbeille${freeOn() && isBlockLabel(labelId) ? ' de leur boîte, Gmail et Free' : ' de Gmail'}. Côté Gmail, ils y restent 30 jours avant suppression définitive : la place n'est libérée qu'à ce moment-là, ou plus tôt si tu vides la corbeille.</p>
+    <p style="margin:0;color:var(--muted);font-size:.85rem;line-height:1.5">Tous les mails « ${esc(name)} » partent dans la corbeille${String(labelId).startsWith('F:') ? ' de Free' : freeOn() && isBlockLabel(labelId) ? ' de leur boîte, Gmail et Free' : ' de Gmail'}.${String(labelId).startsWith('F:') ? '' : ' Côté Gmail, ils y restent 30 jours avant suppression définitive : la place n’est libérée qu’à ce moment-là, ou plus tôt si tu vides la corbeille.'}</p>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="empty-ok">Tout supprimer</button></div>`);
   $('#empty-ok').onclick = async () => {
     const b = $('#empty-ok'); b.disabled = true; b.textContent = 'Suppression…';
     let total = 0;
     try {
       let page = null;
-      do {
+      if (String(labelId).startsWith('F:')) {
+        total += (await rapi('/free/empty', { method: 'POST', body: { folder: freeFolderOf(labelId) } })).moved || 0;
+      } else do {
         const p = new URLSearchParams({ labelIds: labelId, maxResults: 500 });
         if (page) p.set('pageToken', page);
         const r = (await api('messages?' + p.toString())) || {};
@@ -1219,6 +1225,7 @@ async function renderLabels() {
   }
   const favs = LS.get('favFolders', []);
   const opened = new Set(LS.get('openFolders', []));
+  const openSecs = LS.get('openSecs', {});
   const all = g.concat(f);
   const byKey = new Map(all.map(x => [x.key, x]));
   const nb = n => n ? `<span class="fnb">${n > 99 ? '99+' : n}</span>` : '';
@@ -1238,7 +1245,8 @@ async function renderLabels() {
     if (!items.length) return '';
     const sep = acc === 'free' ? (items[0].delim || '/') : '/';
     const tree = buildTree(items, sep);
-    return `<h2 class="sec">${dot(acc)}${title}</h2><div class="card fold">${[...tree.children.values()].sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(n => rowHTML(n, 0, acc)).join('')}</div>`;
+    const unread = [...tree.children.values()].reduce((a, n) => a + (n.total || 0), 0);
+    return `<details class="set fsec" data-sec="${acc}" ${openSecs[acc] ? 'open' : ''}><summary><span class="set-t">${dot(acc)} ${title}</span><span class="set-s">${items.length} dossier${items.length > 1 ? 's' : ''}${unread ? ' · ' + unread + ' non lu' + (unread > 1 ? 's' : '') : ''}</span><span class="chev" aria-hidden="true"></span></summary><div class="card fold">${[...tree.children.values()].sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(n => rowHTML(n, 0, acc)).join('')}</div></details>`;
   };
   const boxes = ['STARRED', 'IMPORTANT', 'DRAFT', 'ALL', 'SPAM', 'TRASH'];
   const draw = q => {
@@ -1251,7 +1259,8 @@ async function renderLabels() {
       const fv = favs.map(k => byKey.get(k)).filter(Boolean);
       $l.innerHTML = (fv.length ? `<h2 class="sec"><span class="fav-t">★</span>Favoris</h2><div class="card fold">${fv.map(x => `<a class="frow" href="${x.href}">${FOLD_ICON}<span class="nm">${esc(x.full.split(x.delim || '/').join(' › '))}</span>${dot(x.acc)}${nb(x.n)}${star(x.key)}</a>`).join('')}</div>` : '<p class="fhint">Touche ☆ à côté d’un dossier pour l’épingler ici.</p>')
         + section('Gmail', 'gmail', g) + section('Free', 'free', f)
-        + `<h2 class="sec">Boîtes</h2><div class="card fold">${boxes.map(k => `<a class="frow" href="#/list/${k}">${FOLD_ICON}<span class="nm">${esc(SYSTEM[k].name)}</span></a>`).join('')}</div>`;
+        + `<details class="set fsec" data-sec="boxes" ${openSecs.boxes ? 'open' : ''}><summary><span class="set-t">Boîtes</span><span class="set-s">Suivis, Spam, Corbeille…</span><span class="chev" aria-hidden="true"></span></summary><div class="card fold">${boxes.map(k => `<a class="frow" href="#/list/${k}">${FOLD_ICON}<span class="nm">${esc(SYSTEM[k].name)}</span></a>`).join('')}</div></details>`;
+      $$('details.fsec', $l).forEach(d => d.addEventListener('toggle', () => { openSecs[d.dataset.sec] = d.open; LS.set('openSecs', openSecs); }));
     }
     $$('[data-fav]', $l).forEach(b => b.onclick = e => {
       e.preventDefault(); e.stopPropagation();

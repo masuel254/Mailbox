@@ -267,3 +267,6 @@ body.selecting .item .av{display:none}
 .ftog[aria-expanded="true"] .chev{transform:rotate(45deg)}
 .fav-t{color:var(--accent)}
 .fhint{margin:4px 8px 12px;font-size:.82rem;color:var(--muted)}
+details.fsec .set-t{display:flex;align-items:center;gap:8px}
+details.fsec .set-t .dot{width:9px;height:9px;border-radius:5px}
+details.fsec>.card.fold{border-radius:0 0 14px 14px;margin:0}
