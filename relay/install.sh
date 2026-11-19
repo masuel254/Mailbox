@@ -81,6 +81,8 @@ fi
 
 vert "5/6  Démarrage du relais"
 docker rm -f "$NAME" >/dev/null 2>&1 || true
+# Le dossier de données doit appartenir à l'utilisateur du conteneur (node, uid 1000)
+docker run --rm -v mailbox-relay-data:/data alpine:3 chown -R 1000:1000 /data >/dev/null
 # shellcheck disable=SC2086
 docker run -d --name "$NAME" --restart unless-stopped $NET_ARG $PUBLISH --env-file "$ENV_FILE" -v mailbox-relay-data:/data "$NAME" >/dev/null
 sleep 3
