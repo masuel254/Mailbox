@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.1.0';
+const APP_VERSION = '2.1.1';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -30,6 +30,7 @@ const $ = (s, el) => (el || document).querySelector(s);
 const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const decodeEntities = s => { const t = document.createElement('textarea'); t.innerHTML = s || ''; return t.value; };
+const cleanSnippet = s => decodeEntities(decodeEntities(s || '')).replace(/[\u00a0\u200b-\u200d\u034f\ufeff]/g, ' ').replace(/\(?\s*<?https?:\/\/[^\s)>]*>?\s*\)?/g, ' ').replace(/\[[^\]]*\]/g, ' ').replace(/^\s*(voir|afficher|consulter) (la version|ce (mail|message|courriel)) (en ligne|dans (votre|un) navigateur)\S*\s*/i, '').replace(/\s+/g, ' ').trim();
 let toastTimer;
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2600); }
 const ICON = {
@@ -215,7 +216,7 @@ const FREE_FOLDERS = { INBOX: 'INBOX', UNREAD: 'INBOX', SENT: 'SENT', TRASH: 'TR
 const curAcc = () => freeOn() ? (settings.acc || 'all') : 'gmail';
 function parseFreeId(id) { const p = id.split(':'); return { uid: +p[1], folder: p.slice(2).join(':') }; }
 function freeItem(x) {
-  return { id: 'f:' + x.uid + ':' + x.folder, acc: 'free', folder: x.folder, uid: x.uid, subject: x.subject, from: x.from.name || x.from.email, fromEmail: (x.from.email || '').toLowerCase(), fromName: x.from.name || '', to: x.to || '', sentByMe: false, snippet: x.snippet || '', date: x.date, count: 1, unread: !x.seen, starred: !!x.flagged, labels: [] };
+  return { id: 'f:' + x.uid + ':' + x.folder, acc: 'free', folder: x.folder, uid: x.uid, subject: x.subject, from: x.from.name || x.from.email, fromEmail: (x.from.email || '').toLowerCase(), fromName: x.from.name || '', to: x.to || '', sentByMe: false, snippet: cleanSnippet(x.snippet), date: x.date, count: 1, unread: !x.seen, starred: !!x.flagged, labels: [] };
 }
 function route() {
   auth.handleRedirect();
