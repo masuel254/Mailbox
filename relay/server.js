@@ -163,16 +163,17 @@ async function freeList(folderKey, unread, before, limit) {
 async function freeSearch(q, limit) {
   const crit = {}; const words = []; const alts = []; let anyOf = false;
   for (const tok of (q.match(/\S+:"[^"]*"|\S+:\S+|"[^"]*"|\S+/g) || [])) {
-    const m = tok.match(/^(from|de|to|subject|objet|newer_than|after|before|older_than):(.+)$/i);
+    const m = tok.match(/^(from|de|to|subject|objet|newer_than|after|before|older_than|larger|size):(.+)$/i);
     const v = (m ? m[2] : tok).replace(/^"|"$/g, '').replace(/^\(|\)$/g, '');
     if (!m) { if (tok === 'OR') anyOf = true; else if (!/^(is|in|has|label|category|-)/i.test(tok)) words.push(v.toLowerCase()); continue; }
     const k = m[1].toLowerCase();
     if (k === 'from' || k === 'de' || k === 'to' || k === 'subject' || k === 'objet') { const kk = k === 'de' ? 'from' : k === 'objet' ? 'subject' : k; alts.push({ [kk]: v }); crit[kk] = v; }
+    else if (k === 'larger' || k === 'size') { const n = v.match(/^(\d+(?:\.\d+)?)([kKmM]?)$/); if (n) crit.larger = Math.round(+n[1] * ({ k: 1024, m: 1048576 })[n[2].toLowerCase()] || +n[1]); }
     else if (k === 'newer_than') { const n = v.match(/^(\d+)([dmy])$/); if (n) crit.since = new Date(Date.now() - (+n[1]) * ({ d: 1, m: 30, y: 365 })[n[2]] * 86400000); }
     else if (k === 'older_than') { const n = v.match(/^(\d+)([dmy])$/); if (n) crit.before = new Date(Date.now() - (+n[1]) * ({ d: 1, m: 30, y: 365 })[n[2]] * 86400000); }
     else { const d = new Date(v.replace(/\//g, '-')); if (!isNaN(d)) crit[k === 'after' ? 'since' : 'before'] = d; }
   }
-  const base = {}; if (crit.since) base.since = crit.since; if (crit.before) base.before = crit.before;
+  const base = {}; ['since', 'before', 'larger'].forEach(k => { if (crit[k]) base[k] = crit[k]; });
   const queries = anyOf
     ? alts.map(x => Object.assign({}, base, x)).concat(words.map(w => Object.assign({}, base, { text: w })))
     : words.length ? [Object.assign({}, crit, { text: words[0] })] : [crit];
@@ -187,16 +188,16 @@ async function freeSearch(q, limit) {
         let uids = [];
         for (const qq of queries) uids.push(...((await client.search(qq, { uid: true })) || []));
         uids = [...new Set(uids)].sort((a, b) => b - a).slice(0, limit * 2);
-        if (uids.length) for await (const m of client.fetch(uids, { envelope: true, flags: true, internalDate: true, source: { start: 0, maxLength: 8000 } }, { uid: true })) {
+        if (uids.length) for await (const m of client.fetch(uids, { envelope: true, flags: true, internalDate: true, size: true, source: { start: 0, maxLength: 8000 } }, { uid: true })) {
           let snippet = '', text = '';
           try { const p = await simpleParser(m.source); text = p.text || ''; snippet = snip(text); } catch (e) {}
           if (!anyOf && words.length > 1) { const hay = ((m.envelope.subject || '') + ' ' + JSON.stringify(m.envelope.from || []) + ' ' + text).toLowerCase(); if (!words.slice(1).every(w => hay.includes(w))) continue; }
           const key = folder + ':' + m.uid; if (seen.has(key)) continue; seen.add(key);
-          items.push({ uid: m.uid, folder, subject: m.envelope.subject || '(sans objet)', from: addr(m.envelope.from), to: (m.envelope.to || []).map(x => x.name || x.address).join(', '), date: +new Date(m.internalDate || m.envelope.date), seen: m.flags.has('\\Seen'), flagged: m.flags.has('\\Flagged'), snippet });
+          items.push({ uid: m.uid, folder, subject: m.envelope.subject || '(sans objet)', from: addr(m.envelope.from), to: (m.envelope.to || []).map(x => x.name || x.address).join(', '), date: +new Date(m.internalDate || m.envelope.date), seen: m.flags.has('\\Seen'), flagged: m.flags.has('\\Flagged'), snippet, size: m.size || 0 });
         }
       } finally { lock.release(); }
     }
-    items.sort((a, b) => b.date - a.date);
+    items.sort(crit.larger ? (a, b) => b.size - a.size : (a, b) => b.date - a.date);
     return { items: items.slice(0, limit) };
   });
 }
@@ -269,6 +270,7 @@ async function aiSearch(question, today) {
   const sys = 'Tu convertis une demande en français en requête de recherche Gmail. Date du jour : ' + (today || new Date().toISOString().slice(0, 10)) + '. ' +
     'Réponds UNIQUEMENT par un objet JSON {"q": "...", "resume": "..."}. ' +
     '"q" utilise la syntaxe Gmail : from:, to:, subject:, mots-clés, OR, newer_than:7d/3m/1y, after:AAAA/MM/JJ, before:AAAA/MM/JJ, has:attachment, is:unread. ' +
+    'Pour une demande sur la taille ou la place prise (gros mails, plus lourds, pièces jointes volumineuses), utilise larger:5M (ou larger:10M pour « très gros », larger:2M pour « assez gros ») sans autre mot-clé sauf précision ; l’appli triera alors du plus gros au plus petit. ' +
     'Garde 1 à 4 mots-clés distinctifs, sans mots vides ; pour une marque, utilise from:marque (sans .com) ; n\'invente pas d\'adresse. ' +
     '"resume" décrit la recherche en une courte phrase en français, par exemple « Mails de Devred des 3 derniers mois contenant anniversaire ».';
   const call = async (model, extra) => {

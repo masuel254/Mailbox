@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.9.8';
+const APP_VERSION = '2.9.9';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -232,7 +232,7 @@ const freeFolderOf = key => FREE_FOLDERS[key] || (String(key).startsWith('F:') ?
 const curAcc = () => freeOn() ? (settings.acc || 'all') : 'gmail';
 function parseFreeId(id) { const p = id.split(':'); return { uid: +p[1], folder: p.slice(2).join(':') }; }
 function freeItem(x) {
-  return { id: 'f:' + x.uid + ':' + x.folder, acc: 'free', folder: x.folder, uid: x.uid, subject: x.subject, from: x.from.name || x.from.email, fromEmail: (x.from.email || '').toLowerCase(), fromName: x.from.name || '', to: x.to || '', sentByMe: false, snippet: cleanSnippet(x.snippet), date: x.date, count: 1, unread: !x.seen, starred: !!x.flagged, labels: [] };
+  return { id: 'f:' + x.uid + ':' + x.folder, acc: 'free', folder: x.folder, uid: x.uid, subject: x.subject, from: x.from.name || x.from.email, fromEmail: (x.from.email || '').toLowerCase(), fromName: x.from.name || '', to: x.to || '', sentByMe: false, snippet: cleanSnippet(x.snippet), date: x.date, count: 1, size: x.size || 0, unread: !x.seen, starred: !!x.flagged, labels: [] };
 }
 function route() {
   auth.handleRedirect();
@@ -400,6 +400,7 @@ function summarize(t) {
     snippet: decodeEntities(last.snippet || ''),
     date: +last.internalDate || Date.now(),
     count: msgs.length,
+    size: msgs.reduce((a, m) => a + (m.sizeEstimate || 0), 0),
     unread: msgs.some(m => (m.labelIds || []).includes('UNREAD')),
     starred: labels.has('STARRED'),
     labels: [...labels].filter(id => /^Label_/.test(id))
@@ -413,6 +414,7 @@ function itemHTML(it, cls, sentView) {
   const chips = (blocked ? '<span class="chip blocked">Bloqué</span>' : '') + it.labels.map(id => { const l = labelById(id); return l && l.name !== BLOCK_LABEL && id !== curKey ? `<span class="chip lab" style="--c:${esc(labelColor(l))}">${esc(l.name)}</span>` : ''; }).join('');
   const sel = state.sel && state.sel.has(it.id) ? ' sel' : '';
   const href = it.acc === 'free' ? '#/free/' + encodeURIComponent(it.folder) + '/' + it.uid : '#/thread/' + encodeURIComponent(it.id);
+  const sizeChip = state.showSize && it.size ? `<span class="chip size">${it.size >= 1048576 ? (it.size / 1048576).toFixed(1).replace('.', ',') + ' Mo' : Math.max(1, Math.round(it.size / 1024)) + ' Ko'}</span>` : '';
   const accChip = state.showAcc ? `<span class="chip acc-${it.acc === 'free' ? 'free' : 'gmail'}">${it.acc === 'free' ? 'Free' : 'Gmail'}</span>` : '';
   return `<a class="item ${cls}${sel}" data-id="${esc(it.id)}" href="${href}">
     <span class="mark" aria-hidden="true"></span>
@@ -420,13 +422,22 @@ function itemHTML(it, cls, sentView) {
     <span class="body">
       <span class="row1"><span class="who">${esc(who)}${it.count > 1 ? ` <span class="count">(${it.count})</span>` : ''}</span>${it.starred ? '<span class="star" aria-label="Suivi">★</span>' : ''}<span class="when">${esc(fmtDate(it.date))}</span></span>
       <span class="subj">${it.unread ? '<span class="sr">Non lu : </span>' : ''}${esc(it.subject)}</span>
-      <span class="row3"><span class="snip">${esc(it.snippet)}</span><span class="chips">${accChip}${chips}</span></span>
+      <span class="row3"><span class="snip">${esc(it.snippet)}</span><span class="chips">${sizeChip}${accChip}${chips}</span></span>
     </span></a>`;
 }
 function drawList(data, plain) {
   const l = $('#list'); if (!l) return;
   state.showAcc = freeOn();
   if (!data.items.length) { l.innerHTML = '<div class="empty">Aucun message ici.</div>'; return; }
+  // Recherche par taille (larger:) : du plus gros au plus petit, taille affichée
+  const ck = String(state.current);
+  if (state.listCtx && state.listCtx.key === 'SEARCH' && state.listCtx.cacheKey === ck && /\b(larger|size):/i.test(state.listCtx.q || '')) {
+    state.showSize = true;
+    l.innerHTML = `<h2 class="sec">Du plus gros au plus petit · ${data.items.length}</h2>` + data.items.slice().sort((a, b) => (b.size || 0) - (a.size || 0)).map(i => itemHTML(i, i.unread ? 'u' : '')).join('') + (data.next || data.freeMore ? '<button class="more" id="more">Afficher plus</button>' : '');
+    const mm = $('#more'); if (mm) mm.onclick = () => { mm.disabled = true; mm.textContent = 'Chargement…'; loadList('SEARCH', state.listCtx.q, state.current, plain, false); };
+    return;
+  }
+  state.showSize = false;
   const unread = data.items.filter(i => i.unread), read = data.items.filter(i => !i.unread);
   let h = '';
   const inboxView = ['INBOX', 'UNREAD'].includes(keyOf(state.current)) || isFolderView(keyOf(state.current));
