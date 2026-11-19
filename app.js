@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.9.9';
+const APP_VERSION = '2.10.0';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -696,6 +696,7 @@ async function quickBlock(item) {
   if (!item || !item.fromEmail) { toast('Expéditeur introuvable'); return; }
   const t = blockTarget(item.fromEmail);
   const names = LS.get('blockedNames', {}); names[t] = t.includes('@') ? (item.fromName || t) : brandOf(t); LS.set('blockedNames', names);
+  const dates = LS.get('blockedDates', {}); dates[t] = Date.now(); LS.set('blockedDates', dates);
   try {
     const lab = await blockLabelId();
     const froms = (((await api('settings/filters')) || {}).filter || []).map(f => (f.criteria && f.criteria.from || '').toLowerCase());
@@ -743,6 +744,7 @@ function blockSheet(ids, extra) {
     });
     if (!chosen.length) return closeSheet();
     LS.set('blockedNames', names);
+    const dates = LS.get('blockedDates', {}); chosen.forEach(t => { if (!dates[t]) dates[t] = Date.now(); }); LS.set('blockedDates', dates);
     $('#blk-ok').disabled = true; $('#blk-ok').textContent = 'Blocage…';
     try {
       const lab = await blockLabelId();
@@ -800,10 +802,18 @@ async function renderBlocked(box) {
     const sub = e => e.includes('@') ? e : 'Toutes les adresses @' + e;
     const after = new Set(fs.map(f => blockTarget(f.criteria.from.toLowerCase()))).size;
     const mergeBtn = after < fs.length ? `<button class="btn primary" id="blk-merge">Regrouper par marque (${fs.length} → ${after})</button><p style="margin:0">Une seule règle par marque bloque toutes ses adresses, y compris celles qu'elle utilisera demain.</p>` : '';
-    fs.sort((a, b) => label(a.criteria.from).localeCompare(label(b.criteria.from), 'fr'));
+    const dates = LS.get('blockedDates', {});
+    const first = LS.get('blockedSeenSince', 0) || Date.now(); LS.set('blockedSeenSince', first);
+    const dOf = f => dates[f.criteria.from.toLowerCase()] || 0;
+    const order = LS.get('blockedSort', 'date');
+    if (order === 'date') fs.sort((a, b) => (dOf(b) - dOf(a)) || label(a.criteria.from).localeCompare(label(b.criteria.from), 'fr'));
+    else fs.sort((a, b) => label(a.criteria.from).localeCompare(label(b.criteria.from), 'fr'));
+    const fmtD = t => t ? 'bloqué le ' + new Date(t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) + ' à ' + new Date(t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : 'bloqué avant le ' + new Date(first).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+    const sortBar = `<div class="accounts" role="tablist" style="margin:0 0 8px"><button class="${order === 'date' ? 'on' : ''}" data-bsort="date">Plus récents</button><button class="${order === 'az' ? 'on' : ''}" data-bsort="az">A → Z</button></div>`;
     const nEl = $('#s-blk-n'); if (nEl) nEl.textContent = String(fs.length);
-    box.innerHTML = mergeBtn + `<div>` + fs.map(f => `<div class="lab-row" style="padding:6px 0;gap:10px"><span class="nm" style="min-width:0;display:flex;flex-direction:column"><b style="font-size:.95rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label(f.criteria.from))}</b><span style="font-size:.72rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(sub(f.criteria.from))}</span></span><button class="btn" style="height:38px;font-size:.75rem" data-fid="${esc(f.id)}">Débloquer</button></div>`).join('') +
+    box.innerHTML = mergeBtn + sortBar + `<div>` + fs.map(f => `<div class="lab-row" style="padding:6px 0;gap:10px"><span class="nm" style="min-width:0;display:flex;flex-direction:column"><b style="font-size:.95rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label(f.criteria.from))}</b><span style="font-size:.72rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(sub(f.criteria.from))}</span><span style="font-size:.7rem;color:var(--muted);opacity:.8">${esc(fmtD(dOf(f)))}</span></span><button class="btn" style="height:38px;font-size:.75rem" data-fid="${esc(f.id)}">Débloquer</button></div>`).join('') +
       `</div>`;
+    $$('[data-bsort]', box).forEach(b => b.onclick = () => { LS.set('blockedSort', b.dataset.bsort); renderBlocked(box); });
     const mb = $('#blk-merge', box);
     if (mb) mb.onclick = async () => { mb.disabled = true; mb.textContent = 'Regroupement…'; try { const r = await mergeBlocked(fs, l.id, box); toast('Règles regroupées : ' + r.removed + ' remplacées'); } catch (e) { toast('Échec : ' + e.message); } renderBlocked(box); };
     $$('button[data-fid]', box).forEach(b => b.onclick = async () => { b.disabled = true; try { await api('settings/filters/' + b.dataset.fid, { method: 'DELETE' }); toast('Débloqué'); await renderBlocked(box); } catch (e) { b.disabled = false; toast('Échec : ' + e.message); } });
