@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.1.1';
+const APP_VERSION = '2.2.0';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -213,6 +213,8 @@ const toUrlB64 = s => s.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '
 const state = { lists: {}, current: null, me: null };
 const keyOf = ck => String(ck).split('|').pop();
 const FREE_FOLDERS = { INBOX: 'INBOX', UNREAD: 'INBOX', SENT: 'SENT', TRASH: 'TRASH', SPAM: 'JUNK' };
+const isBlockLabel = key => { try { return (labelById(key) || {}).name === BLOCK_LABEL; } catch (e) { return false; } };
+const freeFolderOf = key => FREE_FOLDERS[key] || (isBlockLabel(key) ? 'BLOCKED' : null);
 const curAcc = () => freeOn() ? (settings.acc || 'all') : 'gmail';
 function parseFreeId(id) { const p = id.split(':'); return { uid: +p[1], folder: p.slice(2).join(':') }; }
 function freeItem(x) {
@@ -265,7 +267,7 @@ async function renderList(key, q) {
   let title = isSearch ? 'Recherche' : sys ? sys.name : 'Libellé';
   if (!sys && !isSearch) { try { await getLabels(); const l = labelById(key); if (l) title = l.name; } catch (e) { if (e.message === 'auth') return; } }
   const plain = !!(sys && sys.plain);
-  const acc = !isSearch && FREE_FOLDERS[key] ? curAcc() : 'gmail';
+  const acc = !isSearch && freeOn() && freeFolderOf(key) ? curAcc() : 'gmail';
   const cacheKey = (acc !== 'gmail' ? acc + '|' : '') + (isSearch ? 'S:' + q : key);
   state.current = cacheKey;
   v.innerHTML = `
@@ -276,7 +278,7 @@ async function renderList(key, q) {
       <button class="icon-btn" id="btn-refresh" aria-label="Actualiser">${ICON.refresh}</button>
     </div>
     <form class="searchbar" id="searchbar" ${isSearch ? '' : 'hidden'}><input type="search" id="q" placeholder="Rechercher (ex. from:claire facture)" value="${esc(q || '')}" enterkeyhint="search" autocomplete="off"></form>
-    ${freeOn() && FREE_FOLDERS[key] && !isSearch ? `<div class="accounts" role="tablist" aria-label="Comptes">
+    ${freeOn() && freeFolderOf(key) && !isSearch ? `<div class="accounts" role="tablist" aria-label="Comptes">
       ${[['all', 'Tous', ''], ['gmail', 'Gmail', 'var(--gmail)'], ['free', 'Free', 'var(--free)']].map(([k, n, c]) => `<button role="tab" aria-selected="${acc === k}" class="${acc === k ? 'on' : ''}" data-acc="${k}">${c ? `<span class="dot" style="background:${c}"></span>` : ''}${n}</button>`).join('')}
     </div>` : ''}
     ${key === 'INBOX' || key === 'UNREAD' ? `<nav class="accounts filters" aria-label="Filtre">
@@ -319,10 +321,10 @@ async function loadList(key, q, cacheKey, plain, reset) {
         next = r.nextPageToken || null;
       })());
     } else if (acc === 'free') next = null;
-    if (acc !== 'gmail' && FREE_FOLDERS[key] && (!more || prev.freeMore)) {
+    if (acc !== 'gmail' && freeFolderOf(key) && (!more || prev.freeMore)) {
       jobs.push((async () => {
         try {
-          const p = new URLSearchParams({ folder: FREE_FOLDERS[key], unread: key === 'UNREAD' ? '1' : '0', limit: String(PAGE) });
+          const p = new URLSearchParams({ folder: freeFolderOf(key), unread: key === 'UNREAD' ? '1' : '0', limit: String(PAGE) });
           if (more && prev.freeBefore) p.set('before', prev.freeBefore);
           const r = await rapi('/free/list?' + p.toString());
           fItems = (r.items || []).map(freeItem);
@@ -639,7 +641,7 @@ async function renderBlocked(box) {
 
 const fmtMo = b => b >= 1073741824 ? (b / 1073741824).toFixed(2).replace('.', ',') + ' Go' : b >= 1048576 ? (b / 1048576).toFixed(1).replace('.', ',') + ' Mo' : Math.max(1, Math.round(b / 1024)) + ' Ko';
 async function labelSize(labelId) {
-  try {
+  const gmail = (async () => {
     const ids = []; let page = null;
     do {
       const p = new URLSearchParams({ labelIds: labelId, maxResults: 500 });
@@ -648,16 +650,23 @@ async function labelSize(labelId) {
       (r.messages || []).forEach(m => ids.push(m.id));
       page = r.nextPageToken;
     } while (page && ids.length < 3000);
-    if (!ids.length) return 'Vide';
-    const sizes = await pool(ids, 10, id => api('messages/' + id + '?format=minimal&fields=sizeEstimate').then(r => (r && r.sizeEstimate) || 0));
-    const total = sizes.reduce((a, b) => a + (b || 0), 0);
-    return fmtMo(total) + ' · ' + ids.length + (ids.length >= 3000 ? '+' : '') + ' mail' + (ids.length > 1 ? 's' : '');
+    const sizes = ids.length ? await pool(ids, 10, id => api('messages/' + id + '?format=minimal&fields=sizeEstimate').then(r => (r && r.sizeEstimate) || 0)) : [];
+    return { count: ids.length, bytes: sizes.reduce((a, b) => a + (b || 0), 0), capped: ids.length >= 3000 };
+  })();
+  const free = freeOn() && isBlockLabel(labelId) ? rapi('/free/size?folder=BLOCKED').catch(() => null) : Promise.resolve(null);
+  try {
+    const [g, f] = await Promise.all([gmail.catch(() => null), free]);
+    if (!g && !f) return 'Taille indisponible';
+    const count = (g ? g.count : 0) + (f ? f.count : 0), bytes = (g ? g.bytes : 0) + (f ? f.bytes : 0);
+    if (!count) return 'Vide';
+    const parts = freeOn() && f ? ' (Gmail ' + (g ? g.count : '?') + ' · Free ' + f.count + ')' : '';
+    return fmtMo(bytes) + ' · ' + count + (g && g.capped ? '+' : '') + ' mail' + (count > 1 ? 's' : '') + parts;
   } catch (e) { return 'Taille indisponible'; }
 }
 
 async function emptyLabel(labelId, name) {
   openSheet(`<span class="grip"></span><h2>Tout supprimer ?</h2>
-    <p style="margin:0;color:var(--muted);font-size:.85rem;line-height:1.5">Tous les mails du libellé « ${esc(name)} » partent dans la corbeille de Gmail. Ils y restent 30 jours avant suppression définitive : la place n'est libérée qu'à ce moment-là, ou plus tôt si tu vides la corbeille dans Gmail.</p>
+    <p style="margin:0;color:var(--muted);font-size:.85rem;line-height:1.5">Tous les mails « ${esc(name)} » partent dans la corbeille${freeOn() && isBlockLabel(labelId) ? ' de leur boîte, Gmail et Free' : ' de Gmail'}. Côté Gmail, ils y restent 30 jours avant suppression définitive : la place n'est libérée qu'à ce moment-là, ou plus tôt si tu vides la corbeille.</p>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="empty-ok">Tout supprimer</button></div>`);
   $('#empty-ok').onclick = async () => {
     const b = $('#empty-ok'); b.disabled = true; b.textContent = 'Suppression…';
@@ -676,6 +685,7 @@ async function emptyLabel(labelId, name) {
         b.textContent = total + ' supprimés…';
         page = r.nextPageToken;
       } while (page);
+      if (freeOn() && isBlockLabel(labelId)) { try { total += (await rapi('/free/empty', { method: 'POST', body: { folder: 'BLOCKED' } })).moved || 0; } catch (e) { toast('Free : ' + e.message); } }
       closeSheet();
       Object.keys(state.lists).forEach(k => delete state.lists[k]);
       toast(total ? total + ' mail' + (total > 1 ? 's' : '') + ' placé' + (total > 1 ? 's' : '') + ' dans la corbeille' : 'Rien à supprimer');

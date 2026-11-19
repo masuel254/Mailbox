@@ -208,6 +208,41 @@ async function freeMove(folderKey, uids, toKey) {
     } finally { lock.release(); }
   });
 }
+async function freeFolderSize(folderKey) {
+  return withImap(async client => {
+    const folder = await resolveFolder(client, folderKey);
+    const lock = await client.getMailboxLock(folder);
+    try {
+      let count = 0, bytes = 0;
+      if (client.mailbox.exists) for await (const m of client.fetch('1:*', { size: true })) { count++; bytes += m.size || 0; }
+      return { count, bytes };
+    } finally { lock.release(); }
+  });
+}
+async function freeEmpty(folderKey) {
+  return withImap(async client => {
+    const folder = await resolveFolder(client, folderKey);
+    const dest = (await folders(client)).trash;
+    const lock = await client.getMailboxLock(folder);
+    try {
+      const uids = (await client.search({ all: true }, { uid: true })) || [];
+      if (uids.length) { await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true }); await client.messageMove(uids, dest, { uid: true }); }
+      return { ok: true, moved: uids.length };
+    } finally { lock.release(); }
+  });
+}
+/* Range dans « Indésirables » les mails Free déjà présents dont l'expéditeur est bloqué (client IMAP déjà verrouillé sur INBOX) */
+async function sweepInbox(client, targets) {
+  const found = new Set();
+  for (const t of targets) {
+    const uids = (await client.search({ from: t }, { uid: true })) || [];
+    if (!uids.length) continue;
+    for await (const m of client.fetch(uids, { envelope: true }, { uid: true })) { const f = addr(m.envelope.from); if (f.email && isBlocked(f.email, [t])) found.add(m.uid); }
+  }
+  const uids = [...found];
+  if (uids.length) { await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true }); await ensureFolder(client, BLOCK_LABEL); await client.messageMove(uids, BLOCK_LABEL, { uid: true }); }
+  return uids.length;
+}
 async function freeSend(o) {
   const from = S.free.name ? { name: S.free.name, address: S.free.user } : S.free.user;
   const mail = { from, to: o.to || undefined, cc: o.cc || undefined, bcc: o.bcc || undefined, subject: o.subject || '', text: o.text || '',
@@ -286,6 +321,14 @@ async function pollFree() {
       const fresh = S.seen.freeInit ? unseen.filter(u => u > last) : [];
       S.seen.freeUid = Math.max(last, ...unseen, client.mailbox.uidNext ? client.mailbox.uidNext - 1 : 0);
       S.seen.freeInit = true;
+      const sig = targets.slice().sort().join(',');
+      if (sig && sig !== S.seen.sweepSig) {
+        try {
+          const n = await sweepInbox(client, targets);
+          S.seen.sweepSig = sig;
+          if (n) log('Free : ' + n + ' mail(s) d’expéditeurs bloqués rangés dans ' + BLOCK_LABEL);
+        } catch (e) { log('nettoyage Free', e.message); }
+      }
       const toBlock = [];
       if (fresh.length) {
         for await (const m of client.fetch(fresh, { envelope: true }, { uid: true })) {
@@ -357,7 +400,7 @@ const routes = {
       if (e.authenticationFailed || /auth/i.test(e.responseText || '')) throw Object.assign(new Error('Connexion Free refusée : vérifie l’adresse et le mot de passe'), { code: 401 });
       throw Object.assign(new Error('Serveur Free injoignable : ' + (e.code || e.message)), { code: 502 });
     }
-    S.free = { user, pass: enc(b.password), name: (b.name || '').trim() }; S.seen.freeInit = false; save();
+    S.free = { user, pass: enc(b.password), name: (b.name || '').trim() }; S.seen.freeInit = false; S.seen.sweepSig = ''; save();
     poll().catch(() => {});
     return { ok: true, email: user };
   },
@@ -369,6 +412,8 @@ const routes = {
   'POST /free/flags': async (q, b) => freeFlags(b.folder || 'INBOX', b.uids || [], b.seen, b.flagged),
   'POST /free/move': async (q, b) => freeMove(b.folder || 'INBOX', b.uids || [], b.to),
   'POST /free/send': async (q, b) => freeSend(b),
+  'GET /free/size': async q => freeFolderSize(q.get('folder') || 'BLOCKED'),
+  'POST /free/empty': async (q, b) => freeEmpty(b.folder || 'BLOCKED'),
   'POST /free/block': async (q, b) => {
     const t = (b.target || '').toLowerCase(); if (!t) throw Object.assign(new Error('cible manquante'), { code: 400 });
     blockedCache.at = 0;
