@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.9.4';
+const APP_VERSION = '2.9.5';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -39,6 +39,7 @@ function toast(msg, action) {
 }
 const undoToast = (msg, undo) => toast(msg, { label: 'Annuler', run: async () => { try { await undo(); toast('Action annulée'); } catch (e) { toast('Annulation impossible : ' + e.message); } Object.keys(state.lists).forEach(k => delete state.lists[k]); route(); updateBadge(); } });
 const ICON = {
+  plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
   search: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>',
   refresh: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>',
   back: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>',
@@ -1438,9 +1439,34 @@ function deleteFolderSheet(x, all) {
     renderLabels();
   };
 }
+function newFolderSheet(g, f) {
+  const opts = list => '<option value="">— Aucun (premier niveau) —</option>' + list.slice().sort((a, b) => a.full.localeCompare(b.full, 'fr')).map(x => `<option value="${esc(x.full)}">${esc(x.full.split(x.delim || '/').join(' › '))}</option>`).join('');
+  openSheet(`<span class="grip"></span><h2>Nouveau dossier</h2>
+    ${freeOn() ? `<div class="accounts" role="tablist" style="margin:0 0 4px"><button class="on" data-nacc="gmail"><span class="acc-l"><span class="dot" style="background:var(--gmail)"></span>Gmail</span></button><button data-nacc="free"><span class="acc-l"><span class="dot" style="background:var(--free)"></span>Free</span></button></div>` : ''}
+    <label class="f">Nom du dossier<input id="nd-name" autocomplete="off" placeholder="ex. Factures 2026"></label>
+    <label class="f">Ranger dans<select id="nd-parent">${opts(g)}</select></label>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="nd-ok">Créer</button></div>`);
+  let acc = 'gmail';
+  $$('[data-nacc]').forEach(b => b.onclick = () => { acc = b.dataset.nacc; $$('[data-nacc]').forEach(x => x.classList.toggle('on', x === b)); $('#nd-parent').innerHTML = opts(acc === 'gmail' ? g : f); });
+  setTimeout(() => $('#nd-name').focus(), 300);
+  $('#nd-ok').onclick = async () => {
+    const name = $('#nd-name').value.trim().replace(/[\/]/g, '-');
+    if (!name) { toast('Donne un nom au dossier'); return; }
+    const parent = $('#nd-parent').value;
+    const b = $('#nd-ok'); b.disabled = true; b.textContent = 'Création…';
+    try {
+      if (acc === 'gmail') await gEnsureLabel(parent ? parent + '/' + name : name);
+      else { const dl = ((f.find(x => x.full === parent) || f[0] || {}).delim) || '/'; await rapi('/free/folder-create', { method: 'POST', body: { path: parent ? parent + dl + name : name } }); }
+      closeSheet(); state.folders = null; labelsCache = null; LS.del('foldersCache');
+      if (parent) { const o = new Set(LS.get('openFolders', [])); let p = ''; parent.split(acc === 'gmail' ? '/' : (((f.find(x => x.full === parent) || {}).delim) || '/')).forEach(seg => { p = p ? p + '/' + seg : seg; o.add(acc + ':' + p); }); LS.set('openFolders', [...o]); }
+      const secs = LS.get('openSecs', {}); secs[acc] = true; LS.set('openSecs', secs);
+      toast('Dossier « ' + name + ' » créé'); renderLabels();
+    } catch (e) { b.disabled = false; b.textContent = 'Créer'; toast(e.message); }
+  };
+}
 async function renderLabels() {
   const v = $('#view');
-  v.innerHTML = `<div class="sticky-head"><div class="top"><h1>Dossiers</h1><button class="btn tidy-btn" id="btn-tidy">Ranger</button><button class="icon-btn" id="btn-refresh" aria-label="Actualiser">${ICON.refresh}</button></div>
+  v.innerHTML = `<div class="sticky-head"><div class="top"><h1>Dossiers</h1><button class="icon-btn" id="btn-newdir" aria-label="Nouveau dossier">${ICON.plus}</button><button class="btn tidy-btn" id="btn-tidy">Ranger</button><button class="icon-btn" id="btn-refresh" aria-label="Actualiser">${ICON.refresh}</button></div>
     <div class="searchbar"><input type="search" id="fq" placeholder="Chercher un dossier" autocomplete="off" enterkeyhint="search"></div></div>
     <a class="set-link" href="#/waiting"><span class="set-t">⏳ En attente de réponse</span><span class="set-s">Suivi Gmail + Free</span><span class="chev-r" aria-hidden="true"></span></a>
     <div id="labs"><div class="loading">Chargement…</div></div>`;
@@ -1516,6 +1542,7 @@ async function renderLabels() {
   const toggleOpen = k => { opened.has(k) ? opened.delete(k) : opened.add(k); LS.set('openFolders', [...opened]); draw($('#fq').value.trim()); };
   $('#fq').oninput = e => draw(e.target.value.trim());
   $('#btn-tidy').onclick = () => tidySheet(g, f);
+  $('#btn-newdir').onclick = () => newFolderSheet(g, f);
   bindFolderSwipe($('#labs'), k => byKey.get(k), x => deleteFolderSheet(x, all));
   redraw = () => {
     if (!location.hash.startsWith('#/labels') || !$('#labs')) return;

@@ -596,6 +596,15 @@ const routes = {
     if (!r.ok) throw Object.assign(new Error('L’expéditeur a refusé la demande (' + r.status + ')'), { code: 502 });
     return { ok: true };
   },
+  'POST /free/folder-create': async (q, b) => withImap(async client => {
+    const path = String(b.path || '').trim();
+    if (!path || path.length > 200) throw Object.assign(new Error('Nom de dossier invalide'), { code: 400 });
+    const list = await client.list();
+    if (list.some(m => m.path.toLowerCase() === path.toLowerCase())) throw Object.assign(new Error('Ce dossier existe déjà'), { code: 409 });
+    await client.mailboxCreate(path);
+    try { await client.mailboxSubscribe(path); } catch (e) {}
+    return { ok: true, path };
+  }),
   'POST /free/folder-delete': async (q, b) => withImap(async client => {
     const path = String(b.path || '');
     const f = await folders(client);
