@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.1.0';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -1305,10 +1305,33 @@ async function renderRelay() {
     const g = $('#s-rgmail'); if (g) g.onclick = () => { if (st.gmail) { settings.relayGmail = true; LS.del('rtoken'); saveSettings(); state.lists = {}; renderSettings(); } else location.href = relayGoogleStart(); };
     const p = $('#s-rpush'); if (p) p.onclick = async () => {
       p.disabled = true;
-      try { if (Notification.permission === 'granted' && LS.get('pushOn', false)) { await rapi('/push/test', { method: 'POST', body: {} }); toast('Notification de test envoyée'); } else { await enablePush(st.vapid); toast('Notifications activées'); updateBadge(); renderSettings(); } }
+      try { if (Notification.permission === 'granted' && LS.get('pushOn', false)) { await rapi('/push/test', { method: 'POST', body: {} }); toast('Notification de test envoyée'); } else { await enablePush(st.vapid); await rapi('/prefs', { method: 'POST', body: { tz: Intl.DateTimeFormat().resolvedOptions().timeZone } }).catch(() => {}); toast('Notifications activées'); updateBadge(); renderSettings(); } }
       catch (e) { toast(e.message); } p.disabled = false;
     };
+    if (perm === 'granted' && LS.get('pushOn', false)) drawPrefs();
     drawFree(st);
+  };
+  const drawPrefs = async () => {
+    const el = document.createElement('div');
+    el.style.cssText = 'display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--line);padding-top:8px';
+    el.innerHTML = '<p>Chargement des préférences…</p>';
+    box.appendChild(el);
+    let p;
+    try { p = await rapi('/prefs'); } catch (e) { el.innerHTML = '<p>Préférences indisponibles.</p>'; return; }
+    const hours = sel => Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${h === sel ? 'selected' : ''}>${String(h).padStart(2, '0')} h</option>`).join('');
+    el.innerHTML = `<label class="switch">Notifications discrètes (sans son ni vibration)<input type="checkbox" id="p-silent" ${p.silent ? 'checked' : ''}></label>
+      <label class="switch">Heures calmes (rien la nuit)<input type="checkbox" id="p-quiet" ${p.quiet ? 'checked' : ''}></label>
+      <div id="p-hours" style="display:${p.quiet ? 'grid' : 'none'};grid-template-columns:1fr 1fr;gap:8px">
+        <label class="f">De<select id="p-start">${hours(p.quietStart)}</select></label>
+        <label class="f">À<select id="p-end">${hours(p.quietEnd)}</select></label>
+      </div>
+      <p>Pendant les heures calmes, aucun mail ne te réveille. Au réveil, un seul résumé « X mails reçus cette nuit » met la pastille à jour.</p>`;
+    const saveP = async () => {
+      const body = { silent: $('#p-silent').checked, quiet: $('#p-quiet').checked, quietStart: +$('#p-start').value, quietEnd: +$('#p-end').value, tz: Intl.DateTimeFormat().resolvedOptions().timeZone };
+      $('#p-hours').style.display = body.quiet ? 'grid' : 'none';
+      try { await rapi('/prefs', { method: 'POST', body }); toast('Préférences enregistrées'); } catch (e) { toast(e.message); }
+    };
+    ['#p-silent', '#p-quiet', '#p-start', '#p-end'].forEach(id => $(id).onchange = saveP);
   };
   $('#s-rconn').onclick = async () => {
     const url = $('#s-rurl').value.trim().replace(/\/$/, ''), token = $('#s-rtok').value.trim();

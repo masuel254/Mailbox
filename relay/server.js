@@ -38,7 +38,7 @@ webpush.setVapidDetails(C.vapidSubject, C.vapidPub, C.vapidPriv);
 
 /* ---------- État persistant (chiffré pour les secrets) ---------- */
 const STATE_FILE = path.join(C.dataDir, 'state.json');
-let S = { gmail: null, free: null, subs: [], seen: { gmail: [], freeUid: 0 }, badge: { gmail: 0, free: 0 }, names: {} };
+let S = { gmail: null, free: null, subs: [], seen: { gmail: [], freeUid: 0 }, badge: { gmail: 0, free: 0 }, names: {}, prefs: { silent: true, quiet: true, quietStart: 22, quietEnd: 7, tz: 'Europe/Paris' }, pending: [] };
 try { S = Object.assign(S, JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'))); } catch (e) {}
 function save() { fs.mkdirSync(C.dataDir, { recursive: true }); fs.writeFileSync(STATE_FILE + '.tmp', JSON.stringify(S)); fs.renameSync(STATE_FILE + '.tmp', STATE_FILE); }
 function enc(txt) { const iv = crypto.randomBytes(12); const c = crypto.createCipheriv('aes-256-gcm', C.encKey, iv); const d = Buffer.concat([c.update(txt, 'utf8'), c.final()]); return [iv, c.getAuthTag(), d].map(b => b.toString('base64')).join('.'); }
@@ -242,6 +242,13 @@ async function push(payload) {
   if (dead.length) { S.subs = S.subs.filter(s => !dead.includes(s.endpoint)); save(); }
 }
 const total = () => (S.badge.gmail || 0) + (S.badge.free || 0);
+function localHour(tz) { try { const p = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hourCycle: 'h23', timeZone: tz }).formatToParts(new Date()).find(x => x.type === 'hour'); return parseInt(p.value, 10) % 24; } catch (e) { return new Date().getHours(); } }
+function isQuiet() {
+  const p = S.prefs || {};
+  if (!p.quiet) return false;
+  const h = localHour(p.tz || 'Europe/Paris'), a = +p.quietStart, b = +p.quietEnd;
+  return a === b ? false : a < b ? (h >= a && h < b) : (h >= a || h < b);
+}
 
 /* ---------- Surveillance ---------- */
 async function pollGmail() {
@@ -308,11 +315,17 @@ async function poll() {
     try { news.push(...await pollFree()); } catch (e) { log('poll Free', e.message); }
     save();
     if (news.length) log('nouveaux mails', news.length, 'pastille', total());
-    if (news.length && S.subs.length) {
-      const one = news.length === 1;
-      await push({ title: one ? news[0].from + (S.free && S.gmail ? ' · ' + (news[0].acc === 'free' ? 'Free' : 'Gmail') : '') : news.length + ' nouveaux mails',
-        body: one ? news[0].subject : news.slice(0, 4).map(n => n.from + ' : ' + n.subject).join('\n'),
-        badge: total(), url: one ? news[0].url : C.appUrl + '#/list/INBOX', tag: 'mailbox-new' });
+    if (news.length && isQuiet()) {
+      // Heures calmes : on garde en attente, résumé au réveil
+      S.pending = (S.pending || []).concat(news).slice(-50); save();
+    } else if ((news.length || (S.pending || []).length) && S.subs.length) {
+      const night = S.pending || [];
+      const all = night.concat(news);
+      S.pending = []; save();
+      const one = all.length === 1;
+      await push({ title: night.length ? all.length + (all.length > 1 ? ' mails reçus' : ' mail reçu') + ' cette nuit' : one ? all[0].from + (S.free && S.gmail ? ' · ' + (all[0].acc === 'free' ? 'Free' : 'Gmail') : '') : all.length + ' nouveaux mails',
+        body: one ? all[0].subject : all.slice(-4).reverse().map(n => n.from + ' : ' + n.subject).join('\n'),
+        badge: total(), url: one ? all[0].url : C.appUrl + '#/list/INBOX', tag: 'mailbox-new', silent: !!(S.prefs && S.prefs.silent) });
     } else if (before !== total()) log('pastille', total());
   } finally { polling = false; }
 }
@@ -325,6 +338,16 @@ const routes = {
   'DELETE /gmail': async () => { S.gmail = null; gTok = null; save(); return { ok: true }; },
   'POST /push/subscribe': async (q, b) => { if (!b.subscription || !b.subscription.endpoint) throw Object.assign(new Error('abonnement invalide'), { code: 400 }); S.subs = S.subs.filter(s => s.endpoint !== b.subscription.endpoint).concat([b.subscription]); save(); return { ok: true, count: S.subs.length }; },
   'POST /push/test': async () => { await push({ title: 'MailBox', body: 'Les notifications fonctionnent.', badge: total(), url: C.appUrl, tag: 'mailbox-test' }); return { ok: true, count: S.subs.length }; },
+  'GET /prefs': async () => S.prefs,
+  'POST /prefs': async (q, b) => {
+    const p = Object.assign({}, S.prefs);
+    if (typeof b.silent === 'boolean') p.silent = b.silent;
+    if (typeof b.quiet === 'boolean') p.quiet = b.quiet;
+    if (Number.isInteger(b.quietStart) && b.quietStart >= 0 && b.quietStart < 24) p.quietStart = b.quietStart;
+    if (Number.isInteger(b.quietEnd) && b.quietEnd >= 0 && b.quietEnd < 24) p.quietEnd = b.quietEnd;
+    if (typeof b.tz === 'string' && b.tz.length < 60) { try { new Intl.DateTimeFormat('fr', { timeZone: b.tz }); p.tz = b.tz; } catch (e) {} }
+    S.prefs = p; save(); return p;
+  },
   'GET /badge': async () => { poll().catch(() => {}); return { gmail: S.badge.gmail, free: S.badge.free, total: total() }; },
   'POST /free/account': async (q, b) => {
     if (!b.email || !b.password) throw Object.assign(new Error('Adresse et mot de passe requis'), { code: 400 });
