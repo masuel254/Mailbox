@@ -284,3 +284,6 @@ details.set .ftog[aria-expanded="true"] .chev{transform:rotate(45deg)}
 .tidy-list .switch small{display:block;color:var(--muted);font-size:.75rem;margin-top:2px}
 .tdot{display:inline-block;width:8px;height:8px;border-radius:4px;margin-right:6px;vertical-align:middle}
 .tidy-list{max-height:58vh}
+.swipe-bg.far{background:#8b1e1a}
+.swipe-bg small{font-size:.7rem;opacity:.8;margin-left:10px}
+.swipe-bg.left{gap:6px}

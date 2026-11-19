@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.8.0';
+const APP_VERSION = '2.9.0';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -494,15 +494,18 @@ function bindListGestures(list) {
     if (!lock && (Math.abs(mx) > 10 || Math.abs(my) > 10)) { clearTimeout(timer); timer = null; lock = Math.abs(mx) > Math.abs(my) * 1.3 && !state.sel ? 'h' : 'v'; }
     if (lock !== 'h') return;
     e.preventDefault();
-    dx = Math.max(-160, Math.min(160, mx));
+    dx = Math.max(-300, Math.min(160, mx));
     if (!bg) {
       bg = document.createElement('div'); bg.className = 'swipe-bg';
       bg.style.top = cur.offsetTop + 'px'; bg.style.height = cur.offsetHeight + 'px';
       list.insertBefore(bg, cur);
     }
     const it = findItem(cur.dataset.id);
-    bg.classList.toggle('left', dx < 0); bg.classList.toggle('on', Math.abs(dx) > 90);
-    bg.innerHTML = dx < 0 ? `<span>${ICON.trash}Supprimer</span>` : `<span>${it && it.unread ? ICON.read + 'Lu' : ICON.unread + 'Non lu'}</span>`;
+    const far = dx < -200;
+    bg.classList.toggle('left', dx < 0); bg.classList.toggle('far', far); bg.classList.toggle('on', Math.abs(dx) > 90);
+    if (far && !bg.dataset.far && navigator.vibrate) navigator.vibrate(8);
+    bg.dataset.far = far ? '1' : '';
+    bg.innerHTML = dx < 0 ? (far ? `<span>${ICON.block}Bloquer l’expéditeur</span>` : `<span>${ICON.trash}Supprimer</span><small>Continue pour bloquer</small>`) : `<span>${it && it.unread ? ICON.read + 'Lu' : ICON.unread + 'Non lu'}</span>`;
     cur.style.transform = 'translateX(' + dx + 'px)';
   }, { passive: false });
   list.addEventListener('touchend', () => {
@@ -510,8 +513,9 @@ function bindListGestures(list) {
     if (lock === 'h' && cur) {
       swiped = true;
       if (Math.abs(dx) > 90) {
-        const a = cur, id = a.dataset.id, it = findItem(id), kind = dx < 0 ? 'trash' : (it && it.unread ? 'read' : 'unread');
+        const a = cur, id = a.dataset.id, it = findItem(id), kind = dx < -200 ? 'block' : dx < 0 ? 'trash' : (it && it.unread ? 'read' : 'unread');
         if (navigator.vibrate) navigator.vibrate(10);
+        if (kind === 'block') { a.style.transition = 'transform .2s'; a.style.transform = 'translateX(-110%)'; quickBlock(it); setTimeout(() => { if (bg) bg.remove(); bg = null; cur = null; lock = null; }, 220); return; }
         if (kind === 'trash') { a.style.transition = 'transform .2s'; a.style.transform = 'translateX(-110%)'; }
         else reset();
         swipeAct(id, kind);
@@ -668,6 +672,35 @@ async function moveExisting(target, lab) {
     n += ids.length; page = r.nextPageToken;
   } while (page && n < 5000);
   return n;
+}
+/* Blocage en un geste (balayage long ou bouton Bloquer d'un mail), avec Annuler */
+async function quickBlock(item) {
+  if (!auth.hasSettingsScope()) return needScope();
+  if (!item || !item.fromEmail) { toast('Expéditeur introuvable'); return; }
+  const t = blockTarget(item.fromEmail);
+  const names = LS.get('blockedNames', {}); names[t] = t.includes('@') ? (item.fromName || t) : brandOf(t); LS.set('blockedNames', names);
+  try {
+    const lab = await blockLabelId();
+    const froms = (((await api('settings/filters')) || {}).filter || []).map(f => (f.criteria && f.criteria.from || '').toLowerCase());
+    let filterId = null;
+    if (!isCovered(t, froms)) filterId = (await api('settings/filters', { method: 'POST', body: { criteria: { from: t }, action: { addLabelIds: [lab], removeLabelIds: ['INBOX', 'UNREAD'] } } })).id;
+    let moved = await moveExisting(t, lab);
+    if (freeOn()) { try { moved += (await rapi('/free/block', { method: 'POST', body: { target: t } })).moved || 0; } catch (e) {} }
+    const hit = e => e && (e.toLowerCase() === t || blockTarget(e) === t);
+    Object.values(state.lists).forEach(d => { d.items = d.items.filter(i => !hit(i.fromEmail)); });
+    reDraw(); updateBadge();
+    undoToast(names[t] + ' bloqué' + (moved > 1 ? ' · ' + moved + ' mails rangés' : ''), async () => {
+      if (filterId) await api('settings/filters/' + filterId, { method: 'DELETE' });
+      let page = null;
+      do {
+        const p = new URLSearchParams({ q: 'from:' + t, labelIds: lab, maxResults: 500 }); if (page) p.set('pageToken', page);
+        const r = (await api('messages?' + p.toString())) || {};
+        const ids = (r.messages || []).map(m => m.id);
+        if (ids.length) await api('messages/batchModify', { method: 'POST', body: { ids, addLabelIds: ['INBOX'], removeLabelIds: [lab] } });
+        page = r.nextPageToken;
+      } while (page);
+    });
+  } catch (e) { if (e.message === 'scope') needScope(); else if (e.message !== 'auth') toast('Échec : ' + e.message); reDraw(); }
 }
 function blockSheet(ids, extra) {
   if (!auth.hasSettingsScope()) return needScope();
@@ -863,6 +896,7 @@ async function renderThread(id) {
     <div class="toolbar">
       <button id="t-archive">${ICON.archive}Archiver</button>
       <button id="t-label">${ICON.tag}Classer</button>
+      <button id="t-block">${ICON.block}Bloquer</button>
       <button id="t-trash">${ICON.trash}Supprimer</button>
       <button id="t-unread">${ICON.unread}Non lu</button>
       <button id="t-star" aria-pressed="${starred}">${starred ? ICON.starOn : ICON.star}${starred ? 'Suivi' : 'Suivre'}</button>
@@ -892,6 +926,7 @@ async function renderThread(id) {
     } catch (e) { if (e.message !== 'auth') toast(e.message); }
   };
   $('#t-label').onclick = () => labelSheet(id, labels);
+  $('#t-block').onclick = () => { const it = Object.assign({ id }, summarize(t)); goBack(); quickBlock(it); };
   const un = $('#t-unsub'); if (un) un.onclick = () => unsubscribe(unsubH, unsubP, 'gmail', (hdr(lastM, 'From').match(/^\s*"?([^"<]*?)"?\s*</) || [])[1] || hdr(lastM, 'From'));
 }
 async function renderFree(folder, uid) {
@@ -931,7 +966,7 @@ async function renderFree(folder, uid) {
   $('#t-archive').onclick = () => move('ARCHIVE', 'Archivé');
   $('#t-trash').onclick = () => move('TRASH', 'Placé dans la corbeille');
   $('#t-unread').onclick = async () => { try { await rapi('/free/flags', { method: 'POST', body: { folder, uids: [uid], seen: false } }); patchCached(id, i => Object.assign({}, i, { unread: true })); toast('Marqué non lu'); updateBadge(); goBack(); } catch (e) { toast(e.message); } };
-  $('#t-block').onclick = () => blockSheet([id], [{ id, fromEmail: m.from.email, fromName: m.from.name }]);
+  $('#t-block').onclick = () => { goBack(); quickBlock({ id, fromEmail: m.from.email, fromName: m.from.name }); };
   const un = $('#t-unsub'); if (un) un.onclick = () => unsubscribe(m.unsub, m.unsubPost, 'free', m.from.name || m.from.email);
   $('#r-reply').onclick = () => openCompose('reply', null, m);
   $('#r-all').onclick = () => openCompose('all', null, m);
