@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.3.0';
+const APP_VERSION = '2.4.0';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -1237,7 +1237,9 @@ function renderSettings() {
   const connected = !!LS.get('token', null) || relayGmailOn();
   $('#view').innerHTML = `
     <div class="top"><h1>Réglages</h1></div>
-    <h2 class="h2">Comptes</h2>
+    <details class="set" data-set="blocked" open><summary><span class="set-t">Expéditeurs bloqués</span><span class="chev" aria-hidden="true"></span></summary>
+    <section class="card" id="s-blocked"><p>Chargement…</p></section></details>
+    <details class="set" data-set="accounts"><summary><span class="set-t">Comptes</span><span class="set-s">${connected ? '<i style="background:var(--gmail)"></i>Gmail' : 'Gmail non connecté'}${freeOn() ? ' <i style="background:var(--free)"></i>Free' : ''}</span><span class="chev" aria-hidden="true"></span></summary>
     <section class="card">
       <h3><span class="dot" style="background:var(--gmail)"></span>Gmail<span class="st" style="color:${connected ? 'var(--ok)' : 'var(--muted)'}">${connected ? 'Connecté' : 'Non connecté'}</span></h3>
       ${settings.email ? `<p>${esc(settings.email)}</p>` : ''}
@@ -1245,24 +1247,22 @@ function renderSettings() {
       <label class="f">Identifiant Google (Client ID)<input id="s-cid" value="${esc(settings.clientId)}" placeholder="xxxx.apps.googleusercontent.com" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
       ${connected ? '<button class="btn" id="s-logout">Se déconnecter</button>' : '<button class="btn primary" id="s-login">Se connecter avec Google</button>'}
     </section>
-    <section class="card" id="s-free"></section>
-    <h2 class="h2">Serveur relais</h2>
+    <section class="card" id="s-free"></section></details>
+    <details class="set" data-set="relay"><summary><span class="set-t">Relais et notifications</span><span class="set-s">${relayOn() ? 'Connecté' : 'Non connecté'}</span><span class="chev" aria-hidden="true"></span></summary>
     <section class="card" id="s-relay">
       <p>Ton serveur personnel : Gmail connecté en permanence, notifications et pastille en temps réel, boîte Free.</p>
       <label class="f">Adresse du relais<input id="s-rurl" value="${esc(settings.relayUrl)}" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url"></label>
       <label class="f">Code d'accès<input id="s-rtok" type="password" value="${esc(settings.relayToken)}" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="affiché à la fin de l'installation"></label>
       <button class="btn ${relayOn() ? '' : 'primary'}" id="s-rconn">${relayOn() ? 'Vérifier la connexion' : 'Connecter le relais'}</button>
       <div id="s-rstate" style="display:flex;flex-direction:column;gap:10px"></div>
-    </section>
-    <h2 class="h2">Expéditeurs bloqués</h2>
-    <section class="card" id="s-blocked"><p>Chargement…</p></section>
-    <h2 class="h2" ${relayOn() ? 'hidden' : ''}>Pastille sur l'icône</h2>
+    </section></details>
+    <details class="set" data-set="badge" ${relayOn() ? 'hidden' : ''}><summary><span class="set-t">Pastille sur l'icône</span><span class="chev" aria-hidden="true"></span></summary>
     <section class="card" ${relayOn() ? 'hidden' : ''}>
       <p>Affiche le nombre de mails non lus sur l'icône de l'appli. iOS exige pour cela l'autorisation des notifications, et l'appli doit être installée sur l'écran d'accueil.</p>
       <p id="s-badge-state" style="font-weight:650;color:var(--text)"></p>
       <button class="btn primary" id="s-badge">Activer la pastille</button>
-    </section>
-    <h2 class="h2">Affichage</h2>
+    </section></details>
+    <details class="set" data-set="display"><summary><span class="set-t">Affichage</span><span class="set-s">${settings.fontSize} px · ${({ light: 'Clair', dark: 'Sombre', auto: 'Auto' })[settings.theme] || ''}</span><span class="chev" aria-hidden="true"></span></summary>
     <section class="card">
       <label class="f"><span>Taille du texte : <b id="s-fs-v">${settings.fontSize}</b> px</span><input type="range" id="s-fs" min="15" max="26" step="1" value="${settings.fontSize}"></label>
       <p class="sample">Aperçu : Point MRP V3 jeudi 10h</p>
@@ -1271,14 +1271,22 @@ function renderSettings() {
       </div>
       <label class="switch">Mode lisible par défaut<input type="checkbox" id="s-read" ${settings.readable ? 'checked' : ''}></label>
       <label class="switch">Afficher les images des mails<input type="checkbox" id="s-img" ${settings.images ? 'checked' : ''}></label>
-    </section>
-    <h2 class="h2">Application</h2>
+    </section></details>
+    <details class="set" data-set="app"><summary><span class="set-t">Application</span><span class="set-s">v${esc(APP_VERSION)}</span><span class="chev" aria-hidden="true"></span></summary>
     <section class="card">
       <h3>Version ${esc(APP_VERSION)}<span class="st" style="color:var(--muted)">${esc(APP_DATE)}</span></h3>
       <p id="s-upd-state">Les mises à jour sont vérifiées à chaque ouverture.</p>
       <button class="btn primary" id="s-upd">Rechercher une mise à jour</button>
       <button class="btn" id="s-force">Forcer l'actualisation</button>
-    </section>`;
+    </section></details>`;
+  // mémorise les sections ouvertes
+  let openSets = null; try { openSets = JSON.parse(localStorage.getItem('ml-sets') || 'null'); } catch (e) {}
+  if (hq.get('relay')) openSets = Object.assign({}, openSets || {}, { relay: true });
+  $$('details.set').forEach(d => {
+    const k = d.dataset.set;
+    if (openSets && k in openSets) d.open = !!openSets[k];
+    d.addEventListener('toggle', () => { let o = {}; try { o = JSON.parse(localStorage.getItem('ml-sets') || '{}'); } catch (e) {} o[k] = d.open; try { localStorage.setItem('ml-sets', JSON.stringify(o)); } catch (e) {} });
+  });
   $('#s-cid').onchange = e => { settings.clientId = e.target.value.trim(); saveSettings(); toast('Identifiant enregistré'); };
   const li = $('#s-login'); if (li) li.onclick = () => { settings.clientId = $('#s-cid').value.trim(); saveSettings(); LS.set('returnTo', '#/list/INBOX'); location.hash = '#/list/INBOX'; };
   const lo = $('#s-logout'); if (lo) lo.onclick = () => { auth.logout(); settings.email = ''; saveSettings(); state.lists = {}; renderSettings(); toast('Déconnecté'); };

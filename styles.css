@@ -208,3 +208,16 @@ body.selecting .item.sel .mark::after{content:"";width:10px;height:6px;border-le
 .chip.acc-gmail{border-color:var(--gmail);color:var(--gmail)}
 .chip.acc-free{border-color:var(--free);color:var(--free)}
 .accounts{margin-bottom:8px}
+/* Réglages en accordéons */
+details.set{margin:0 0 10px}
+details.set>summary{list-style:none;display:flex;align-items:center;gap:10px;min-height:54px;padding:0 16px;background:var(--surface);border-radius:14px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+details.set>summary::-webkit-details-marker{display:none}
+details.set[open]>summary{border-radius:14px 14px 0 0;border-bottom:1px solid var(--line)}
+details.set .set-t{font-weight:750;font-size:1rem;color:var(--text);flex:1;min-width:0}
+details.set .set-s{font-size:.78rem;color:var(--muted);display:flex;align-items:center;gap:5px;white-space:nowrap}
+details.set .set-s i{display:inline-block;width:8px;height:8px;border-radius:4px}
+details.set .chev{width:9px;height:9px;border-right:2.5px solid var(--accent);border-bottom:2.5px solid var(--accent);transform:rotate(45deg);transition:transform .2s;margin:0 4px 4px 2px;flex:none}
+details.set[open] .chev{transform:rotate(-135deg);margin-bottom:-4px}
+details.set>.card{border-radius:0;margin:0}
+details.set>.card+.card{border-top:1px solid var(--line)}
+details.set>.card:last-child{border-radius:0 0 14px 14px}
