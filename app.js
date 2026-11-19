@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.9.7';
+const APP_VERSION = '2.9.8';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -1342,16 +1342,17 @@ function tidySheet(g, f) {
       <div class="tidy-list">
         <h3 class="tidy-h">Dossiers vides · ${dels.length}</h3>
         ${dels.length ? dels.map(l => `<label class="switch"><span><span class="dot tdot" style="background:var(--${l.x.acc})"></span>Supprimer <b>${esc(disp(l.x).split('/').join(' › '))}</b></span><input type="checkbox" data-i="${lines.indexOf(l)}" ${l.on ? 'checked' : ''}></label>`).join('') : '<p class="fhint">Aucun dossier vide.</p>'}
-        <h3 class="tidy-h">Proposition de l'IA${ai.length ? ' · ' + ai.length : ''}</h3>
+        <h3 class="tidy-h">Proposition de l'IA${ai.length ? ' · ' + ai.length + ` <button class="sec-btn" id="tidy-toggle" type="button">${ai.every(l => l.on) ? 'Tout décocher' : 'Tout cocher'}</button>` : ''}</h3>
         ${ai.length ? ai.map(l => `<label class="switch"><span><span class="dot tdot" style="background:var(--${l.acc})"></span>${l.kind === 'merge' ? 'Fusionner' : 'Déplacer'} <b>${esc(l.from.split('/').join(' › '))}</b> → <b>${esc(l.to.split('/').join(' › '))}</b>${l.why ? `<small>${esc(l.why)}</small>` : ''}</span><input type="checkbox" data-i="${lines.indexOf(l)}" ${l.on ? 'checked' : ''}></label>`).join('')
-          : settings.ai ? `<button class="btn" id="tidy-ai" type="button">✦ Proposer un rangement</button><p class="fhint">L’IA ne reçoit que les noms de tes dossiers et leur nombre de mails. Rien n’est appliqué sans ta validation, et aucun mail n’est supprimé.</p>`
+          : settings.ai ? `<button class="btn primary" id="tidy-themes" type="button">✦ Remplacer INBOX par des thèmes</button><button class="btn" id="tidy-ai" type="button">✦ Proposer un rangement général</button><p class="fhint">L’IA ne reçoit que les noms de tes dossiers et leur nombre de mails. Rien n’est appliqué sans ta validation, et aucun mail n’est supprimé.</p>`
           : '<p class="fhint">Active l’assistant IA dans Réglages › Relais et notifications pour obtenir une proposition.</p>'}
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="tidy-ok">Appliquer (${lines.filter(l => l.on).length})</button></div>`);
     $$('.tidy-list input[data-i]').forEach(c => c.onchange = () => { lines[+c.dataset.i].on = c.checked; $('#tidy-ok').textContent = 'Appliquer (' + lines.filter(l => l.on).length + ')'; });
-    const ab = $('#tidy-ai'); if (ab) ab.onclick = async () => {
-      ab.disabled = true; ab.textContent = 'L’IA étudie tes dossiers…';
-      const ask = (list, acc) => list.length ? rapi('/ai/folders', { method: 'POST', body: { folders: list.map(x => ({ name: disp(x), n: x.m })) } }).then(r => (r.actions || []).map(a => ({ kind: a.type, acc, from: a.from, to: a.to, why: a.why, on: true, x: list.find(x => disp(x) === a.from) }))) : Promise.resolve([]);
+    const tt = $('#tidy-toggle'); if (tt) tt.onclick = () => { const ai = lines.filter(l => l.kind !== 'del'), v = !ai.every(l => l.on); ai.forEach(l => l.on = v); draw(); };
+    const runAI = async (ab, focus) => {
+      $$('#tidy-ai,#tidy-themes').forEach(x => x.disabled = true); ab.textContent = 'L’IA étudie tes dossiers…';
+      const ask = (list, acc) => list.length ? rapi('/ai/folders', { method: 'POST', body: { folders: list.map(x => ({ name: disp(x), n: x.m })), focus } }).then(r => (r.actions || []).map(a => ({ kind: a.type, acc, from: a.from, to: a.to, why: a.why, on: true, x: list.find(x => disp(x) === a.from) }))) : Promise.resolve([]);
       try {
         const [ga, fa] = await Promise.all([ask(g.filter(x => x.m !== 0), 'gmail'), ask(f.filter(x => x.m !== 0), 'free').catch(e => { toast('Free : ' + e.message); return []; })]);
         lines.push(...ga, ...fa);
@@ -1359,6 +1360,8 @@ function tidySheet(g, f) {
       } catch (e) { toast('IA : ' + e.message); }
       draw();
     };
+    const ab = $('#tidy-ai'); if (ab) ab.onclick = () => runAI(ab, '');
+    const at = $('#tidy-themes'); if (at) at.onclick = () => runAI(at, 'themes');
     $('#tidy-ok').onclick = async () => {
       const todo = lines.filter(l => l.on); if (!todo.length) { closeSheet(); return; }
       const b = $('#tidy-ok'); b.disabled = true; $$('.tidy-list input').forEach(c => c.disabled = true);

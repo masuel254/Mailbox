@@ -293,3 +293,5 @@ details.set .ftog[aria-expanded="true"] .chev{transform:rotate(45deg)}
 .sticky-head .searchbar{margin-bottom:8px}
 .fswipe{border-radius:0}
 .back-sm{min-height:34px;margin:0 0 -2px -6px;font-size:.95rem}
+#tidy-themes,#tidy-ai{margin-top:6px}
+.tidy-h{display:flex;align-items:center;gap:8px}

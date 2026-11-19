@@ -244,7 +244,7 @@ async function aiJSON(sys, user, maxTokens) {
   };
   return (await call(C.aiModel, /gpt-oss/.test(C.aiModel) ? { reasoning_effort: 'low', include_reasoning: false } : {})) || (await call('llama-3.3-70b-versatile', {}));
 }
-async function aiFolders(list) {
+async function aiFolders(list, focus) {
   if (!S.ai) throw Object.assign(new Error('IA non configurée'), { code: 400 });
   const names = list.filter(x => x && typeof x.name === 'string').slice(0, 400);
   const sys = 'Tu aides à ranger des dossiers de messagerie personnels. Tu reçois la liste des dossiers (chemin, sous-dossiers séparés par « / », et nombre de mails). ' +
@@ -253,13 +253,14 @@ async function aiFolders(list) {
     'Règles : ne supprime jamais de mails ; ne touche pas au dossier « Indésirables » ; garde les noms choisis par l’utilisateur sauf doublon évident ; ' +
     'sors du niveau « INBOX/ » ou « [Imap]/ » les dossiers personnels rangés dessous par un ancien logiciel ; fusionne les doublons (même nom à la casse près, mêmes thèmes évidents) ; ' +
     'regroupe sous quelques grands thèmes en français (ex. Administratif, Travail, Famille, Voyages, Maison, Achats) seulement si cela réduit nettement le nombre de dossiers au premier niveau ; ' +
-    'n’agis pas sur les dossiers vides (ils sont traités à part) ; 40 actions maximum, les plus utiles d’abord ; "from" doit être recopié exactement depuis la liste.';
+    'n’agis pas sur les dossiers vides (ils sont traités à part) ; ' + (focus === 'themes' ? '80' : '40') + ' actions maximum, les plus utiles d’abord ; "from" doit être recopié exactement depuis la liste.' +
+    (focus === 'themes' ? ' PRIORITÉ : remplace le regroupement « INBOX/ » (et « [Imap]/ », « [Gmail]/ » s’ils contiennent des dossiers personnels) par 5 à 8 grands thèmes en français adaptés aux noms rencontrés (par exemple Administratif, Banque & Assurances, Travail, Famille, Voyages, Maison, Santé, Achats). Chaque dossier situé sous INBOX/ doit recevoir une action "move" vers « Thème/NomDuDossier ». Range aussi dans ces thèmes les dossiers de premier niveau qui s’y rattachent clairement (ex. ASSURANCES → Banque & Assurances/Assurances). Ne crée pas de thème pour un seul dossier.' : '');
   const user = names.map(x => x.name + ' (' + (x.n >= 0 ? x.n : '?') + ')').join('\n');
   const out = await aiJSON(sys, user, 6000);
   if (!out || !Array.isArray(out.actions)) throw Object.assign(new Error('Réponse de l’IA illisible, réessaie'), { code: 502 });
   const known = new Set(names.map(x => x.name));
   const acts = out.actions.filter(a => a && (a.type === 'move' || a.type === 'merge') && known.has(a.from) && typeof a.to === 'string' && a.to.trim() && a.to.trim() !== a.from && a.from !== BLOCK_LABEL && !a.to.startsWith(BLOCK_LABEL))
-    .slice(0, 40).map(a => ({ type: a.type, from: a.from, to: a.to.trim().replace(/\s*\/\s*/g, '/').replace(/^\/|\/$/g, ''), why: String(a.why || '').slice(0, 120) }));
+    .slice(0, focus === 'themes' ? 80 : 40).map(a => ({ type: a.type, from: a.from, to: a.to.trim().replace(/\s*\/\s*/g, '/').replace(/^\/|\/$/g, ''), why: String(a.why || '').slice(0, 120) }));
   return { actions: acts };
 }
 async function aiSearch(question, today) {
@@ -622,7 +623,7 @@ const routes = {
     if (!r || r.status === 401) throw Object.assign(new Error('Clé refusée par Groq'), { code: 400 });
     S.ai = { key: enc(k) }; save(); return { ok: true, ai: true };
   },
-  'POST /ai/folders': async (q, b) => aiFolders(Array.isArray(b.folders) ? b.folders : []),
+  'POST /ai/folders': async (q, b) => aiFolders(Array.isArray(b.folders) ? b.folders : [], b.focus),
   'POST /free/folder-rename': async (q, b) => withImap(async client => {
     const from = String(b.from || ''), to = String(b.to || '');
     if (!from || !to || from === 'INBOX' || from === BLOCK_LABEL) throw Object.assign(new Error('Dossier protégé'), { code: 400 });
