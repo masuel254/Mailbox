@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.9.0';
+const APP_VERSION = '2.9.1';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -286,7 +286,7 @@ async function renderList(key, q) {
   const acc = isFreeDir ? 'free' : freeOn() && (isSearch || freeFolderOf(key)) ? curAcc() : 'gmail';
   const cacheKey = (acc !== 'gmail' ? acc + '|' : '') + (isSearch ? 'S:' + q : key);
   state.current = cacheKey;
-  v.innerHTML = `
+  v.innerHTML = `<div class="sticky-head">
     <div class="top">
       <h1>${esc(key === 'INBOX' ? 'Réception' : title)}</h1>
       <button class="icon-btn" id="btn-select" aria-label="Sélectionner plusieurs mails">${ICON.check}</button>
@@ -302,7 +302,7 @@ async function renderList(key, q) {
       if (!inboxish) return accs;
       const pill = `<a class="unr-pill ${key === 'UNREAD' ? 'on' : ''}" href="#/list/${key === 'UNREAD' ? 'INBOX' : 'UNREAD'}" aria-pressed="${key === 'UNREAD'}">Non lus<span class="fcount" id="fcount"></span></a>`;
       return `<div class="tabrow">${accs || '<div class="accounts one"><button class="on" aria-selected="true">Réception</button></div>'}${pill}</div>`;
-    })()}
+    })()}</div>
     ${isSearch && state.aiNote && state.aiNote.q === q ? `<div class="ai-note"><b>✦ ${esc(state.aiNote.resume || 'Recherche de l’assistant')}</b><span>« ${esc(state.aiNote.ask)} » → <code>${esc(q)}</code></span><a href="#/search/${encodeURIComponent(state.aiNote.ask)}" id="ai-raw">Chercher les mots exacts</a></div>` : ''}
     ${isFolderView(key) ? `<div class="banner"><span style="display:flex;flex-direction:column;gap:2px"><span>${title === BLOCK_LABEL ? 'Mails des expéditeurs bloqués' : 'Dossier « ' + esc(title) + ' »'}</span><b id="lab-size" style="color:var(--accent)">Calcul de la taille…</b></span><button class="btn danger" id="btn-empty">${ICON.trash}Tout supprimer</button></div>` : ''}
     <div id="list"><div class="loading">Chargement…</div></div>`;
@@ -1376,8 +1376,8 @@ function tidySheet(g, f) {
 }
 async function renderLabels() {
   const v = $('#view');
-  v.innerHTML = `<div class="top"><h1>Dossiers</h1><button class="btn tidy-btn" id="btn-tidy">Ranger</button><button class="icon-btn" id="btn-refresh" aria-label="Actualiser">${ICON.refresh}</button></div>
-    <div class="searchbar"><input type="search" id="fq" placeholder="Chercher un dossier" autocomplete="off" enterkeyhint="search"></div>
+  v.innerHTML = `<div class="sticky-head"><div class="top"><h1>Dossiers</h1><button class="btn tidy-btn" id="btn-tidy">Ranger</button><button class="icon-btn" id="btn-refresh" aria-label="Actualiser">${ICON.refresh}</button></div>
+    <div class="searchbar"><input type="search" id="fq" placeholder="Chercher un dossier" autocomplete="off" enterkeyhint="search"></div></div>
     <a class="set-link" href="#/waiting"><span class="set-t">⏳ En attente de réponse</span><span class="set-s">Suivi Gmail + Free</span><span class="chev-r" aria-hidden="true"></span></a>
     <div id="labs"><div class="loading">Chargement…</div></div>`;
   $('#btn-refresh').onclick = () => { state.folders = null; renderLabels(); };
