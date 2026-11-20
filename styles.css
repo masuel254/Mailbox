@@ -312,3 +312,7 @@ details.set .ftog[aria-expanded="true"] .chev{transform:rotate(45deg)}
 /* Le plan de rangement défile : ses blocs ne doivent jamais être écrasés */
 .tidy-list>*{flex-shrink:0}
 .tidy-list{max-height:62vh;-webkit-overflow-scrolling:touch}
+.tedit{background:none;border:1px solid var(--line);color:var(--accent);border-radius:8px;width:32px;height:30px;flex:none;font-size:.95rem;cursor:pointer}
+.tedit-box{padding:10px 12px;border-top:1px solid var(--line);background:var(--card);display:flex;flex-direction:column;gap:8px}
+.tedit-box .btn{flex:1;height:40px}
+.tgroup .tedit-box input,.tgroup .tedit-box select{width:100%;height:46px;flex:auto}

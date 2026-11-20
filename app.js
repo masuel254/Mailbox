@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.10.7';
+const APP_VERSION = '2.10.8';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -1392,6 +1392,7 @@ async function tidySheet(g, f) {
   const ok = await pool(cand, 6, x => x.acc === 'gmail' ? gIsEmpty(x.id).catch(() => false) : Promise.resolve(true));
   const lines = cand.filter((x, i) => ok[i]).map(x => ({ kind: 'del', x, on: true }));
   const draw = () => {
+    const sc = ($('.tidy-list') || {}).scrollTop || 0;
     const dels = lines.filter(l => l.kind === 'del'), ai = lines.filter(l => l.kind !== 'del');
     openSheet(`<span class="grip"></span><h2>Ranger mes dossiers</h2>
       <div class="tidy-list">
@@ -1401,15 +1402,56 @@ async function tidySheet(g, f) {
         ${ai.length ? (() => {
           // regroupé par dossier d'arrivée : un bloc par thème, une ligne courte par dossier déplacé
           const groups = new Map();
-          ai.forEach(l => { const parts = l.to.split('/'); const dest = (l.kind === 'merge' ? parts : parts.slice(0, -1)).join(' › ') || 'Premier niveau'; const k = l.acc + '|' + dest; if (!groups.has(k)) groups.set(k, { acc: l.acc, dest, items: [] }); groups.get(k).items.push(l); });
-          return [...groups.values()].map(gr => `<div class="tgroup"><div class="tgroup-h"><span class="dot tdot" style="background:var(--${gr.acc})"></span><span>→ ${esc(gr.dest)}</span><small>${gr.items.length}</small><input type="checkbox" class="tg-all" data-g="${esc(gr.acc + '|' + gr.dest)}" ${gr.items.every(l => l.on) ? 'checked' : ''} aria-label="Tout le groupe"></div>
-            ${gr.items.map(l => { const fp = l.from.split('/'), leaf = fp.pop(), np = l.to.split('/').pop(); return `<label class="trow"><span class="tname"><span class="tl"><b>${esc(leaf)}</b>${l.kind === 'merge' ? ' <em>fusionné</em>' : np !== leaf ? ' <em>→ ' + esc(np) + '</em>' : ''}</span><small>${esc(fp.length ? 'depuis ' + fp.join(' › ') : 'depuis le premier niveau')}</small></span><input type="checkbox" data-i="${lines.indexOf(l)}" data-gk="${esc(gr.acc + '|' + gr.dest)}" ${l.on ? 'checked' : ''}></label>`; }).join('')}</div>`).join('');
+          ai.forEach(l => { const parts = l.to.split('/'); const raw = (l.kind === 'merge' ? parts : parts.slice(0, -1)).join('/'); const dest = raw.split('/').join(' › ') || 'Premier niveau'; const k = l.acc + '|' + dest; if (!groups.has(k)) groups.set(k, { acc: l.acc, dest, raw, items: [] }); groups.get(k).items.push(l); });
+          return [...groups.values()].map(gr => `<div class="tgroup"><div class="tgroup-h"><span class="dot tdot" style="background:var(--${gr.acc})"></span><span>→ ${esc(gr.dest)}</span><button class="tedit" type="button" data-gedit="${esc(gr.acc + '|' + gr.raw)}" aria-label="Renommer ce thème">✎</button><small>${gr.items.length}</small><input type="checkbox" class="tg-all" data-g="${esc(gr.acc + '|' + gr.dest)}" ${gr.items.every(l => l.on) ? 'checked' : ''} aria-label="Tout le groupe"></div>
+            ${gr.items.map(l => { const fp = l.from.split('/'), leaf = fp.pop(), np = l.to.split('/').pop(); return `<label class="trow"><span class="tname"><span class="tl"><b>${esc(leaf)}</b>${l.kind === 'merge' ? ' <em>fusionné</em>' : np !== leaf ? ' <em>→ ' + esc(np) + '</em>' : ''}</span><small>${esc(fp.length ? 'depuis ' + fp.join(' › ') : 'depuis le premier niveau')}</small></span><button class="tedit" type="button" data-edit="${lines.indexOf(l)}" aria-label="Changer la destination">✎</button><input type="checkbox" data-i="${lines.indexOf(l)}" data-gk="${esc(gr.acc + '|' + gr.dest)}" ${l.on ? 'checked' : ''}></label>`; }).join('')}</div>`).join('');
         })()
           : settings.ai ? `<button class="btn primary" id="tidy-themes" type="button">✦ Remplacer INBOX par des thèmes</button><button class="btn" id="tidy-ai" type="button">✦ Proposer un rangement général</button><p class="fhint">L’IA ne reçoit que les noms de tes dossiers et leur nombre de mails. Rien n’est appliqué sans ta validation, et aucun mail n’est supprimé.</p>`
           : '<p class="fhint">Active l’assistant IA dans Réglages › Relais et notifications pour obtenir une proposition.</p>'}
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="tidy-ok">Appliquer (${lines.filter(l => l.on).length})</button></div>`);
+    if (sc && $('.tidy-list')) $('.tidy-list').scrollTop = sc;
     $$('.tidy-list input[data-i]').forEach(c => c.onchange = () => { lines[+c.dataset.i].on = c.checked; $('#tidy-ok').textContent = 'Appliquer (' + lines.filter(l => l.on).length + ')'; });
+    // Modifier une proposition : autre thème, nouveau thème ou autre nom
+    $$('.tidy-list [data-edit]').forEach(b => b.onclick = e => {
+      e.preventDefault(); e.stopPropagation();
+      const l = lines[+b.dataset.edit], row = b.closest('.trow');
+      if (row.nextElementSibling && row.nextElementSibling.classList.contains('tedit-box')) { row.nextElementSibling.remove(); return; }
+      const parts = l.to.split('/'), curDest = (l.kind === 'merge' ? parts : parts.slice(0, -1)).join('/'), curName = l.kind === 'merge' ? l.from.split('/').pop() : parts[parts.length - 1];
+      const themes = new Set(lines.filter(x => x.kind !== 'del' && x.acc === l.acc).map(x => { const p = x.to.split('/'); return (x.kind === 'merge' ? p : p.slice(0, -1)).join('/'); }).filter(Boolean));
+      (l.acc === 'gmail' ? g : f).forEach(x => { if (!x.full.includes(x.delim || '/') && x.full !== BLOCK_LABEL && x.full !== l.from) themes.add(x.full); });
+      const box = document.createElement('div'); box.className = 'tedit-box';
+      box.innerHTML = `<label class="f">Ranger dans<select class="te-dest"><option value="">— Premier niveau —</option>${[...themes].sort((a, c) => a.localeCompare(c, 'fr')).map(t => `<option value="${esc(t)}" ${t === curDest ? 'selected' : ''}>${esc(t.split('/').join(' › '))}</option>`).join('')}<option value="__new">＋ Nouveau thème…</option></select></label>
+        <label class="f te-newl" hidden>Nom du nouveau thème<input class="te-new" autocomplete="off" placeholder="ex. Maison"></label>
+        <label class="f">Nom du dossier<input class="te-name" value="${esc(curName)}" autocomplete="off"></label>
+        <div style="display:flex;gap:8px"><button class="btn" type="button" data-x>Annuler</button><button class="btn primary" type="button" data-ok>Valider</button></div>`;
+      row.after(box);
+      const sel = $('.te-dest', box); sel.onchange = () => { $('.te-newl', box).hidden = sel.value !== '__new'; if (sel.value === '__new') $('.te-new', box).focus(); };
+      $('[data-x]', box).onclick = () => box.remove();
+      $('[data-ok]', box).onclick = () => {
+        const dest = sel.value === '__new' ? $('.te-new', box).value.trim().replace(/\s*\/\s*/g, '/') : sel.value;
+        const name = $('.te-name', box).value.trim().replace(/[\/]/g, '-');
+        if (!name || (sel.value === '__new' && !dest)) { toast('Complète le nom'); return; }
+        l.kind = 'move'; l.to = dest ? dest + '/' + name : name; l.on = l.to !== l.from; l.why = 'modifié par toi';
+        draw();
+      };
+    });
+    // Renommer tout un thème proposé
+    $$('.tidy-list [data-gedit]').forEach(b => b.onclick = e => {
+      e.preventDefault(); e.stopPropagation();
+      const [acc, raw] = [b.dataset.gedit.split('|')[0], b.dataset.gedit.slice(b.dataset.gedit.indexOf('|') + 1)];
+      const head = b.closest('.tgroup-h');
+      if (head.nextElementSibling && head.nextElementSibling.classList.contains('tedit-box')) { head.nextElementSibling.remove(); return; }
+      const box = document.createElement('div'); box.className = 'tedit-box';
+      box.innerHTML = `<label class="f">Nouveau nom du thème<input class="te-name" value="${esc(raw)}" autocomplete="off"></label><div style="display:flex;gap:8px"><button class="btn" type="button" data-x>Annuler</button><button class="btn primary" type="button" data-ok>Renommer</button></div>`;
+      head.after(box);
+      $('[data-x]', box).onclick = () => box.remove();
+      $('[data-ok]', box).onclick = () => {
+        const nv = $('.te-name', box).value.trim().replace(/\s*\/\s*/g, '/'); if (!nv) return;
+        lines.filter(x => x.kind !== 'del' && x.acc === acc).forEach(x => { if (x.to === raw) x.to = nv; else if (x.to.startsWith(raw + '/')) x.to = nv + x.to.slice(raw.length); });
+        draw();
+      };
+    });
     $$('.tidy-list .tg-all').forEach(c => c.onchange = () => { $$('.tidy-list input[data-gk]').filter(x => x.dataset.gk === c.dataset.g).forEach(x => { x.checked = c.checked; lines[+x.dataset.i].on = c.checked; }); $('#tidy-ok').textContent = 'Appliquer (' + lines.filter(l => l.on).length + ')'; });
     const tt = $('#tidy-toggle'); if (tt) tt.onclick = () => { const ai = lines.filter(l => l.kind !== 'del'), v = !ai.every(l => l.on); ai.forEach(l => l.on = v); draw(); };
     const runAI = async (ab, focus) => {
