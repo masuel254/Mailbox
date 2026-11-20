@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.6.5';
+const APP_VERSION = '3.6.6';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -37,7 +37,7 @@ function toast(msg, action) {
   if (action) { const b = document.createElement('button'); b.type = 'button'; b.textContent = action.label; b.onclick = () => { t.classList.remove('show'); clearTimeout(toastTimer); action.run(); }; t.appendChild(b); }
   t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), action ? 6000 : 2600);
 }
-const undoToast = (msg, undo) => toast(msg, { label: 'Annuler', run: async () => { try { await undo(); toast('Action annulée'); } catch (e) { toast('Annulation impossible : ' + e.message); } Object.keys(state.lists).forEach(k => delete state.lists[k]); route(); badgeNow(0); } });
+const undoToast = (msg, undo) => toast(msg, { label: 'Annuler', run: async () => { try { await undo(); gone.clear(); toast('Action annulée'); } catch (e) { toast('Annulation impossible : ' + e.message); } Object.keys(state.lists).forEach(k => delete state.lists[k]); route(); badgeNow(0); } });
 const ICON = {
   folder: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
   clock: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
@@ -476,8 +476,14 @@ function itemHTML(it, cls, sentView) {
       <span class="row3"><span class="snip">${esc(it.snippet)}</span><span class="chips">${it.att && !attSize ? '<span class="chip att-chip" title="Pièce jointe">📎</span>' : ''}${sizeChip}${accChip}${chips}</span></span>
     </span></a>`;
 }
+/* Mails tout juste supprimés ou bloqués : masqués pendant 30 s, le temps que Gmail/Free le confirment,
+   pour qu'un rafraîchissement arrivé entre-temps ne les fasse pas réapparaître */
+const gone = new Map();
+const hideGone = ids => { const t = Date.now() + 30000; ids.forEach(id => gone.set(id, t)); };
+const isGone = id => { const t = gone.get(id); if (!t) return false; if (t < Date.now()) { gone.delete(id); return false; } return true; };
 function drawList(data, plain) {
   const l = $('#list'); if (!l) return;
+  if (gone.size && data.items.some(i => isGone(i.id))) data = Object.assign({}, data, { items: data.items.filter(i => !isGone(i.id)) });
   state.showAcc = freeOn(); state.dayMode = false;
   if (!data.items.length) { l.innerHTML = $('#subdirs') && $('#subdirs').innerHTML ? '<div class="empty">Aucun mail directement dans ce dossier : ouvre un sous-dossier ci-dessus.</div>' : '<div class="empty">Aucun message ici.</div>'; return; }
   // Recherche par taille (larger:) : du plus gros au plus petit, taille affichée
@@ -671,8 +677,9 @@ function collapseRow(a) {
 function findItem(id) { for (const d of Object.values(state.lists)) { const i = d.items.find(x => x.id === id); if (i) return i; } return null; }
 async function swipeAct(id, kind) {
   let r;
-  try { r = await act([id], kind); } catch (e) { reDraw(); return; }
-  if (!r.ok) { toast('Action impossible'); reDraw(); return; }
+  if (kind === 'trash') hideGone([id]);
+  try { r = await act([id], kind); } catch (e) { gone.delete(id); reDraw(); return; }
+  if (!r.ok) { gone.delete(id); toast('Action impossible'); reDraw(); return; }
   Object.entries(state.lists).forEach(([k, d]) => { d.items = d.items.map(i => i.id === id ? ACT_PATCH[kind](i, k) : i).filter(Boolean); });
   reDraw();
   undoToast(kind === 'trash' ? 'Mail supprimé' : kind === 'read' ? 'Marqué comme lu' : 'Marqué comme non lu', r.undo);
@@ -813,6 +820,7 @@ async function moveExisting(target, lab) {
 async function quickBlock(item) {
   if (!auth.hasSettingsScope()) return needScope();
   if (!item || !item.fromEmail) { toast('Expéditeur introuvable'); return; }
+  hideGone([item.id]);
   const t = blockTarget(item.fromEmail);
   const names = LS.get('blockedNames', {}); names[t] = t.includes('@') ? (item.fromName || t) : brandOf(t); LS.set('blockedNames', names);
   const dates = LS.get('blockedDates', {}); dates[t] = Date.now(); LS.set('blockedDates', dates);
