@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '4.3.0';
+const APP_VERSION = '4.3.1';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -3065,7 +3065,7 @@ async function renderAgenda() {
   state.agDay = state.agDay || startOfDay(new Date());
   v.innerHTML = `<div class="sticky-head"><div class="top"><h1>Agenda</h1><button class="icon-btn" id="ag-new" aria-label="Nouvel événement">${ICON.plus}</button><button class="icon-btn" id="ag-ref" aria-label="Actualiser">${ICON.refresh}</button></div>
     <div class="seg" id="ag-seg">${[['week', 'Semaine'], ['month', 'Mois'], ['list', 'Liste']].map(([k, n]) => `<button data-m="${k}" class="${mode === k ? 'on' : ''}">${n}</button>`).join('')}</div>
-    <div id="ag-nav"></div></div>${settings.ai && relayOn() ? '<div class="ag-ai"><button class="btn" id="ag-ai-day">✦ Synthèse du jour</button><button class="btn" id="ag-ai-week">✦ Synthèse de la semaine</button></div><div id="ag-ai-out"></div>' : ''}<div id="ag-sug"></div><div id="ag-list"><div class="loading">Chargement…</div></div>`;
+    <div id="ag-nav"></div></div>${settings.ai && relayOn() ? '<div class="ag-ai"><button class="btn" id="ag-ai-day">✦ Ma journée</button><button class="btn" id="ag-ai-week">✦ Ma semaine</button></div><div id="ag-ai-out"></div>' : ''}<div id="ag-sug"></div><div id="ag-list"><div class="loading">Chargement…</div></div>`;
   $$('#ag-seg button').forEach(b => b.onclick = () => { LS.set('agMode', b.dataset.m); renderAgenda(); });
   $('#ag-new').onclick = () => eventSheet({ start: defaultStart(state.agDay) }, () => renderAgenda());
   $('#ag-ref').onclick = () => { state.agCache = null; renderAgenda(); };
