@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.10.5';
+const APP_VERSION = '2.10.6';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -852,7 +852,9 @@ async function labelSize(labelId) {
   // Quota Gmail : pas de lecture mail par mail. Nombre exact via le libellé, taille estimée sur un échantillon, mémorisée 30 min.
   const gmail = (async () => {
     const lab = (await api('labels/' + encodeURIComponent(labelId))) || {};
-    const count = lab.messagesTotal || 0;
+    let count = lab.messagesTotal || 0;
+    // Gmail met parfois du temps à recompter un dossier renommé ou déplacé : on vérifie au lieu de croire « 0 »
+    if (!count) { const r = (await api('messages?' + new URLSearchParams({ labelIds: labelId, maxResults: 100 }))) || {}; count = (r.messages || []).length; }
     if (!count) return { count: 0, bytes: 0 };
     let memo = null; try { memo = JSON.parse(localStorage.getItem('ml-size-' + labelId) || 'null'); } catch (e) {}
     if (memo && memo.count === count && Date.now() - memo.at < 30 * 60000) return memo;
@@ -1379,8 +1381,13 @@ async function gMove(from, to, mergeRoot) {
   }
   await getLabels(true);
 }
-function tidySheet(g, f) {
-  const lines = emptyFolders(g, f).map(x => ({ kind: 'del', x, on: true }));
+/* Vérifie réellement qu'un dossier Gmail est vide (le compteur de Gmail peut être en retard après un déplacement) */
+async function gIsEmpty(id) { const r = (await api('messages?' + new URLSearchParams({ labelIds: id, maxResults: 1, includeSpamTrash: 'true' }))) || {}; return !(r.messages && r.messages.length); }
+async function tidySheet(g, f) {
+  openSheet('<span class="grip"></span><h2>Ranger mes dossiers</h2><div class="loading">Vérification des dossiers vides…</div>');
+  const cand = emptyFolders(g, f);
+  const ok = await pool(cand, 6, x => x.acc === 'gmail' ? gIsEmpty(x.id).catch(() => false) : Promise.resolve(true));
+  const lines = cand.filter((x, i) => ok[i]).map(x => ({ kind: 'del', x, on: true }));
   const draw = () => {
     const dels = lines.filter(l => l.kind === 'del'), ai = lines.filter(l => l.kind !== 'del');
     openSheet(`<span class="grip"></span><h2>Ranger mes dossiers</h2>
@@ -1422,7 +1429,7 @@ function tidySheet(g, f) {
         b.textContent = (i + 1) + ' / ' + todo.length + '…';
         try {
           if (l.kind === 'del') {
-            if (l.x.acc === 'gmail') await api('labels/' + encodeURIComponent(l.x.id), { method: 'DELETE' });
+            if (l.x.acc === 'gmail') { if (!(await gIsEmpty(l.x.id))) throw new Error('pas vide, conservé'); await api('labels/' + encodeURIComponent(l.x.id), { method: 'DELETE' }); }
             else await rapi('/free/folder-delete', { method: 'POST', body: { path: l.x.full } });
           } else if (l.acc === 'gmail') await gMove(l.from, l.to, l.kind === 'merge');
           else { const dl = (l.x && l.x.delim) || '/'; await rapi('/free/folder-rename', { method: 'POST', body: { from: l.from.split('/').join(dl), to: l.to.split('/').join(dl), delim: dl } }); }
@@ -1652,7 +1659,7 @@ async function renderLabels() {
   $('#fq').oninput = e => draw(e.target.value.trim());
   $('#btn-tidy').onclick = () => tidySheet(g, f);
   $('#btn-newdir').onclick = () => newFolderSheet(g, f);
-  bindFolderSwipe($('#labs'), k => byKey.get(k), x => deleteFolderSheet(x, all), x => moveFolderSheet(x, all));
+  bindFolderSwipe($('#labs'), k => byKey.get(k), async x => { if (x.acc === 'gmail' && x.m === 0 && !(await gIsEmpty(x.id).catch(() => false))) x = Object.assign({}, x, { m: -1 }); deleteFolderSheet(x, all); }, x => moveFolderSheet(x, all));
   redraw = () => {
     if (!location.hash.startsWith('#/labels') || !$('#labs')) return;
     all = g.concat(f); byKey = new Map(all.map(x => [x.key, x]));
