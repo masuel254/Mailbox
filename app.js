@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.9.2';
+const APP_VERSION = '3.9.3';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -2955,7 +2955,8 @@ function contactSheet(p, onChange) {
       <button class="btn" id="cs-rdv">📅 RDV</button>
       <button class="btn" id="cs-edit">${p.rn ? '✏️ Modifier' : '➕ Enregistrer'}</button>
       <button class="btn" id="cs-fav">${fv.has(p.key) ? '★ Favori' : '☆ Favori'}</button>
-    </div><button class="btn" data-close>Fermer</button>`);
+    </div><div style="display:grid;grid-template-columns:${p.rn ? '1fr 1fr' : '1fr'};gap:8px">${p.rn ? '<button class="btn danger" id="cs-del">🗑 Supprimer</button>' : ''}<button class="btn" data-close>Fermer</button></div>`);
+  const dl = $('#cs-del'); if (dl) dl.onclick = () => deleteContact(p, onChange);
   const m = $('#cs-mail'); if (m) m.onclick = () => { closeSheet(); openComposeTo(p.name && p.name !== e0 ? `"${p.name}" <${e0}>` : e0, ''); };
   const h = $('#cs-hist'); if (h) h.onclick = () => { closeSheet(); location.hash = '#/search/' + encodeURIComponent(p.emails.map(e => 'from:' + e + ' OR to:' + e).join(' OR ')); };
   $('#cs-rdv').onclick = () => { closeSheet(); location.hash = '#/agenda?new=1&title=' + encodeURIComponent('RDV ' + p.name) + '&with=' + encodeURIComponent(p.name); };
@@ -2990,16 +2991,17 @@ function contactEdit(p, onChange) {
       if (onChange) onChange();
     } catch (e) { b.disabled = false; b.textContent = 'Enregistrer'; fail(e); }
   };
-  const del = $('#ce-del'); if (del) del.onclick = async () => {
-    if (!confirm('Supprimer définitivement « ' + (p.name || 'ce contact') + ' » de tes contacts Google ?')) return;
-    del.disabled = true;
-    try {
-      await gx('https://people.googleapis.com/v1/' + p.rn + ':deleteContact', { method: 'DELETE' });
-      const f = new Set(LS.get('favContacts', [])); f.delete(p.key); LS.set('favContacts', [...f]);
-      LS.del('gcontacts'); closeSheet(); toast('Contact supprimé');
-      if (onChange) onChange();
-    } catch (e) { del.disabled = false; fail(e); }
-  };
+  const del = $('#ce-del'); if (del) del.onclick = () => deleteContact(p, onChange);
+}
+async function deleteContact(p, onChange) {
+  if (!confirm('Supprimer définitivement « ' + (p.name || 'ce contact') + ' » de tes contacts Google ?')) return;
+  try {
+    await gx('https://people.googleapis.com/v1/' + p.rn + ':deleteContact', { method: 'DELETE' });
+    const f = new Set(LS.get('favContacts', [])); f.delete(p.key); LS.set('favContacts', [...f]);
+    const c = LS.get('gcontacts', null); if (c && c.list) { c.list = c.list.filter(x => x.key !== p.key); LS.set('gcontacts', c); }
+    closeSheet(); toast('Contact supprimé');
+    if (onChange) onChange();
+  } catch (e) { if (e.message === 'auth') return; if (e.kind) { closeSheet(); openSheet('<span class="grip"></span>' + googleHelp(e, 'Contacts') + '<button class="btn" data-close>Fermer</button>'); bindHelp(); } else toast('Échec : ' + e.message); }
 }
 
 /* Agenda : Google Agenda (calendrier principal) + tâches MailBox avec rappel */
