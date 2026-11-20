@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '4.4.1';
+const APP_VERSION = '4.5.0';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -1480,18 +1480,61 @@ async function openAttachment(fetcher, a, btn) {
   const label = btn.querySelector('.s') || btn; const old = label.textContent; label.textContent = '…';
   try {
     const b64 = await fetcher(a);
-    const blob = new Blob([b64ToBytes(b64)], { type: a.mime || 'application/octet-stream' });
-    const url = URL.createObjectURL(blob);
-    if (/^image\//.test(a.mime)) {
-      openSheet(`<h2>${esc(a.name)}</h2><div class="viewer"><img src="${url}" alt="${esc(a.name)}"></div><a class="btn primary" href="${url}" download="${esc(a.name)}">Enregistrer</a><button class="btn" data-close>Fermer</button>`);
-    } else {
-      const link = document.createElement('a');
-      link.href = url; link.download = a.name; link.target = '_blank'; link.rel = 'noopener';
-      document.body.appendChild(link); link.click(); link.remove();
-    }
-    setTimeout(() => URL.revokeObjectURL(url), 120000);
+    const name = a.name || 'piece-jointe';
+    const isPdf = /pdf/i.test(a.mime || '') || /\.pdf$/i.test(name);
+    const isImg = !isPdf && (/^image\/(png|jpe?g|gif|webp|bmp|svg)/i.test(a.mime || '') || /\.(png|jpe?g|gif|webp|bmp)$/i.test(name));
+    const type = isPdf ? 'application/pdf' : (a.mime || 'application/octet-stream');
+    const blob = new Blob([b64ToBytes(b64)], { type });
+    if (isPdf) await pdfViewer(blob, name);
+    else if (isImg) { const url = URL.createObjectURL(blob); fileViewer(name, `<img src="${url}" alt="${esc(name)}">`, blob); setTimeout(() => URL.revokeObjectURL(url), 600000); }
+    else shareFile(blob, name, true);
   } catch (e) { if (e.message !== 'auth') toast('Pièce jointe indisponible'); }
   label.textContent = old;
+}
+// Partager / enregistrer via la feuille de partage de l'iPhone (Fichiers, Mail, AirDrop…)
+async function shareFile(blob, name, fallbackOpen) {
+  const f = new File([blob], name, { type: blob.type });
+  if (navigator.canShare && navigator.canShare({ files: [f] })) { try { await navigator.share({ files: [f] }); return; } catch (e) { if (e.name === 'AbortError') return; } }
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a'); link.href = url; link.download = name; if (fallbackOpen) { link.target = '_blank'; link.rel = 'noopener'; }
+  document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 120000);
+}
+// Visionneuse plein écran (image ou PDF), avec Partager
+function fileViewer(name, inner, blob) {
+  const v = document.createElement('div'); v.className = 'fviewer';
+  v.innerHTML = `<div class="fv-bar"><button class="fv-x" aria-label="Fermer">✕</button><b>${esc(name)}</b><button class="fv-share">Partager</button></div><div class="fv-body">${inner}</div>`;
+  document.body.appendChild(v); document.body.style.overflow = 'hidden';
+  const close = () => { v.remove(); document.body.style.overflow = ''; window.removeEventListener('hashchange', close); };
+  $('.fv-x', v).onclick = close; window.addEventListener('hashchange', close);
+  $('.fv-share', v).onclick = () => shareFile(blob, name);
+  return v;
+}
+let pdfjsP = null;
+const loadPdfjs = () => pdfjsP || (pdfjsP = new Promise((res, rej) => {
+  const sc = document.createElement('script'); sc.src = 'vendor/pdf.min.js';
+  sc.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js'; res(window.pdfjsLib); };
+  sc.onerror = () => { pdfjsP = null; rej(new Error('Lecteur PDF indisponible (réseau)')); };
+  document.head.appendChild(sc);
+}));
+async function pdfViewer(blob, name) {
+  const v = fileViewer(name, '<div class="loading">Ouverture du PDF…</div>', blob);
+  const body = $('.fv-body', v);
+  try {
+    const lib = await loadPdfjs();
+    const doc = await lib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) }).promise;
+    body.innerHTML = '';
+    const w = Math.min(body.clientWidth || innerWidth, 900) - 8, dpr = Math.min(window.devicePixelRatio || 1, 2);
+    for (let n = 1; n <= Math.min(doc.numPages, 60); n++) {
+      if (!v.isConnected) return;
+      const page = await doc.getPage(n);
+      const vp0 = page.getViewport({ scale: 1 }), vp = page.getViewport({ scale: (w / vp0.width) * dpr });
+      const c = document.createElement('canvas'); c.width = vp.width; c.height = vp.height; c.style.width = w + 'px'; c.className = 'fv-page';
+      body.appendChild(c);
+      await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+    }
+    if (doc.numPages > 60) body.insertAdjacentHTML('beforeend', '<p class="fhint" style="text-align:center">Les 60 premières pages sont affichées. « Partager » pour le document complet.</p>');
+  } catch (e) { body.innerHTML = `<div class="empty">Impossible d’afficher ce PDF ici (${esc(e.message)}). Touche « Partager » pour l’ouvrir dans une autre app.</div>`; }
 }
 
 /* ---------- Classement (libellés Gmail) ---------- */
