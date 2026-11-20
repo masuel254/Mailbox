@@ -29,7 +29,7 @@ const C = {
   imap: { host: process.env.FREE_IMAP_HOST || 'imap.free.fr', port: +(process.env.FREE_IMAP_PORT || 993), secure: process.env.FREE_IMAP_SECURE !== 'false' },
   smtp: { host: process.env.FREE_SMTP_HOST || 'smtp.free.fr', port: +(process.env.FREE_SMTP_PORT || 465), secure: process.env.FREE_SMTP_SECURE !== 'false', tls: { rejectUnauthorized: process.env.FREE_TLS_STRICT !== 'false' } }
 };
-const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
+const SCOPE = 'https://mail.google.com/ https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
 const BLOCK_LABEL = 'Indésirables';
 const appOrigin = new URL(C.appUrl).origin;
 const log = (...a) => console.log(new Date().toISOString(), ...a);
@@ -467,6 +467,19 @@ async function freeFolderSize(folderKey) {
       let count = 0, bytes = 0;
       if (client.mailbox.exists) for await (const m of client.fetch('1:*', { size: true })) { count++; bytes += m.size || 0; }
       return { count, bytes };
+    } finally { lock.release(); }
+  });
+}
+/* Corbeille Free : effacement définitif (uniquement la corbeille) */
+async function freePurge(folderKey) {
+  if (folderKey !== 'TRASH') throw Object.assign(new Error('Seule la corbeille peut être vidée définitivement'), { code: 400 });
+  return withImap(async client => {
+    const folder = await resolveFolder(client, 'TRASH');
+    const lock = await client.getMailboxLock(folder);
+    try {
+      const uids = (await client.search({ all: true }, { uid: true })) || [];
+      if (uids.length) await client.messageDelete(uids, { uid: true });
+      return { ok: true, deleted: uids.length };
     } finally { lock.release(); }
   });
 }
@@ -950,6 +963,7 @@ const routes = {
   'POST /ai/search': async (q, b) => aiSearch(String(b.q || '').slice(0, 300), String(b.today || '')),
   'GET /free/size': async q => freeFolderSize(q.get('folder') || 'BLOCKED'),
   'POST /free/empty': async (q, b) => freeEmpty(b.folder || 'BLOCKED'),
+  'POST /free/purge': async (q, b) => freePurge(b.folder),
   'POST /free/block': async (q, b) => {
     const t = (b.target || '').toLowerCase(); if (!t) throw Object.assign(new Error('cible manquante'), { code: 400 });
     blockedCache.at = 0;

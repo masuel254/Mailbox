@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.5.5';
+const APP_VERSION = '3.6.0';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -346,7 +346,7 @@ async function renderList(key, q) {
     })()}</div>
     ${contactQ ? `<div class="ai-note"><b>👤 ${esc(contactQ)}</b><span>Tous vos mails, dans les deux sens, Gmail et Free.</span>${settings.ai && relayOn() ? `<button class="btn" id="hist-go" style="margin-top:4px">${ICON.spark}Retracer l’historique</button>` : ''}</div><div id="hist-out"></div>` : ''}
     ${isSearch && state.aiNote && state.aiNote.q === q ? `<div class="ai-note"><b>✦ ${esc(state.aiNote.resume || 'Recherche de l’assistant')}</b><span>« ${esc(state.aiNote.ask)} » → <code>${esc(q)}</code></span><span class="ai-links"><a href="#/smart/${encodeURIComponent(state.aiNote.ask)}">✦ Pas trouvé ? Recherche par le sens</a><a href="#/search/${encodeURIComponent(state.aiNote.ask)}" id="ai-raw">Mots exacts</a></span></div>` : ''}
-    ${isFolderView(key) ? `<div class="banner"><span style="display:flex;flex-direction:column;gap:2px"><span>${title === BLOCK_LABEL ? 'Expéditeurs bloqués et spam' : 'Dossier « ' + esc(title) + ' »'}</span><b id="lab-size" style="color:var(--accent)">Calcul de la taille…</b></span><button class="btn danger" id="btn-empty">${ICON.trash}Tout supprimer</button></div>` : ''}
+    ${isFolderView(key) || key === 'TRASH' ? `<div class="banner"><span style="display:flex;flex-direction:column;gap:2px"><span>${key === 'TRASH' ? 'Corbeille' + (freeOn() ? ' Gmail + Free' : '') : title === BLOCK_LABEL ? 'Expéditeurs bloqués et spam' : 'Dossier « ' + esc(title) + ' »'}</span><b id="lab-size" style="color:var(--accent)">Calcul de la taille…</b></span><button class="btn danger" id="btn-empty">${ICON.trash}${key === 'TRASH' ? 'Vider' : 'Tout supprimer'}</button></div>` : ''}
     <div id="subdirs"></div>
     <div id="list"><div class="loading">Chargement…</div></div>`;
   // Sous-dossiers du dossier ouvert : un dossier « thème » ne contient souvent rien lui-même, ses mails sont dans ses sous-dossiers
@@ -368,7 +368,7 @@ async function renderList(key, q) {
   $('#btn-select').onclick = () => state.sel ? exitSelect() : enterSelect();
   state.listCtx = { key, q, cacheKey, plain };
   $$('.accounts button[data-acc]').forEach(b => b.onclick = () => { settings.acc = b.dataset.acc; saveSettings(); renderList(key, q); });
-  const be = $('#btn-empty'); if (be) { be.onclick = () => emptyLabel(key, title); new Promise(r => setTimeout(r, 2500)).then(() => labelSize(key)).then(t => { const el = $('#lab-size'); if (!el) return; if (t === 'Vide' && kids.length) { el.textContent = 'Tes mails sont dans ses ' + kids.length + ' sous-dossier' + (kids.length > 1 ? 's' : '') + ', ci-dessous'; be.hidden = true; } else el.textContent = t; }); }
+  const be = $('#btn-empty'); if (be) { be.onclick = () => key === 'TRASH' ? emptyTrash() : emptyLabel(key, title); new Promise(r => setTimeout(r, 2500)).then(() => labelSize(key)).then(t => { const el = $('#lab-size'); if (!el) return; if (t === 'Vide' && kids.length) { el.textContent = 'Tes mails sont dans ses ' + kids.length + ' sous-dossier' + (kids.length > 1 ? 's' : '') + ', ci-dessous'; be.hidden = true; } else el.textContent = t; }); }
   bindListGestures($('#list'));
   let cached = state.lists[cacheKey];
   // Ouverture instantanée : dernière liste connue gardée sur l'iPhone (réception, non lus, envoyés), actualisée aussitôt
@@ -961,7 +961,7 @@ async function labelSize(labelId) {
     try { localStorage.setItem('ml-size-' + labelId, JSON.stringify(out)); } catch (e) {}
     return out;
   })();
-  const free = freeOn() && isBlockLabel(labelId) ? rapi('/free/size?folder=BLOCKED').catch(() => null) : Promise.resolve(null);
+  const free = freeOn() && (isBlockLabel(labelId) || labelId === 'TRASH') ? rapi('/free/size?folder=' + (labelId === 'TRASH' ? 'TRASH' : 'BLOCKED')).catch(() => null) : Promise.resolve(null);
   try {
     const [g, f] = await Promise.all([gmail.catch(() => null), free]);
     if (!g && !f) return 'Taille indisponible';
@@ -1001,6 +1001,40 @@ async function emptyLabel(labelId, name) {
       toast(total ? total + ' mail' + (total > 1 ? 's' : '') + ' placé' + (total > 1 ? 's' : '') + ' dans la corbeille' : 'Rien à supprimer');
       route();
     } catch (e) { closeSheet(); if (e.message !== 'auth') toast('Échec : ' + e.message); }
+  };
+}
+
+/* Vider la corbeille : suppression définitive, Gmail et Free */
+function emptyTrash() {
+  openSheet(`<span class="grip"></span><h2>Vider la corbeille ?</h2>
+    <p style="margin:0;color:var(--muted);font-size:.85rem;line-height:1.5">Tous les mails de la corbeille${freeOn() ? ', Gmail et Free,' : ''} sont <b>effacés définitivement</b> et la place est libérée tout de suite. Impossible de les récupérer ensuite.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn danger" id="trash-ok">Vider</button></div>`);
+  $('#trash-ok').onclick = async () => {
+    const b = $('#trash-ok'); b.disabled = true; b.textContent = 'Suppression…';
+    let total = 0, scopeMissing = false;
+    try {
+      let page = null;
+      do {
+        const p = new URLSearchParams({ labelIds: 'TRASH', maxResults: 500, includeSpamTrash: 'true' });
+        if (page) p.set('pageToken', page);
+        const r = (await api('messages?' + p.toString())) || {};
+        const ids = (r.messages || []).map(m => m.id);
+        for (let i = 0; i < ids.length; i += 1000) await api('messages/batchDelete', { method: 'POST', body: { ids: ids.slice(i, i + 1000) } });
+        total += ids.length; b.textContent = total + ' effacés…';
+        page = r.nextPageToken;
+      } while (page);
+    } catch (e) { if (e.message === 'scope' || /insufficient|scope|permission/i.test(e.message)) scopeMissing = true; else if (e.message !== 'auth') toast('Gmail : ' + e.message); }
+    if (freeOn()) { try { total += (await rapi('/free/purge', { method: 'POST', body: { folder: 'TRASH' } })).deleted || 0; } catch (e) { toast('Free : ' + e.message); } }
+    closeSheet();
+    Object.keys(state.lists).forEach(k => delete state.lists[k]);
+    try { localStorage.removeItem('ml-size-TRASH'); } catch (e) {}
+    if (scopeMissing) {
+      openSheet(`<span class="grip"></span><h2>Autorisation Gmail à ajouter</h2>
+        <p style="margin:0;color:var(--muted);font-size:.85rem;line-height:1.5">${freeOn() ? 'La corbeille Free est vidée. ' : ''}Pour effacer définitivement la corbeille Gmail, Google demande une autorisation de plus. Appuie sur Autoriser, choisis ton compte et accepte : tu reviens ici ensuite, puis relance « Vider ».</p>
+        <button class="btn primary" id="tr-auth">Autoriser</button><button class="btn" data-close>Plus tard</button>`);
+      $('#tr-auth').onclick = () => { location.href = relayGoogleStart(); };
+    } else toast(total ? total + ' mail' + (total > 1 ? 's' : '') + ' effacé' + (total > 1 ? 's' : '') + ' définitivement' : 'La corbeille était déjà vide');
+    route();
   };
 }
 
