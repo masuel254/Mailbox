@@ -85,10 +85,15 @@ async function gmailToken() {
   gTok = { access_token: j.access_token, exp: Date.now() + j.expires_in * 1000, scope: j.scope || SCOPE };
   return gTok;
 }
+/* Pause générale quand Google demande de ralentir : le relais arrête ses lectures de fond un moment */
+let gBackoff = { until: 0, ms: 0 };
+const gRateHit = () => { gBackoff.ms = Math.min(20 * 60000, gBackoff.ms ? gBackoff.ms * 2 : 3 * 60000); gBackoff.until = Date.now() + gBackoff.ms; log('Gmail demande de ralentir : pause des lectures de fond ' + Math.round(gBackoff.ms / 60000) + ' min'); };
+const gPaused = () => Date.now() < gBackoff.until;
 async function gapi(p, opt = {}) {
   const t = await gmailToken();
   const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/' + p, { method: opt.method || 'GET', headers: Object.assign({ Authorization: 'Bearer ' + t.access_token }, opt.body ? { 'Content-Type': 'application/json' } : {}), body: opt.body ? JSON.stringify(opt.body) : undefined });
-  if (!r.ok) { let why = ''; try { const j = await r.json(); why = (j.error && ((j.error.errors && j.error.errors[0] && j.error.errors[0].reason) || j.error.status || j.error.message)) || ''; } catch (e) {} throw new Error('Gmail ' + r.status + (why ? ' ' + why : '')); }
+  if (!r.ok) { let why = ''; try { const j = await r.json(); why = (j.error && ((j.error.errors && j.error.errors[0] && j.error.errors[0].reason) || j.error.status || j.error.message)) || ''; } catch (e) {} if (r.status === 429 || /rate|quota/i.test(why)) { if (!gPaused()) gRateHit(); } throw new Error('Gmail ' + r.status + (why ? ' ' + why : '')); }
+  if (gBackoff.ms && !gPaused()) gBackoff.ms = 0;
   return r.status === 204 ? null : r.json().catch(() => null);
 }
 
@@ -585,7 +590,7 @@ function isQuiet() {
 
 /* ---------- Surveillance ---------- */
 async function pollGmail() {
-  if (!S.gmail) return [];
+  if (!S.gmail || gPaused()) return [];
   const fresh = [];
   const primary = !!(S.prefs && S.prefs.primaryOnly);
   if (primary) {
@@ -683,18 +688,23 @@ function addContact(raw, ts) {
   c.c++; c.t = Math.max(c.t, ts || 0);
 }
 let contactsBusy = false;
+let contactsRetryAt = 0;
 async function buildContacts() {
-  if (contactsBusy) return; contactsBusy = true;
+  // Lecture lourde (jusqu'à 3 000 en-têtes) : jamais pendant une pause Gmail, et pas plus d'un essai par demi-heure après un échec
+  if (contactsBusy || gPaused() || Date.now() < contactsRetryAt) return; contactsBusy = true;
+  const old = S.contacts;
   S.contacts = { list: {}, at: 0 };
   try {
     if (S.gmail) {
       for (const [q, hs] of [['in:sent', ['To', 'Cc']], ['-in:sent -category:promotions -category:social', ['From']]]) {
         let ids = [], page = null;
         do { const r = (await gapi('messages?' + new URLSearchParams(Object.assign({ q, maxResults: 500 }, page ? { pageToken: page } : {})))) || {}; ids.push(...(r.messages || []).map(m => m.id)); page = r.nextPageToken; } while (page && ids.length < 1500);
-        for (let i = 0; i < ids.length; i += 10) {
-          await Promise.all(ids.slice(i, i + 10).map(id => gapi('messages/' + id + '?format=metadata' + hs.map(h => '&metadataHeaders=' + h).join('')).then(m => {
+        for (let i = 0; i < ids.length; i += 4) {
+          if (gPaused()) throw new Error('Gmail en pause, carnet repoussé');
+          await Promise.all(ids.slice(i, i + 4).map(id => gapi('messages/' + id + '?format=metadata' + hs.map(h => '&metadataHeaders=' + h).join('')).then(m => {
             (m.payload.headers || []).forEach(h => String(h.value).split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).forEach(a => addContact(a, +m.internalDate)));
           }).catch(() => {})));
+          await pause(150);
         }
       }
     }
@@ -713,7 +723,12 @@ async function buildContacts() {
     });
     S.contacts.at = Date.now(); save();
     log('carnet des correspondants : ' + Object.keys(S.contacts.list).length + ' adresses');
-  } catch (e) { log('carnet', e.message); }
+  } catch (e) {
+    log('carnet', e.message);
+    // échec : on garde l'ancien carnet plutôt qu'un carnet vide, nouvel essai dans 30 min
+    if (old && old.at) S.contacts = old;
+    contactsRetryAt = Date.now() + 30 * 60000;
+  }
   finally { contactsBusy = false; }
 }
 function findContacts(q) {

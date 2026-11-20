@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.6.4';
+const APP_VERSION = '3.6.5';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -2250,7 +2250,7 @@ async function renderLabels() {
     const gJob = (async () => {
       const labels = await getLabels(true);
       if (!cached) { g = labels.map(l => ({ key: 'g:' + l.id, full: l.name, href: '#/list/' + encodeURIComponent(l.id), n: 0, m: -1, id: l.id, acc: 'gmail', color: labelColor(l) })); redraw(); }
-      const counts = await pool(labels, 10, l => api('labels/' + l.id + '?fields=id,messagesTotal,threadsUnread').catch(() => null));
+      const counts = await pool(labels, 3, l => api('labels/' + l.id + '?fields=id,messagesTotal,threadsUnread').catch(() => null));
       ng = labels.map((l, i) => ({ key: 'g:' + l.id, full: l.name, href: '#/list/' + encodeURIComponent(l.id), n: (counts[i] && counts[i].threadsUnread) || 0, m: counts[i] && counts[i].id ? counts[i].messagesTotal || 0 : -1, id: l.id, acc: 'gmail', color: labelColor(l) }));
       if (!cached) { g = ng; redraw(); }
     })().catch(e => { if (e.message !== 'auth') toast('Gmail : ' + e.message); });
