@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '4.5.0';
+const APP_VERSION = '4.5.1';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -3177,20 +3177,21 @@ async function renderAgenda() {
     : mode === 'month' ? [startOfDay(d0)]
     : [...Array(60)].map((_, i) => addDays(startOfDay(new Date()), i)).filter(d => byDay.has(dayKey(d)));
   const evRow = it => {
-    if (it.kind === 'tt') { const x = it.x; return `<button class="ev" style="--c:${esc(x.color || '#4caf8f')}" data-tt="${esc(x.id)}"><span class="t">${it.allDay ? 'Journée' : hhmm(it.s) + (it.e > it.s ? '<br>' + hhmm(it.e) : '')}</span><span class="ev-b"><b>${esc(x.title)}</b><small><span class="tt-tag">TimeTree</span> ${esc(x.cal)}${x.location ? ' · 📍 ' + esc(x.location) : ''}</small></span></button>`; }
+    if (it.kind === 'tt') { const x = it.x; return `<button class="ev" style="--c:${esc(x.color || '#4caf8f')}" data-tt="${esc(x.id)}"><span class="t">${it.allDay ? 'Journée' : hhmm(it.s) + (it.e > it.s ? '<br>' + hhmm(it.e) : '')}</span><span class="ev-b"><b>${esc(x.title)}</b><small><span class="tt-tag">TimeTree</span> ${esc(x.cal)}${x.location ? ' · ' + locChip(x.location) : ''}</small></span></button>`; }
     if (it.kind === 'task') return `<button class="ev" style="--c:#9be3b4" data-task="${esc(it.t.id)}"><span class="t">${hhmm(it.s)}</span><span class="ev-b"><b>${esc(it.t.title)}</b><small>Tâche MailBox${it.t.ref && it.t.ref.from ? ' · mail de ' + esc(it.t.ref.from) : ''}</small></span></button>`;
     const e = it.ev;
-    return `<button class="ev" style="--c:${EV_COLORS[e.colorId] || '#8fb6ff'}" data-ev="${esc(e.id)}"><span class="t">${it.allDay ? 'Journée' : hhmm(it.s) + '<br>' + hhmm(it.e)}</span><span class="ev-b"><b>${esc(e.summary || '(sans titre)')}</b>${e.location || e.description ? `<small>${e.location ? '📍 ' + esc(e.location) : ''}${e.location && e.description ? ' · ' : ''}${e.description ? esc(String(e.description).replace(/<[^>]+>/g, ' ').slice(0, 80)) : ''}</small>` : ''}</span></button>`;
+    return `<button class="ev" style="--c:${EV_COLORS[e.colorId] || '#8fb6ff'}" data-ev="${esc(e.id)}"><span class="t">${it.allDay ? 'Journée' : hhmm(it.s) + '<br>' + hhmm(it.e)}</span><span class="ev-b"><b>${esc(e.summary || '(sans titre)')}</b>${e.location || e.description ? `<small>${e.location ? locChip(e.location) : ''}${e.location && e.description ? ' · ' : ''}${e.description ? esc(String(e.description).replace(/<[^>]+>/g, ' ').slice(0, 80)) : ''}</small>` : ''}</span></button>`;
   };
   const box = $('#ag-list');
   box.innerHTML = days.map(d => { const its = byDay.get(dayKey(d)) || []; return `<div class="day-h">${esc(d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }))}${dayKey(d) === tk ? ' · aujourd’hui' : ''}</div>` + (its.length ? its.map(evRow).join('') : '<p class="fhint" style="margin:2px 6px 8px">Rien de prévu</p>'); }).join('')
     || '<div class="empty">Rien de prévu sur les 60 prochains jours.</div>';
+  // toucher le lieu ouvre la carte (Plans ou le lien Maps collé), sans ouvrir l'événement
   $$('[data-ev]', box).forEach(b => b.onclick = () => { const e = evs.find(x => x.id === b.dataset.ev); if (e) eventSheet(e, () => { state.agCache = null; renderAgenda(); }); });
   $$('[data-task]', box).forEach(b => b.onclick = () => { location.hash = '#/tasks'; });
   $$('[data-tt]', box).forEach(b => b.onclick = () => {
     const it = items.find(i => i.kind === 'tt' && i.x.id === b.dataset.tt); if (!it) return; const x = it.x;
     openSheet(`<span class="grip"></span><h2>${esc(x.title)}</h2><p class="fhint" style="margin:0"><span class="tt-tag">TimeTree</span> ${esc(x.cal)}</p>
-      <div class="ct-info"><div>📅 ${esc(it.s.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }))}${it.allDay ? ' · journée entière' : ' · ' + hhmm(it.s) + (it.e > it.s ? ' – ' + hhmm(it.e) : '')}</div>${x.location ? `<div>📍 ${esc(x.location)}</div>` : ''}${x.note ? `<div>📝 ${esc(x.note)}</div>` : ''}</div>
+      <div class="ct-info"><div>📅 ${esc(it.s.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }))}${it.allDay ? ' · journée entière' : ' · ' + hhmm(it.s) + (it.e > it.s ? ' – ' + hhmm(it.e) : '')}</div>${x.location ? `<div>${locChip(x.location)}</div>` : ''}${x.note ? `<div>📝 ${esc(x.note)}</div>` : ''}</div>
       <p class="fhint" style="margin:0">Pour le modifier, passe par l’app TimeTree.</p>
       <button class="btn" id="tt-copy">Copier dans Google Agenda</button>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn danger" id="tt-del">🗑 Supprimer</button><button class="btn" data-close>Fermer</button></div>`);
@@ -3312,6 +3313,12 @@ function bindAgendaSwipe(box, evs, items) {
   box.addEventListener('click', e => { if (box.dataset.skip) { delete box.dataset.skip; if (!e.target.closest('.ev-del')) { e.stopPropagation(); e.preventDefault(); } } }, true);
   window.addEventListener('scroll', close, { passive: true, once: true });
 }
+// Lieu : texte (adresse) ou lien Maps collé (Google Maps, Plans, Waze)
+const isMapUrl = l => /^https?:\/\/\S+$/i.test(String(l || '').trim());
+const mapUrl = l => isMapUrl(l) ? String(l).trim() : 'https://maps.apple.com/?q=' + encodeURIComponent(l);
+const locChip = l => `<span class="loc-chip" data-map="${esc(l)}">📍 ${isMapUrl(l) ? 'Itinéraire' : esc(l)}</span>`;
+document.addEventListener('click', e => { const m = e.target.closest && e.target.closest('[data-map]'); if (!m) return; e.preventDefault(); e.stopPropagation(); openMap(m.dataset.map); }, true);
+function openMap(l) { const a = document.createElement('a'); a.href = mapUrl(l); a.target = '_blank'; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove(); }
 const defaultStart = d => { const x = new Date(d); const n = new Date(); if (dayKey(x) === dayKey(n)) { x.setHours(n.getHours() + 1, 0, 0, 0); } else x.setHours(9, 0, 0, 0); return x; };
 const toInputDate = d => dayKey(d), toInputTime = d => String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
 // ev : événement Google existant, ou brouillon { title, start (Date), end, allDay, location, note }
@@ -3324,11 +3331,17 @@ function eventSheet(ev, onDone) {
     <label class="f">Titre<input id="ev-title" autocomplete="off" value="${esc(isNew ? ev.title || '' : ev.summary || '')}" placeholder="ex. Point avec Claire"></label>
     <label class="switch">Journée entière<input type="checkbox" id="ev-all" ${allDay ? 'checked' : ''}></label>
     <div class="ev-grid"><label class="f">Date<input type="date" id="ev-d" value="${toInputDate(s)}"></label><label class="f ev-tm">Début<input type="time" id="ev-s" value="${toInputTime(s)}"></label><label class="f ev-tm">Fin<input type="time" id="ev-e" value="${toInputTime(e)}"></label></div>
-    <label class="f">Lieu<input id="ev-loc" autocomplete="off" value="${esc(isNew ? ev.location || '' : ev.location || '')}" placeholder="Adresse ou visio"></label>
+    <label class="f">Lieu<input id="ev-loc" autocomplete="off" value="${esc(ev.location || '')}" placeholder="Adresse, visio ou lien Maps"></label>
+    <div class="ev-locbar"><button type="button" class="linkish" id="ev-paste">📋 Coller un lien Maps</button><button type="button" class="linkish" id="ev-map">🗺 Voir sur la carte</button></div>
     <label class="f">Note<input id="ev-note" autocomplete="off" value="${esc(isNew ? ev.note || '' : String(ev.description || '').replace(/<[^>]+>/g, ' '))}"></label>
     ${isNew && state.ttCals && state.ttCals.length ? `<label class="f">Enregistrer dans<select id="ev-dest"><option value="g">Google Agenda</option>${state.ttCals.map(c => `<option value="t:${esc(c.id)}">TimeTree · ${esc(c.name)}</option><option value="b:${esc(c.id)}">Google + TimeTree · ${esc(c.name)}</option>`).join('')}</select></label>` : ''}
     ${ev.mailUrl ? `<p class="fhint" style="margin:0">Lié au mail « ${esc(ev.mailSubject || '')} »</p>` : ''}
     <div style="display:grid;grid-template-columns:${isNew ? '1fr 1fr' : '1fr 1fr 1fr'};gap:10px">${isNew ? '<button class="btn" data-close>Annuler</button>' : '<button class="btn danger" id="ev-del">Supprimer</button><button class="btn" data-close>Fermer</button>'}<button class="btn primary" id="ev-ok">Enregistrer</button></div>`);
+  $('#ev-paste').onclick = async () => {
+    try { const t = (await navigator.clipboard.readText() || '').trim(); if (!t) { toast('Presse-papiers vide : copie d’abord le lien dans Maps (Partager › Copier)'); return; } $('#ev-loc').value = t; toast(isMapUrl(t) ? 'Lien Maps ajouté' : 'Texte collé'); }
+    catch (e) { toast('Colle le lien dans le champ Lieu (appui long › Coller)'); $('#ev-loc').focus(); }
+  };
+  $('#ev-map').onclick = () => { const l = $('#ev-loc').value.trim(); if (!l) { toast('Indique d’abord un lieu'); return; } openMap(l); };
   const syncAll = () => $$('.ev-tm').forEach(x => { x.style.display = $('#ev-all').checked ? 'none' : ''; });
   $('#ev-all').onchange = syncAll; syncAll();
   $('#ev-s').onchange = () => { const [h, m] = $('#ev-s').value.split(':').map(Number); const dur = e - s; const ns = new Date(s); ns.setHours(h, m); const ne = new Date(ns.getTime() + (dur > 0 ? dur : 3600000)); $('#ev-e').value = toInputTime(ne); };
