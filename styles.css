@@ -316,3 +316,5 @@ details.set .ftog[aria-expanded="true"] .chev{transform:rotate(45deg)}
 .tedit-box{padding:10px 12px;border-top:1px solid var(--line);background:var(--card);display:flex;flex-direction:column;gap:8px}
 .tedit-box .btn{flex:1;height:40px}
 .tgroup .tedit-box input,.tgroup .tedit-box select{width:100%;height:46px;flex:auto}
+.trow.flash{animation:tflash 1.6s ease}
+@keyframes tflash{0%,40%{background:color-mix(in srgb,var(--accent-fill) 35%,transparent)}100%{background:transparent}}

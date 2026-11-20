@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.10.8';
+const APP_VERSION = '2.10.9';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -1391,7 +1391,7 @@ async function tidySheet(g, f) {
   const cand = emptyFolders(g, f);
   const ok = await pool(cand, 6, x => x.acc === 'gmail' ? gIsEmpty(x.id).catch(() => false) : Promise.resolve(true));
   const lines = cand.filter((x, i) => ok[i]).map(x => ({ kind: 'del', x, on: true }));
-  const draw = () => {
+  const draw = focus => {
     const sc = ($('.tidy-list') || {}).scrollTop || 0;
     const dels = lines.filter(l => l.kind === 'del'), ai = lines.filter(l => l.kind !== 'del');
     openSheet(`<span class="grip"></span><h2>Ranger mes dossiers</h2>
@@ -1403,7 +1403,7 @@ async function tidySheet(g, f) {
           // regroupé par dossier d'arrivée : un bloc par thème, une ligne courte par dossier déplacé
           const groups = new Map();
           ai.forEach(l => { const parts = l.to.split('/'); const raw = (l.kind === 'merge' ? parts : parts.slice(0, -1)).join('/'); const dest = raw.split('/').join(' › ') || 'Premier niveau'; const k = l.acc + '|' + dest; if (!groups.has(k)) groups.set(k, { acc: l.acc, dest, raw, items: [] }); groups.get(k).items.push(l); });
-          return [...groups.values()].map(gr => `<div class="tgroup"><div class="tgroup-h"><span class="dot tdot" style="background:var(--${gr.acc})"></span><span>→ ${esc(gr.dest)}</span><button class="tedit" type="button" data-gedit="${esc(gr.acc + '|' + gr.raw)}" aria-label="Renommer ce thème">✎</button><small>${gr.items.length}</small><input type="checkbox" class="tg-all" data-g="${esc(gr.acc + '|' + gr.dest)}" ${gr.items.every(l => l.on) ? 'checked' : ''} aria-label="Tout le groupe"></div>
+          return [...groups.values()].sort((a, c) => a.dest.localeCompare(c.dest, 'fr')).map(gr => `<div class="tgroup"><div class="tgroup-h"><span class="dot tdot" style="background:var(--${gr.acc})"></span><span>→ ${esc(gr.dest)}</span><button class="tedit" type="button" data-gedit="${esc(gr.acc + '|' + gr.raw)}" aria-label="Renommer ce thème">✎</button><small>${gr.items.length}</small><input type="checkbox" class="tg-all" data-g="${esc(gr.acc + '|' + gr.dest)}" ${gr.items.every(l => l.on) ? 'checked' : ''} aria-label="Tout le groupe"></div>
             ${gr.items.map(l => { const fp = l.from.split('/'), leaf = fp.pop(), np = l.to.split('/').pop(); return `<label class="trow"><span class="tname"><span class="tl"><b>${esc(leaf)}</b>${l.kind === 'merge' ? ' <em>fusionné</em>' : np !== leaf ? ' <em>→ ' + esc(np) + '</em>' : ''}</span><small>${esc(fp.length ? 'depuis ' + fp.join(' › ') : 'depuis le premier niveau')}</small></span><button class="tedit" type="button" data-edit="${lines.indexOf(l)}" aria-label="Changer la destination">✎</button><input type="checkbox" data-i="${lines.indexOf(l)}" data-gk="${esc(gr.acc + '|' + gr.dest)}" ${l.on ? 'checked' : ''}></label>`; }).join('')}</div>`).join('');
         })()
           : settings.ai ? `<button class="btn primary" id="tidy-themes" type="button">✦ Remplacer INBOX par des thèmes</button><button class="btn" id="tidy-ai" type="button">✦ Proposer un rangement général</button><p class="fhint">L’IA ne reçoit que les noms de tes dossiers et leur nombre de mails. Rien n’est appliqué sans ta validation, et aucun mail n’est supprimé.</p>`
@@ -1411,6 +1411,7 @@ async function tidySheet(g, f) {
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="tidy-ok">Appliquer (${lines.filter(l => l.on).length})</button></div>`);
     if (sc && $('.tidy-list')) $('.tidy-list').scrollTop = sc;
+    if (typeof focus === 'number') { const c = $('.tidy-list input[data-i="' + focus + '"]'); const r = c && c.closest('.trow'); if (r) { r.scrollIntoView({ block: 'center' }); r.classList.add('flash'); } }
     $$('.tidy-list input[data-i]').forEach(c => c.onchange = () => { lines[+c.dataset.i].on = c.checked; $('#tidy-ok').textContent = 'Appliquer (' + lines.filter(l => l.on).length + ')'; });
     // Modifier une proposition : autre thème, nouveau thème ou autre nom
     $$('.tidy-list [data-edit]').forEach(b => b.onclick = e => {
@@ -1433,7 +1434,7 @@ async function tidySheet(g, f) {
         const name = $('.te-name', box).value.trim().replace(/[\/]/g, '-');
         if (!name || (sel.value === '__new' && !dest)) { toast('Complète le nom'); return; }
         l.kind = 'move'; l.to = dest ? dest + '/' + name : name; l.on = l.to !== l.from; l.why = 'modifié par toi';
-        draw();
+        draw(lines.indexOf(l)); toast('« ' + name + ' » → ' + (dest ? dest.split('/').join(' › ') : 'premier niveau'));
       };
     });
     // Renommer tout un thème proposé
