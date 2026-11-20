@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.10.6';
+const APP_VERSION = '2.10.7';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -1334,10 +1334,13 @@ async function renderWaiting() {
     || '<div class="empty">Rien en attente : tout est à jour.</div>';
 }
 /* Ranger : dossiers vides + plan de rangement proposé par l'IA, appliqué seulement sur validation */
+// Dossiers techniques que certains serveurs (dont Free) recréent tout seuls : inutile de les proposer
+const SERVER_DIRS = /^(contacts|chats|calendar|calendrier|notes|tasks|tâches|journal|outbox|boîte d'envoi|emailed contacts)$/i;
 function emptyFolders(g, f) {
-  const out = [];
+  const out = [], keep = new Set(LS.get('tidyKeep', []));
   for (const list of [g, f]) for (const x of list) {
-    if (x.m !== 0 || x.full === BLOCK_LABEL) continue;
+    if (x.m !== 0 || x.full === BLOCK_LABEL || keep.has(x.key)) continue;
+    if (x.acc === 'free' && SERVER_DIRS.test(x.full)) continue;
     const pre = x.full + (x.delim || '/');
     if (list.some(y => y.full.startsWith(pre) && y.m !== 0)) continue;
     out.push(x);
@@ -1422,6 +1425,8 @@ async function tidySheet(g, f) {
     const ab = $('#tidy-ai'); if (ab) ab.onclick = () => runAI(ab, '');
     const at = $('#tidy-themes'); if (at) at.onclick = () => runAI(at, 'themes');
     $('#tidy-ok').onclick = async () => {
+      // les dossiers vides décochés sont mémorisés : ils ne seront plus proposés
+      const keep = new Set(LS.get('tidyKeep', [])); lines.filter(l => l.kind === 'del' && !l.on).forEach(l => keep.add(l.x.key)); LS.set('tidyKeep', [...keep]);
       const todo = lines.filter(l => l.on); if (!todo.length) { closeSheet(); return; }
       const b = $('#tidy-ok'); b.disabled = true; $$('.tidy-list input').forEach(c => c.disabled = true);
       let ok = 0; const errs = [];
