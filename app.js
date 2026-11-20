@@ -1,8 +1,8 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.12.0';
-const APP_DATE = '19/11/2026';
+const APP_VERSION = '2.12.1';
+const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
 const BLOCK_LABEL = 'Indésirables';
@@ -449,7 +449,6 @@ function itemHTML(it, cls, sentView) {
   const accChip = state.showAcc ? `<span class="chip acc-${it.acc === 'free' ? 'free' : 'gmail'}">${it.acc === 'free' ? 'Free' : 'Gmail'}</span>` : '';
   return `<a class="item ${cls}${sel}" data-id="${esc(it.id)}" href="${href}">
     <span class="mark" aria-hidden="true"></span>
-    <span class="av ${it.acc === 'free' ? 'free' : 'gmail'}" aria-hidden="true">${esc(initials(String(who).replace(/^À : /, '') || '?').slice(0, 1))}</span>
     <span class="body">
       <span class="row1"><span class="who">${esc(who)}${it.count > 1 ? ` <span class="count">(${it.count})</span>` : ''}</span>${it.starred ? '<span class="star" aria-label="Suivi">★</span>' : ''}<span class="when">${esc(fmtDate(it.date))}</span></span>
       <span class="subj">${it.unread ? '<span class="sr">Non lu : </span>' : ''}${esc(it.subject)}</span>
@@ -1323,7 +1322,7 @@ const GUIDE = [
   ['👋', 'Prise en main', `
     <p>MailBox réunit <b>Gmail</b> (pastille bleue) et <b>Free</b> (pastille rose) dans une seule appli, plus lisible que Gmail.</p>
     <p>En bas : <b>Reçus</b>, <b>Envoyés</b>, <b>Écrire</b>, <b>Dossiers</b>, <b>Réglages</b>. Le chiffre sur Reçus et sur l'icône de l'iPhone est le nombre de mails non lus.</p>
-    <p>Un mail <b>non lu</b> a un cadre jaune et un rond jaune plein. Un mail <b>lu</b> est gris avec un rond vide.</p>
+    <p>Un mail <b>non lu</b> a un cadre jaune et un rond jaune plein. Un mail <b>lu</b> est simplement en gris. L'étiquette <b>Gmail</b> ou <b>Free</b> en bas à droite indique la boîte.</p>
     <div class="tip">Les mots de passe ne sont jamais dans l'appli ni sur GitHub : Gmail passe par Google, Free par ton serveur, chiffré.</div>`],
   ['👆', 'Les gestes', `
     <div class="gges"><span>← court<br><b>Supprimer</b></span><span>←← jusqu'au bord<br><b>Bloquer</b></span><span>→<br><b>Lu / non lu</b></span></div>
