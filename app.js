@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.4.2';
+const APP_VERSION = '3.4.3';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -368,7 +368,7 @@ async function renderList(key, q) {
   $('#btn-select').onclick = () => state.sel ? exitSelect() : enterSelect();
   state.listCtx = { key, q, cacheKey, plain };
   $$('.accounts button[data-acc]').forEach(b => b.onclick = () => { settings.acc = b.dataset.acc; saveSettings(); renderList(key, q); });
-  const be = $('#btn-empty'); if (be) { be.onclick = () => emptyLabel(key, title); labelSize(key).then(t => { const el = $('#lab-size'); if (!el) return; if (t === 'Vide' && kids.length) { el.textContent = 'Tes mails sont dans ses ' + kids.length + ' sous-dossier' + (kids.length > 1 ? 's' : '') + ', ci-dessous'; be.hidden = true; } else el.textContent = t; }); }
+  const be = $('#btn-empty'); if (be) { be.onclick = () => emptyLabel(key, title); new Promise(r => setTimeout(r, 2500)).then(() => labelSize(key)).then(t => { const el = $('#lab-size'); if (!el) return; if (t === 'Vide' && kids.length) { el.textContent = 'Tes mails sont dans ses ' + kids.length + ' sous-dossier' + (kids.length > 1 ? 's' : '') + ', ci-dessous'; be.hidden = true; } else el.textContent = t; }); }
   bindListGestures($('#list'));
   let cached = state.lists[cacheKey];
   // Ouverture instantanée : dernière liste connue gardée sur l'iPhone (réception, non lus, envoyés), actualisée aussitôt
@@ -898,9 +898,9 @@ async function labelSize(labelId) {
     if (!count) return { count: 0, bytes: 0 };
     let memo = null; try { memo = JSON.parse(localStorage.getItem('ml-size-' + labelId) || 'null'); } catch (e) {}
     if (memo && memo.count === count && Date.now() - memo.at < 30 * 60000) return memo;
-    const r = (await api('messages?' + new URLSearchParams({ labelIds: labelId, maxResults: 60 }).toString())) || {};
+    const r = (await api('messages?' + new URLSearchParams({ labelIds: labelId, maxResults: 25 }).toString())) || {};
     const ids = (r.messages || []).map(m => m.id);
-    const sizes = (await pool(ids, 3, id => api('messages/' + id + '?format=minimal&fields=sizeEstimate').then(x => (x && x.sizeEstimate) || 0).catch(() => null))).filter(x => x != null);
+    const sizes = (await pool(ids, 2, id => api('messages/' + id + '?format=minimal&fields=sizeEstimate').then(x => (x && x.sizeEstimate) || 0).catch(() => null))).filter(x => x != null);
     const avg = sizes.length ? sizes.reduce((x, y) => x + y, 0) / sizes.length : 0;
     const out = { count, bytes: Math.round(avg * count), approx: count > sizes.length, at: Date.now() };
     try { localStorage.setItem('ml-size-' + labelId, JSON.stringify(out)); } catch (e) {}

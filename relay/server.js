@@ -189,7 +189,7 @@ async function folders(client) {
 /* Dossiers spam du fournisseur (Junk, Spam, Courrier indésirable…) : leur contenu est regroupé dans « Indésirables » */
 const JUNK_RE = /^(junk|spam|bulk|courrier ind|junk e-?mail)/i;
 function junkPaths(list) {
-  return list.filter(m => m.path !== BLOCK_LABEL && !(m.flags && m.flags.has('\\Noselect')) && (m.specialUse === '\\Junk' || JUNK_RE.test(m.name || '') || JUNK_RE.test(m.path))).map(m => m.path);
+  return list.filter(m => nfc(m.path) !== nfc(BLOCK_LABEL) && nfc(m.name) !== nfc(BLOCK_LABEL) && !(m.flags && m.flags.has('\\Noselect')) && (m.specialUse === '\\Junk' || JUNK_RE.test(m.name || '') || JUNK_RE.test(m.path))).map(m => m.path);
 }
 async function sweepJunk(client) {
   let n = 0;
@@ -199,10 +199,17 @@ async function sweepJunk(client) {
     const lock = await client.getMailboxLock(path);
     try {
       const uids = (await client.search({ all: true }, { uid: true })) || [];
-      if (uids.length) { await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true }); await ensureFolder(client, BLOCK_LABEL); await client.messageMove(uids, BLOCK_LABEL, { uid: true }); n += uids.length; }
+      if (uids.length) { await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true }); await client.messageMove(uids, await blockPath(client), { uid: true }); n += uids.length; }
     } finally { lock.release(); }
   }
   return n;
+}
+/* Retrouve le vrai dossier « Indésirables » chez Free, même si son nom est encodé autrement (accents, casse, préfixe) */
+const nfc = x => String(x || '').normalize('NFC').toLowerCase();
+async function blockPath(client) {
+  const list = await client.list();
+  const hit = list.find(m => nfc(m.path) === nfc(BLOCK_LABEL)) || list.find(m => nfc(m.name) === nfc(BLOCK_LABEL));
+  return hit ? hit.path : ensureFolder(client, BLOCK_LABEL);
 }
 async function ensureFolder(client, name) { try { await client.mailboxCreate(name); } catch (e) { /* existe déjà */ } return name; }
 async function resolveFolder(client, key) {
@@ -212,7 +219,7 @@ async function resolveFolder(client, key) {
   if (key === 'TRASH') return f.trash;
   if (key === 'JUNK') return f.junk;
   if (key === 'ARCHIVE') return f.archive || ensureFolder(client, 'Archives');
-  if (key === 'BLOCKED') return ensureFolder(client, BLOCK_LABEL);
+  if (key === 'BLOCKED') return blockPath(client);
   if (f.all.find(m => m.path === key)) return key;
   throw Object.assign(new Error('Dossier inconnu'), { code: 400 });
 }
@@ -484,7 +491,7 @@ async function sweepInbox(client, targets) {
     for await (const m of client.fetch(uids, { envelope: true }, { uid: true })) { const f = addr(m.envelope.from); if (f.email && isBlocked(f.email, [t])) found.add(m.uid); }
   }
   const uids = [...found];
-  if (uids.length) { await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true }); await ensureFolder(client, BLOCK_LABEL); await client.messageMove(uids, BLOCK_LABEL, { uid: true }); }
+  if (uids.length) { await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true }); await client.messageMove(uids, await blockPath(client), { uid: true }); }
   return uids.length;
 }
 async function freeSend(o) {
@@ -593,8 +600,7 @@ async function pollFree() {
       for (const [folder, uids] of Object.entries(toFile)) { try { await ensureFolder(client, folder); await client.messageMove(uids, folder, { uid: true }); } catch (e) { log('règle Free', folder, e.message); } }
       if (toBlock.length) {
         await client.messageFlagsAdd(toBlock, ['\\Seen'], { uid: true });
-        await ensureFolder(client, BLOCK_LABEL);
-        await client.messageMove(toBlock, BLOCK_LABEL, { uid: true });
+        await client.messageMove(toBlock, await blockPath(client), { uid: true });
       }
       const st = await client.status('INBOX', { unseen: true });
       S.badge.free = st.unseen || 0;
@@ -951,7 +957,7 @@ const routes = {
       const lock = await client.getMailboxLock('INBOX');
       try {
         const uids = (await client.search({ from: t }, { uid: true })) || [];
-        if (uids.length) { await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true }); await ensureFolder(client, BLOCK_LABEL); await client.messageMove(uids, BLOCK_LABEL, { uid: true }); }
+        if (uids.length) { await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true }); await client.messageMove(uids, await blockPath(client), { uid: true }); }
         return { ok: true, moved: uids.length };
       } finally { lock.release(); }
     });
