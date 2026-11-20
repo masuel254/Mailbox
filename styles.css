@@ -318,3 +318,4 @@ details.set .ftog[aria-expanded="true"] .chev{transform:rotate(45deg)}
 .tgroup .tedit-box input,.tgroup .tedit-box select{width:100%;height:46px;flex:auto}
 .trow.flash{animation:tflash 1.6s ease}
 @keyframes tflash{0%,40%{background:color-mix(in srgb,var(--accent-fill) 35%,transparent)}100%{background:transparent}}
+#subdirs .card.fold{margin-bottom:12px}#subdirs .chev-r{width:9px;height:9px;border-right:2.5px solid var(--accent);border-bottom:2.5px solid var(--accent);transform:rotate(-45deg);margin:0 10px 0 4px;flex:none}

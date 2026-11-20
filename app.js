@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.10.9';
+const APP_VERSION = '2.10.10';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -324,7 +324,20 @@ async function renderList(key, q) {
     })()}</div>
     ${isSearch && state.aiNote && state.aiNote.q === q ? `<div class="ai-note"><b>✦ ${esc(state.aiNote.resume || 'Recherche de l’assistant')}</b><span>« ${esc(state.aiNote.ask)} » → <code>${esc(q)}</code></span><a href="#/search/${encodeURIComponent(state.aiNote.ask)}" id="ai-raw">Chercher les mots exacts</a></div>` : ''}
     ${isFolderView(key) ? `<div class="banner"><span style="display:flex;flex-direction:column;gap:2px"><span>${title === BLOCK_LABEL ? 'Mails des expéditeurs bloqués' : 'Dossier « ' + esc(title) + ' »'}</span><b id="lab-size" style="color:var(--accent)">Calcul de la taille…</b></span><button class="btn danger" id="btn-empty">${ICON.trash}Tout supprimer</button></div>` : ''}
+    <div id="subdirs"></div>
     <div id="list"><div class="loading">Chargement…</div></div>`;
+  // Sous-dossiers du dossier ouvert : un dossier « thème » ne contient souvent rien lui-même, ses mails sont dans ses sous-dossiers
+  let kids = [];
+  if (isFolderView(key) && title !== BLOCK_LABEL) {
+    const fc = state.folders || LS.get('foldersCache', null);
+    if (String(key).startsWith('F:')) {
+      const path = decodeURIComponent(key.slice(2));
+      kids = ((fc && fc.f) || []).filter(x => { const d = x.delim || '/'; return x.full.startsWith(path + d) && !x.full.slice(path.length + 1).includes(d); });
+    } else {
+      kids = (labelsCache || []).filter(l => l.name.startsWith(title + '/') && !l.name.slice(title.length + 1).includes('/')).map(l => { const c = fc && fc.g ? fc.g.find(x => x.id === l.id) : null; return { full: l.name, href: '#/list/' + encodeURIComponent(l.id), n: c ? c.n : 0, m: c ? c.m : -1 }; });
+    }
+    if (kids.length) $('#subdirs').innerHTML = `<h2 class="sec">Sous-dossiers · ${kids.length}</h2><div class="card fold">${kids.sort((a, c) => a.full.localeCompare(c.full, 'fr')).map(x => `<a class="frow" href="${x.href}">${FOLD_ICON}<span class="nm">${esc(x.full.split(x.delim || '/').pop())}</span>${x.n ? `<span class="fnb">${x.n}</span>` : ''}<span class="chev-r" aria-hidden="true"></span></a>`).join('')}</div>`;
+  }
   $('#btn-search').onclick = () => { const s = $('#searchbar'); s.hidden = !s.hidden; if (!s.hidden) $('#q').focus(); };
   $('#searchbar').onsubmit = async e => {
     e.preventDefault(); const val = $('#q').value.trim(); $('#q').blur(); if (!val) return;
@@ -340,7 +353,7 @@ async function renderList(key, q) {
   $('#btn-select').onclick = () => state.sel ? exitSelect() : enterSelect();
   state.listCtx = { key, q, cacheKey, plain };
   $$('.accounts button[data-acc]').forEach(b => b.onclick = () => { settings.acc = b.dataset.acc; saveSettings(); renderList(key, q); });
-  const be = $('#btn-empty'); if (be) { be.onclick = () => emptyLabel(key, title); labelSize(key).then(t => { const el = $('#lab-size'); if (el) el.textContent = t; }); }
+  const be = $('#btn-empty'); if (be) { be.onclick = () => emptyLabel(key, title); labelSize(key).then(t => { const el = $('#lab-size'); if (!el) return; if (t === 'Vide' && kids.length) { el.textContent = 'Tes mails sont dans ses ' + kids.length + ' sous-dossier' + (kids.length > 1 ? 's' : '') + ', ci-dessous'; be.hidden = true; } else el.textContent = t; }); }
   bindListGestures($('#list'));
   let cached = state.lists[cacheKey];
   // Ouverture instantanée : dernière liste connue gardée sur l'iPhone (réception, non lus, envoyés), actualisée aussitôt
@@ -445,7 +458,7 @@ function itemHTML(it, cls, sentView) {
 function drawList(data, plain) {
   const l = $('#list'); if (!l) return;
   state.showAcc = freeOn();
-  if (!data.items.length) { l.innerHTML = '<div class="empty">Aucun message ici.</div>'; return; }
+  if (!data.items.length) { l.innerHTML = $('#subdirs') && $('#subdirs').innerHTML ? '<div class="empty">Aucun mail directement dans ce dossier : ouvre un sous-dossier ci-dessus.</div>' : '<div class="empty">Aucun message ici.</div>'; return; }
   // Recherche par taille (larger:) : du plus gros au plus petit, taille affichée
   const ck = String(state.current);
   if (state.listCtx && state.listCtx.key === 'SEARCH' && state.listCtx.cacheKey === ck && /\b(larger|size):/i.test(state.listCtx.q || '')) {
