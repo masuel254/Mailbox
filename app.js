@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.1.0';
+const APP_VERSION = '3.1.1';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -331,6 +331,7 @@ async function renderList(key, q) {
       <button class="icon-btn" id="btn-refresh" aria-label="Actualiser">${ICON.refresh}</button>
     </div>
     <form class="searchbar" id="searchbar" ${isSearch ? '' : 'hidden'}><input type="search" id="q" placeholder="${settings.ai ? 'Demande : la promo Devred de mon anniversaire' : 'Rechercher (ex. from:claire facture)'}" value="${esc(q || '')}" enterkeyhint="search" autocomplete="off"></form>
+    <div id="sq" class="sq" hidden></div>
     ${(() => {
       const inboxish = key === 'INBOX' || key === 'UNREAD';
       const accs = freeOn() && !isFreeDir && (isSearch || freeFolderOf(key)) ? `<div class="accounts" role="tablist" aria-label="Comptes">
@@ -356,9 +357,27 @@ async function renderList(key, q) {
     }
     if (kids.length) $('#subdirs').innerHTML = `<h2 class="sec">Sous-dossiers · ${kids.length}</h2><div class="card fold">${kids.sort((a, c) => a.full.localeCompare(c.full, 'fr')).map(x => `<a class="frow" href="${x.href}">${FOLD_ICON}<span class="nm">${esc(x.full.split(x.delim || '/').pop())}</span>${x.n ? `<span class="fnb">${x.n}</span>` : ''}<span class="chev-r" aria-hidden="true"></span></a>`).join('')}</div>`;
   }
-  $('#btn-search').onclick = () => { const s = $('#searchbar'); s.hidden = !s.hidden; if (!s.hidden) $('#q').focus(); };
+  // Loupe : suggestions de recherche dès l'ouverture
+  const QUICK = [['📎 Avec pièce jointe', 'has:attachment'], ['🔵 Non lus', 'is:unread'], ['📅 Cette semaine', 'newer_than:7d'], ['🧾 Factures', 'facture OR invoice OR reçu OR receipt'], ['✈️ Réservations', 'réservation OR booking OR confirmation OR billet'], ['📦 Commandes', 'commande OR livraison OR expédition OR order'], ['🐘 Gros mails', 'larger:5M'], ['⭐ Suivis', 'is:starred']];
+  const IDEAS = ['mes plus gros mails', 'la dernière facture EDF', 'le mail de mon notaire', 'mes réservations du Cap-Vert'];
+  const drawSq = () => {
+    const box = $('#sq'); if (!box) return;
+    const recent = LS.get('recentSearches', []);
+    box.innerHTML = (recent.length ? `<div class="sq-h">Récentes<button type="button" class="linkish" id="sq-clear">Effacer</button></div><div class="sq-row">${recent.map((r, i) => `<button type="button" class="sq-chip" data-r="${i}">🕘 ${esc(r)}</button>`).join('')}</div>` : '')
+      + `<div class="sq-h">Raccourcis</div><div class="sq-row">${QUICK.map((x, i) => `<button type="button" class="sq-chip" data-k="${i}">${esc(x[0])}</button>`).join('')}</div>`
+      + (settings.ai && relayOn() ? `<div class="sq-h">✦ Demande en clair</div><div class="sq-row">${IDEAS.map((x, i) => `<button type="button" class="sq-chip ai" data-i="${i}">${esc(x)}</button>`).join('')}</div>` : '');
+    $$('[data-r]', box).forEach(b => b.onclick = () => runSearch(recent[+b.dataset.r]));
+    $$('[data-k]', box).forEach(b => b.onclick = () => { state.aiNote = null; box.hidden = true; location.hash = '#/search/' + encodeURIComponent(QUICK[+b.dataset.k][1]); });
+    $$('[data-i]', box).forEach(b => b.onclick = () => runSearch(IDEAS[+b.dataset.i]));
+    const c = $('#sq-clear'); if (c) c.onclick = () => { LS.set('recentSearches', []); drawSq(); };
+  };
+  const runSearch = v => { $('#q').value = v; $('#searchbar').requestSubmit(); };
+  $('#btn-search').onclick = () => { const s = $('#searchbar'); s.hidden = !s.hidden; $('#sq').hidden = s.hidden; if (!s.hidden) { drawSq(); $('#q').focus(); } };
+  $('#q').addEventListener('focus', () => { drawSq(); $('#sq').hidden = false; });
+  $('#q').addEventListener('input', e => { $('#sq').hidden = !!e.target.value.trim(); });
   $('#searchbar').onsubmit = async e => {
     e.preventDefault(); const val = $('#q').value.trim(); $('#q').blur(); if (!val) return;
+    $('#sq').hidden = true; LS.set('recentSearches', [val].concat(LS.get('recentSearches', []).filter(x => x !== val)).slice(0, 6));
     const natural = settings.ai && relayOn() && !/\w:\S/.test(val) && val.split(/\s+/).length >= 3;
     if (natural) {
       toast('L’assistant cherche…');
@@ -1423,6 +1442,7 @@ const GUIDE = [
     <p><b>Résumer</b> (en haut d’un mail) : résumé, points clés, suivi de l’échange (qui a dit quoi, quand), engagements et échéances. Chaque échéance a un bouton <b>+ Tâche</b>.</p>
     <p><b>Réponse IA</b> : 3 propositions (accepter, décliner, demander une précision) ou selon ta consigne (« accepter jeudi, proposer 10 h »). <b>Utiliser et modifier</b> ouvre la réponse pré-remplie.</p>
     <p><b>Classer</b> : une suggestion 💡 apparaît en haut (là où sont déjà les mails de cet expéditeur, sinon « Suggérer un dossier »). La case <b>Toujours ranger…</b> crée une règle automatique pour les prochains mails.</p>
+    <p>En touchant la <b>loupe</b>, des suggestions s’affichent : tes recherches récentes, des raccourcis (pièce jointe, non lus, cette semaine, factures, réservations, commandes, gros mails, suivis) et des exemples de demandes en clair.</p>
     <p><b>Recherche</b> : écris une phrase dans la loupe (« la promo Devred de mon anniversaire », « mes plus gros mails »). S’il trouve moins de 3 mails, il bascule tout seul sur la <b>recherche par le sens</b> : il déduit les expéditeurs probables, les synonymes et la période, examine jusqu’à 80 mails Gmail et Free, puis les classe en « Correspond le mieux » et « Peut-être aussi », avec la raison de chaque résultat.</p>
     <div class="tip">Ces fonctions envoient à Groq le texte du mail concerné, uniquement quand tu touches le bouton. Le rangement des dossiers n’envoie que leurs noms.</div>`],
   ['🔔', 'Pastille et notifications', `
