@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '4.3.1';
+const APP_VERSION = '4.3.2';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -3166,11 +3166,18 @@ async function agendaSynthesis(scope, btn) {
     ]);
     const fmtD = d => d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
     const lines = [];
-    g.filter(e => e.status !== 'cancelled').forEach(e => { const t = evTimes(e); lines.push([t.s, fmtD(t.s) + ' · ' + (t.allDay ? 'journée' : hhmm(t.s) + '-' + hhmm(t.e)) + ' · ' + (e.summary || '(sans titre)') + (e.location ? ' · lieu : ' + e.location : '') + ' [Google]']); });
-    t.forEach(x => { const s = x.allDay ? new Date(x.date + 'T00:00') : new Date(x.start), e = x.allDay ? null : new Date(x.end); lines.push([s, fmtD(s) + ' · ' + (x.allDay ? 'journée' : hhmm(s) + '-' + hhmm(e)) + ' · ' + x.title + (x.location ? ' · lieu : ' + x.location : '') + ' [TimeTree ' + x.cal + ']']); });
-    tk.forEach(x => { const s = new Date(x.due); lines.push([s, fmtD(s) + ' · ' + hhmm(s) + ' · tâche : ' + x.title]); });
+    // événements sur plusieurs jours (voyage, vacances) : décrits avec leurs dates de début et de fin
+    const when = (s, e, allDay) => {
+      if (!allDay) return fmtD(s) + ' · ' + hhmm(s) + '-' + hhmm(e);
+      const last = addDays(e, -1);
+      return dayKey(last) > dayKey(s) ? 'du ' + fmtD(s) + ' au ' + fmtD(last) + ' (plusieurs jours, en cours sur la période)' : fmtD(s) + ' · journée entière';
+    };
+    g.filter(e => e.status !== 'cancelled').forEach(e => { const t = evTimes(e); lines.push([t.s, when(t.s, t.e, t.allDay) + ' · ' + (e.summary || '(sans titre)') + (e.location ? ' · lieu : ' + e.location : '') + ' [Google]', t.e]); });
+    t.forEach(x => { const s = x.allDay ? new Date(x.date + 'T00:00') : new Date(x.start), e = x.allDay ? addDays(new Date(x.endDate + 'T00:00'), 1) : new Date(x.end); lines.push([s, when(s, e, x.allDay) + ' · ' + x.title + (x.location ? ' · lieu : ' + x.location : '') + ' [TimeTree ' + x.cal + ']', e]); });
+    tk.forEach(x => { const s = new Date(x.due); lines.push([s, fmtD(s) + ' · ' + hhmm(s) + ' · tâche : ' + x.title, s]); });
     // le relais renvoie une marge d'un jour : on ne garde que la période demandée
-    for (let i = lines.length - 1; i >= 0; i--) if (lines[i][0] < from || lines[i][0] >= to) lines.splice(i, 1);
+    // garder tout ce qui chevauche la période (un voyage commencé avant compte aussi)
+    for (let i = lines.length - 1; i >= 0; i--) { const [s, , e] = lines[i]; if (s >= to || Math.max(+e, +s + 1) <= +from) lines.splice(i, 1); }
     lines.sort((a, b) => a[0] - b[0]);
     const label = scope === 'week' ? 'semaine du ' + fmtD(from) : fmtD(from);
     if (!lines.length) { out.innerHTML = `<div class="ai-note"><b>Rien de prévu</b><span>Aucun événement ${scope === 'week' ? 'cette semaine' : 'ce jour-là'} : ${esc(label)}.</span></div>`; return; }
