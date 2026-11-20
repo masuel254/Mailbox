@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.9.1';
+const APP_VERSION = '3.9.2';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -2892,7 +2892,7 @@ async function loadContacts(force) {
     if (p) { p.count = (p.count || 0) + t.count; p.last = Math.max(p.last || 0, t.last || 0); }
     else people.push({ rn: null, name: t.name || '', emails: [t.email], phones: [], org: '', count: t.count, last: t.last });
   });
-  people.forEach(p => { if (!p.name) p.name = p.org || p.emails[0] || '(sans nom)'; p.key = p.rn || p.emails[0]; });
+  people.forEach(p => { if (!p.name) p.name = p.org || p.emails[0] || p.phones[0] || '(sans nom)'; p.key = p.rn || p.emails[0]; });
   LS.set('gcontacts', { at: Date.now(), list: people });
   return people;
 }
@@ -2926,7 +2926,7 @@ async function renderContacts() {
       box.innerHTML = (fvl.length ? `<div class="day-h">Favoris</div><div class="card fold">${fvl.map(row).join('')}</div>` : '')
         + [...groups.entries()].map(([g, ps]) => `<div class="day-h">${g}</div><div class="card fold">${ps.slice(0, 400).map(row).join('')}</div>`).join('');
     }
-    $$('.ct-row', box).forEach(b => b.onclick = () => { const p = list.find(x => x.key === b.dataset.k); if (p) contactSheet(p, () => { list = (LS.get('gcontacts', {}).list) || list; draw(); }); });
+    $$('.ct-row', box).forEach(b => b.onclick = () => { const p = list.find(x => x.key === b.dataset.k); if (p) contactSheet(p, () => { const c = LS.get('gcontacts', null); if (c && c.list) { list = c.list; draw(); } else load(true); }); });
   };
   $('#ct-q').oninput = draw;
   $$('#ct-seg button').forEach(b => b.onclick = () => { LS.set('ctab', b.dataset.t); $$('#ct-seg button').forEach(x => x.classList.toggle('on', x === b)); draw(); });
@@ -2963,32 +2963,42 @@ function contactSheet(p, onChange) {
   $('#cs-fav').onclick = () => { const f = new Set(LS.get('favContacts', [])); f.has(p.key) ? f.delete(p.key) : f.add(p.key); LS.set('favContacts', [...f]); toast(f.has(p.key) ? 'Ajouté aux favoris' : 'Retiré des favoris'); closeSheet(); if (onChange) onChange(); };
 }
 function contactEdit(p, onChange) {
+  const multi = (id, label, vals, type) => `<div class="f-multi" id="${id}"><span class="f-lab">${label}</span>${(vals.length ? vals : ['']).map(v => `<input type="${type}" ${type === 'email' ? 'inputmode="email"' : 'inputmode="tel"'} autocomplete="off" value="${esc(v)}">`).join('')}<button type="button" class="linkish" data-add="${id}">+ Ajouter ${type === 'email' ? 'un mail' : 'un numéro'}</button></div>`;
   openSheet(`<span class="grip"></span><h2>${p.rn ? 'Modifier le contact' : 'Nouveau contact'}</h2>
-    <label class="f">Nom<input id="ce-name" autocomplete="off" value="${esc(p.rn || p.name !== p.emails[0] ? p.name : '')}"></label>
+    <label class="f">Nom<input id="ce-name" autocomplete="off" value="${esc(p.rn || (p.name !== p.emails[0] && p.name !== p.phones[0]) ? (p.name === '(sans nom)' ? '' : p.name) : '')}"></label>
     <label class="f">Société<input id="ce-org" autocomplete="off" value="${esc(p.org || '')}"></label>
-    <label class="f">Mail<input id="ce-mail" type="email" inputmode="email" autocomplete="off" value="${esc(p.emails[0] || '')}"></label>
-    <label class="f">Téléphone<input id="ce-tel" type="tel" inputmode="tel" autocomplete="off" value="${esc(p.phones[0] || '')}"></label>
-    <p class="fhint" style="margin:0">Enregistré dans tes contacts Google : il apparaît aussi dans Contacts sur l’iPhone si ton compte Google y est synchronisé.</p>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="ce-ok">Enregistrer</button></div>`);
+    ${multi('ce-mails', 'Mails', p.emails, 'email')}
+    ${multi('ce-tels', 'Téléphones', p.phones, 'tel')}
+    <p class="fhint" style="margin:0">Enregistré dans tes contacts Google : visible aussi dans Contacts sur l’iPhone si ton compte Google y est synchronisé.</p>
+    <div style="display:grid;grid-template-columns:${p.rn ? '1fr 1fr 1fr' : '1fr 1fr'};gap:10px">${p.rn ? '<button class="btn danger" id="ce-del">Supprimer</button>' : ''}<button class="btn" data-close>Annuler</button><button class="btn primary" id="ce-ok">Enregistrer</button></div>`);
+  $$('[data-add]').forEach(b => b.onclick = () => { const box = $('#' + b.dataset.add); const first = $('input', box); const n = first.cloneNode(); n.value = ''; box.insertBefore(n, b); n.focus(); });
+  const vals = id => $$('#' + id + ' input').map(x => x.value.trim()).filter(Boolean);
+  const fail = e => { if (e.message === 'auth') return; if (e.kind) { closeSheet(); openSheet('<span class="grip"></span>' + googleHelp(e, 'Contacts') + '<button class="btn" data-close>Fermer</button>'); bindHelp(); } else toast('Échec : ' + e.message); };
   $('#ce-ok').onclick = async () => {
-    const name = $('#ce-name').value.trim(), org = $('#ce-org').value.trim(), mail = $('#ce-mail').value.trim().toLowerCase(), tel = $('#ce-tel').value.trim();
-    if (!name && !org && !mail) { toast('Indique au moins un nom ou un mail'); return; }
+    const name = $('#ce-name').value.trim(), org = $('#ce-org').value.trim(), mails = vals('ce-mails').map(x => x.toLowerCase()), tels = vals('ce-tels');
+    if (!name && !org && !mails.length && !tels.length) { toast('Indique au moins un nom, un mail ou un numéro'); return; }
+    const bad = mails.find(m => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m)); if (bad) { toast('Mail invalide : ' + bad); return; }
     const sp = name.split(/\s+/);
-    const body = {
-      names: name ? [{ givenName: sp[0], familyName: sp.slice(1).join(' ') }] : [],
-      organizations: org ? [{ name: org }] : [],
-      emailAddresses: [mail].concat(p.emails.slice(1)).filter(Boolean).map(value => ({ value })),
-      phoneNumbers: [tel].concat(p.phones.slice(1)).filter(Boolean).map(value => ({ value }))
-    };
+    const body = { names: name ? [{ givenName: sp[0], familyName: sp.slice(1).join(' ') }] : [], organizations: org ? [{ name: org }] : [], emailAddresses: mails.map(value => ({ value })), phoneNumbers: tels.map(value => ({ value })) };
     const b = $('#ce-ok'); b.disabled = true; b.textContent = 'Enregistrement…';
     try {
       if (p.rn) {
         const cur = await gx('https://people.googleapis.com/v1/' + p.rn + '?personFields=metadata');
         await gx('https://people.googleapis.com/v1/' + p.rn + ':updateContact?updatePersonFields=names,organizations,emailAddresses,phoneNumbers', { method: 'PATCH', body: Object.assign({ etag: cur.etag }, body) });
       } else await gx('https://people.googleapis.com/v1/people:createContact', { method: 'POST', body });
-      LS.del('gcontacts'); closeSheet(); toast('Contact enregistré');
+      LS.del('gcontacts'); closeSheet(); toast(p.rn ? 'Contact modifié' : 'Contact créé');
       if (onChange) onChange();
-    } catch (e) { b.disabled = false; b.textContent = 'Enregistrer'; if (e.message === 'auth') return; if (e.kind) { closeSheet(); openSheet('<span class="grip"></span>' + googleHelp(e, 'Contacts') + '<button class="btn" data-close>Fermer</button>'); bindHelp(); } else toast('Échec : ' + e.message); }
+    } catch (e) { b.disabled = false; b.textContent = 'Enregistrer'; fail(e); }
+  };
+  const del = $('#ce-del'); if (del) del.onclick = async () => {
+    if (!confirm('Supprimer définitivement « ' + (p.name || 'ce contact') + ' » de tes contacts Google ?')) return;
+    del.disabled = true;
+    try {
+      await gx('https://people.googleapis.com/v1/' + p.rn + ':deleteContact', { method: 'DELETE' });
+      const f = new Set(LS.get('favContacts', [])); f.delete(p.key); LS.set('favContacts', [...f]);
+      LS.del('gcontacts'); closeSheet(); toast('Contact supprimé');
+      if (onChange) onChange();
+    } catch (e) { del.disabled = false; fail(e); }
   };
 }
 

@@ -457,3 +457,8 @@ body.selecting .item .mark{display:flex}
 .sugg div{display:flex;gap:8px;margin-top:6px}.sugg .btn{height:38px;font-size:.82rem}
 .ev-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.ev-grid label:first-child{grid-column:1/-1}.ev-grid input{min-width:0;width:100%;box-sizing:border-box}
 #best .item .snip{white-space:normal;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;color:var(--text);font-style:italic}
+.f-multi{display:flex;flex-direction:column;gap:6px}
+.f-lab{font-size:.75rem;color:var(--muted)}
+.f-multi .linkish{align-self:flex-start;padding:4px 0}
+.f-multi input{height:48px;border-radius:11px;border:1px solid var(--line2);background:var(--bg);color:var(--text);padding:0 12px;font-size:1rem;outline:none;width:100%;box-sizing:border-box}
+.f-multi input:focus{border-color:var(--accent)}
