@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.3.0';
+const APP_VERSION = '3.3.1';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -1899,11 +1899,19 @@ function snoozeSheet(ctx) {
   $('#sn-ok').onclick = () => go(new Date($('#sn-at').value).getTime());
 }
 /* ---------- Recherche par le sens : plusieurs pistes, puis l'IA trie les candidats ---------- */
+const smartCache = {};
 async function renderSmart(question) {
   const v = $('#view');
-  v.innerHTML = `<div class="sticky-head"><a class="back back-sm" href="#/list/INBOX">${ICON.back}Réception</a><div class="top"><h1>Recherche</h1></div></div>
-    <div class="ai-note"><b>✦ Recherche par le sens</b><span>« ${esc(question)} »</span><span id="sm-step">L’assistant explore plusieurs pistes…</span></div><div id="list"><div class="loading">Recherche…</div></div>`;
+  v.innerHTML = `<div class="sticky-head"><a class="back back-sm" href="#/list/INBOX">${ICON.back}Réception</a><div class="top"><h1>Recherche</h1></div>
+    <form class="searchbar" id="sm-form"><input type="search" id="sm-q" value="${esc(question)}" enterkeyhint="search" autocomplete="off"></form></div>
+    <div class="ai-note"><b>✦ Recherche par le sens</b><span id="sm-step">L’assistant explore plusieurs pistes…</span></div><div id="list"><div class="loading">Recherche…</div></div>`;
+  $('#sm-form').onsubmit = e => { e.preventDefault(); const v2 = $('#sm-q').value.trim(); $('#sm-q').blur(); if (!v2) return; if (v2 === question) { delete smartCache[question]; renderSmart(question); } else location.hash = '#/smart/' + encodeURIComponent(v2); };
   const step = t => { const e = $('#sm-step'); if (e) e.textContent = t; };
+  // Résultat déjà calculé (retour depuis un mail) : affichage immédiat, sans relancer l'IA
+  const c = smartCache[question];
+  if (c && Date.now() - c.at < 30 * 60000) { step(c.step); state.showAcc = freeOn(); state.dayMode = false; $('#list').innerHTML = c.html; setTimeout(() => scrollTo(0, c.y || 0), 30); return; }
+  const save = () => { smartCache[question] = { at: Date.now(), step: ($('#sm-step') || {}).textContent || '', html: ($('#list') || {}).innerHTML || '' }; };
+  window.addEventListener('hashchange', function keepY() { if (smartCache[question]) smartCache[question].y = scrollY; window.removeEventListener('hashchange', keepY); });
   let plan;
   try { plan = await rapi('/ai/smart', { method: 'POST', body: { q: question, today: today() } }); } catch (e) { $('#list').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   const qs = (plan.queries || []).filter(Boolean).slice(0, 6);
@@ -1932,7 +1940,7 @@ async function renderSmart(question) {
     const loc = all.filter(x => hits(x) > 0);
     state.showAcc = freeOn(); state.dayMode = false;
     $('#list').innerHTML = loc.length ? `<h2 class="sec">Contiennent les mots recherchés · ${loc.length}</h2>` + loc.map(i => itemHTML(Object.assign({}, i, { unread: false }), '')).join('') : '<div class="empty">Rien de pertinent trouvé. Réessaie dans une minute ou ajoute un détail (nom, ville, mois).</div>';
-    return;
+    save(); return;
   }
   const mk = r => Object.assign({}, all[r.i], { snippet: '✦ ' + (r.why || ''), unread: false });
   const best = ranked.filter(r => (r.score == null ? 7 : r.score) >= 7).map(mk), maybe = ranked.filter(r => r.score != null && r.score < 7).map(mk);
@@ -1943,6 +1951,7 @@ async function renderSmart(question) {
       + (maybe.length ? `<h2 class="sec">Peut-être aussi · ${maybe.length}</h2>` + maybe.map(i => itemHTML(i, '')).join('') : '')
       + `<details class="set" style="margin-top:12px"><summary><span class="set-t">Pistes explorées</span><span class="chev"></span></summary><div class="card" style="font-size:.8rem;color:var(--muted)">${qs.map(q => `<code>${esc(q)}</code>`).join('<br>')}${plan.indices ? '<br><br>' + esc(plan.indices) : ''}</div></details>`
     : '<div class="empty">Aucun mail ne correspond vraiment. Ajoute un détail : le nom de l’entreprise, la ville, le mois…</div>');
+  save();
 }
 /* ---------- Tâches ---------- */
 async function taskSheet(t, ctx) {
