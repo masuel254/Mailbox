@@ -252,7 +252,7 @@ async function freeList(folderKey, unread, before, limit) {
         for await (const m of client.fetch(uids, { envelope: true, flags: true, internalDate: true, bodyStructure: true, source: { start: 0, maxLength: 6000 } }, { uid: true })) {
           let snippet = '';
           try { const p = await simpleParser(m.source); snippet = snip(p.text); } catch (e) {}
-          items.push({ text: text.replace(/\s+/g, ' ').slice(0, 4000), uid: m.uid, folder, subject: m.envelope.subject || '(sans objet)', from: addr(m.envelope.from), to: (m.envelope.to || []).map(x => x.name || x.address).join(', '), date: +new Date(m.internalDate || m.envelope.date), seen: m.flags.has('\\Seen'), flagged: m.flags.has('\\Flagged'), snippet, att: hasAtt(m.bodyStructure) });
+          items.push({ uid: m.uid, folder, subject: m.envelope.subject || '(sans objet)', from: addr(m.envelope.from), to: (m.envelope.to || []).map(x => x.name || x.address).join(', '), date: +new Date(m.internalDate || m.envelope.date), seen: m.flags.has('\\Seen'), flagged: m.flags.has('\\Flagged'), snippet, att: hasAtt(m.bodyStructure) });
         }
       }
       items.sort((a, b) => b.date - a.date);
@@ -303,7 +303,7 @@ async function freeSearch(q, limit, deep) {
           try { const p = await simpleParser(m.source); text = p.text || ''; snippet = snip(text); } catch (e) {}
           if (!anyOf && words.length > 1) { const hay = ((m.envelope.subject || '') + ' ' + JSON.stringify(m.envelope.from || []) + ' ' + text).toLowerCase(); if (!words.slice(1).every(w => hay.includes(w))) continue; }
           const key = folder + ':' + m.uid; if (seen.has(key)) continue; seen.add(key);
-          items.push({ uid: m.uid, folder, subject: m.envelope.subject || '(sans objet)', from: addr(m.envelope.from), to: (m.envelope.to || []).map(x => x.name || x.address).join(', '), toEmail: ((m.envelope.to || [])[0] || {}).address || '', date: +new Date(m.internalDate || m.envelope.date), seen: m.flags.has('\\Seen'), flagged: m.flags.has('\\Flagged'), snippet, size: m.size || 0, mine: folder === f.sent });
+          items.push({ text: text.replace(/\s+/g, ' ').slice(0, 4000), uid: m.uid, folder, subject: m.envelope.subject || '(sans objet)', from: addr(m.envelope.from), to: (m.envelope.to || []).map(x => x.name || x.address).join(', '), toEmail: ((m.envelope.to || [])[0] || {}).address || '', date: +new Date(m.internalDate || m.envelope.date), seen: m.flags.has('\\Seen'), flagged: m.flags.has('\\Flagged'), snippet, size: m.size || 0, mine: folder === f.sent });
         }
       } finally { lock.release(); }
     }
