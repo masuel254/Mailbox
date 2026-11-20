@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.1.2';
+const APP_VERSION = '3.2.0';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -261,7 +261,7 @@ const freeFolderOf = key => FREE_FOLDERS[key] || (String(key).startsWith('F:') ?
 const curAcc = () => freeOn() ? (settings.acc || 'all') : 'gmail';
 function parseFreeId(id) { const p = id.split(':'); return { uid: +p[1], folder: p.slice(2).join(':') }; }
 function freeItem(x) {
-  return { id: 'f:' + x.uid + ':' + x.folder, acc: 'free', folder: x.folder, uid: x.uid, subject: fixMojibake(x.subject), from: x.from.name || x.from.email, fromEmail: (x.from.email || '').toLowerCase(), fromName: x.from.name || '', to: x.to || '', sentByMe: false, snippet: cleanSnippet(x.snippet), date: x.date, count: 1, size: x.size || 0, att: !!x.att, unread: !x.seen, starred: !!x.flagged, labels: [] };
+  return { id: 'f:' + x.uid + ':' + x.folder, acc: 'free', folder: x.folder, uid: x.uid, subject: fixMojibake(x.subject), from: x.from.name || x.from.email, fromEmail: (x.from.email || '').toLowerCase(), fromName: x.from.name || '', to: x.to || '', sentByMe: false, snippet: cleanSnippet(x.snippet), date: x.date, count: 1, size: x.size || 0, att: !!x.att, mine: !!x.mine, toEmail: (x.toEmail || '').toLowerCase(), unread: !x.seen, starred: !!x.flagged, labels: [] };
 }
 function route() {
   auth.handleRedirect();
@@ -361,7 +361,9 @@ async function renderList(key, q) {
   $('#searchbar').onsubmit = async e => {
     e.preventDefault(); const val = $('#q').value.trim(); $('#q').blur(); if (!val) return;
 
-    const natural = settings.ai && relayOn() && !/\w:\S/.test(val) && val.split(/\s+/).length >= 3;
+    const words = val.split(/\s+/).length;
+    const natural = settings.ai && relayOn() && !/\w:\S/.test(val) && words >= 3;
+    if (natural && words >= 5) { state.aiNote = { ask: val }; location.hash = '#/smart/' + encodeURIComponent(val); return; }
     if (natural) {
       toast('L’assistant cherche…');
       try { const r = await rapi('/ai/search', { method: 'POST', body: { q: val, today: new Date().toISOString().slice(0, 10) } }); state.aiNote = { ask: val, q: r.q, resume: r.resume }; location.hash = '#/search/' + encodeURIComponent(r.q); return; }
@@ -454,6 +456,7 @@ function summarize(t) {
     count: msgs.length,
     size: msgs.reduce((a, m) => a + (m.sizeEstimate || 0), 0),
     att: msgs.some(m => /multipart\/mixed/i.test((m.payload && m.payload.mimeType) || '')),
+    mine: msgs.some(m => (m.labelIds || []).includes('SENT')),
     unread: msgs.some(m => (m.labelIds || []).includes('UNREAD')),
     starred: labels.has('STARRED'),
     labels: [...labels].filter(id => /^Label_/.test(id))
@@ -1425,7 +1428,7 @@ const GUIDE = [
     <p><b>Résumer</b> (en haut d’un mail) : résumé, points clés, suivi de l’échange (qui a dit quoi, quand), engagements et échéances. Chaque échéance a un bouton <b>+ Tâche</b>.</p>
     <p><b>Réponse IA</b> : 3 propositions (accepter, décliner, demander une précision) ou selon ta consigne (« accepter jeudi, proposer 10 h »). <b>Utiliser et modifier</b> ouvre la réponse pré-remplie.</p>
     <p><b>Classer</b> : une suggestion 💡 apparaît en haut (là où sont déjà les mails de cet expéditeur, sinon « Suggérer un dossier »). La case <b>Toujours ranger…</b> crée une règle automatique pour les prochains mails.</p>
-    <p><b>Recherche</b> : écris une phrase dans la loupe (« la promo Devred de mon anniversaire », « mes plus gros mails »). S’il trouve moins de 3 mails, il bascule tout seul sur la <b>recherche par le sens</b> : il déduit les expéditeurs probables, les synonymes et la période, examine jusqu’à 80 mails Gmail et Free, puis les classe en « Correspond le mieux » et « Peut-être aussi », avec la raison de chaque résultat.</p>
+    <p><b>Recherche</b> : écris une phrase dans la loupe (« la promo Devred de mon anniversaire », « mes plus gros mails »). Une longue phrase (« un gars est venu réparer mon portail il y a quelque temps, retrouve nos échanges ») part directement en recherche par le sens ; une phrase courte qui trouve moins de 3 mails y bascule toute seule sur la <b>recherche par le sens</b> : il déduit les expéditeurs probables, les synonymes et la période, examine jusqu’à 80 mails Gmail et Free, tous dossiers confondus, puis les classe en « Correspond le mieux » et « Peut-être aussi », avec la raison de chaque résultat. Si une personne ou une entreprise ressort, <b>Tous les échanges avec…</b> affiche toute votre correspondance.</p>
     <div class="tip">Ces fonctions envoient à Groq le texte du mail concerné, uniquement quand tu touches le bouton. Le rangement des dossiers n’envoie que leurs noms.</div>`],
   ['🔔', 'Pastille et notifications', `
     <p>Le serveur prévient l'iPhone à chaque nouveau mail : notification <b>discrète</b> (sans son) et pastille sur l'icône.</p>
@@ -1879,17 +1882,17 @@ async function renderSmart(question) {
   const all = [...cand.values()].sort((a, b) => b.date - a.date).slice(0, 80);
   if (!all.length) { $('#list').innerHTML = '<div class="empty">Rien trouvé, même en élargissant. Essaie avec un autre mot ou un expéditeur.</div>'; return; }
   step(all.length + ' mails candidats, tri par pertinence…');
-  let ranked = [];
-  try { ranked = ((await rapi('/ai/rank', { method: 'POST', body: { q: question, indices: plan.indices || '', items: all.map((x, i) => ({ i, date: new Date(x.date).toLocaleDateString('fr-FR'), from: x.from, subject: x.subject, snippet: x.snippet })) } })).results || []).filter(r => all[r.i]); } catch (e) { toast(e.message); }
+  let ranked = [], contact = null;
+  try { const rr = await rapi('/ai/rank', { method: 'POST', body: { q: question, indices: plan.indices || '', items: all.map((x, i) => ({ i, date: new Date(x.date).toLocaleDateString('fr-FR'), from: x.mine && x.count === 1 ? 'Samuel → ' + (x.to || '') : x.from, email: x.fromEmail || x.toEmail || '', n: x.count, mine: x.mine, subject: x.subject, snippet: x.snippet })) } }) ; contact = rr.contact && rr.contact.email && /@/.test(rr.contact.email) ? rr.contact : null; ranked = (rr.results || []).filter(r => all[r.i]); } catch (e) { toast(e.message); }
   const mk = r => Object.assign({}, all[r.i], { snippet: '✦ ' + (r.why || ''), unread: false });
   const best = ranked.filter(r => (r.score == null ? 7 : r.score) >= 7).map(mk), maybe = ranked.filter(r => r.score != null && r.score < 7).map(mk);
   step(ranked.length ? (best.length + maybe.length) + ' résultat' + (best.length + maybe.length > 1 ? 's' : '') + ' sur ' + all.length + ' mails examinés' : 'Tri impossible, voici tous les candidats');
   state.showAcc = freeOn(); state.dayMode = false;
-  $('#list').innerHTML = ranked.length
+  $('#list').innerHTML = (contact ? `<a class="set-link contact-link" href="#/search/${encodeURIComponent('from:' + contact.email + ' OR to:' + contact.email)}"><span class="set-t">👤 Tous les échanges avec ${esc(contact.name || contact.email)}</span><span class="set-s">${esc(contact.email)}</span><span class="chev-r" aria-hidden="true"></span></a>` : '') + (ranked.length
     ? (best.length ? `<h2 class="sec">Correspond le mieux · ${best.length}</h2>` + best.map(i => itemHTML(i, '')).join('') : '')
       + (maybe.length ? `<h2 class="sec">Peut-être aussi · ${maybe.length}</h2>` + maybe.map(i => itemHTML(i, '')).join('') : '')
       + `<details class="set" style="margin-top:12px"><summary><span class="set-t">Pistes explorées</span><span class="chev"></span></summary><div class="card" style="font-size:.8rem;color:var(--muted)">${qs.map(q => `<code>${esc(q)}</code>`).join('<br>')}${plan.indices ? '<br><br>' + esc(plan.indices) : ''}</div></details>`
-    : all.map(i => itemHTML(i, '')).join('');
+    : all.map(i => itemHTML(i, '')).join(''));
 }
 /* ---------- Tâches ---------- */
 async function taskSheet(t, ctx) {
