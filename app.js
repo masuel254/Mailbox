@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '4.1.0';
+const APP_VERSION = '4.2.0';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -3132,8 +3132,15 @@ async function renderAgenda() {
     const it = items.find(i => i.kind === 'tt' && i.x.id === b.dataset.tt); if (!it) return; const x = it.x;
     openSheet(`<span class="grip"></span><h2>${esc(x.title)}</h2><p class="fhint" style="margin:0"><span class="tt-tag">TimeTree</span> ${esc(x.cal)}</p>
       <div class="ct-info"><div>📅 ${esc(it.s.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }))}${it.allDay ? ' · journée entière' : ' · ' + hhmm(it.s) + (it.e > it.s ? ' – ' + hhmm(it.e) : '')}</div>${x.location ? `<div>📍 ${esc(x.location)}</div>` : ''}${x.note ? `<div>📝 ${esc(x.note)}</div>` : ''}</div>
-      <p class="fhint" style="margin:0">Lecture seule : pour le modifier, passe par l’app TimeTree.</p>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn" id="tt-copy">Copier dans Google Agenda</button><button class="btn" data-close>Fermer</button></div>`);
+      <p class="fhint" style="margin:0">Pour le modifier, passe par l’app TimeTree.</p>
+      <button class="btn" id="tt-copy">Copier dans Google Agenda</button>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn danger" id="tt-del">🗑 Supprimer</button><button class="btn" data-close>Fermer</button></div>`);
+    $('#tt-del').onclick = async () => {
+      if (!confirm('Supprimer « ' + x.title + ' » de TimeTree (' + x.cal + ') ?' + (x.recurring ? '\n\nC’est un événement qui se répète : TOUTES les occurrences seront supprimées.' : '') + '\n\nIl disparaîtra aussi pour les autres membres du calendrier.')) return;
+      const db = $('#tt-del'); db.disabled = true; db.textContent = 'Suppression…';
+      try { await rapi('/timetree/delete', { method: 'POST', body: { cal: x.calId, uuid: x.uuid } }); closeSheet(); toast('Supprimé de TimeTree'); state.agCache = null; renderAgenda(); }
+      catch (e) { db.disabled = false; db.textContent = '🗑 Supprimer'; toast(e.message); }
+    };
     $('#tt-copy').onclick = () => { closeSheet(); eventSheet({ title: x.title, start: it.s, end: it.allDay ? null : it.e, allDay: it.allDay, location: x.location, note: (x.note ? x.note + ' · ' : '') + 'Depuis TimeTree (' + x.cal + ')' }, () => { state.agCache = null; renderAgenda(); }); };
   });
   if (gErr) box.insertAdjacentHTML('afterbegin', googleHelp(gErr, 'Agenda')), bindHelp();

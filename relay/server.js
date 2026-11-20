@@ -631,6 +631,22 @@ async function ttCreate(calId, ev, retried) {
   if (!r.ok) { let t = ''; try { t = (await r.text()).slice(0, 200); } catch (e) {} throw Object.assign(new Error('TimeTree a refusé l’événement (' + r.status + ')'), { code: 502, detail: t }); }
   return r.json().catch(() => ({}));
 }
+async function ttDelete(calId, uuid, retried) {
+  if (!ttSess) ttSess = await ttLogin();
+  const csrf = ttCsrf || await ttGetCsrf();
+  const url = TT + '/calendar/' + encodeURIComponent(calId) + '/event/' + encodeURIComponent(uuid);
+  const hdr = Object.assign({ Cookie: '_session_id=' + ttSess, 'x-csrf-token': csrf }, TT_HDR);
+  let r = await fetch(url, { method: 'DELETE', headers: hdr, signal: AbortSignal.timeout(20000) });
+  if ([400, 405, 415].includes(r.status)) {
+    // ancienne forme attendue par TimeTree : l'événement complet dans le corps
+    const cur = await fetch(url, { headers: hdr, signal: AbortSignal.timeout(20000) }).then(x => x.json()).catch(() => null);
+    if (cur && cur.event) r = await fetch(url, { method: 'DELETE', headers: hdr, body: JSON.stringify(cur.event), signal: AbortSignal.timeout(20000) });
+  }
+  if ((r.status === 401 || r.status === 403 || r.status === 422) && !retried) { if (r.status === 401) ttSess = null; ttCsrf = null; return ttDelete(calId, uuid, true); }
+  if (r.status === 404) return { ok: true, already: true };
+  if (!r.ok) throw Object.assign(new Error('TimeTree a refusé la suppression (' + r.status + ')'), { code: 502 });
+  return { ok: true };
+}
 const ttColor = c => typeof c === 'number' ? '#' + c.toString(16).padStart(6, '0') : (c || '');
 async function ttSync() {
   if (!S.timetree) return;
@@ -646,7 +662,7 @@ async function ttSync() {
         while (j.chunk === true && n++ < 40) { j = await ttGet('/calendar/' + c.id + '/events/sync?since=' + j.since); evs = evs.concat(j.events || []); }
         evs.filter(e => e && !e.deactivated_at && e.type !== 1 && e.category !== 2 && e.start_at != null).forEach(e => {
           let lid = e.label_id; if (lid == null) { try { const x = e.relationships.label.data.id; lid = +String(x).split(',').pop(); } catch (er) {} }
-          out.push({ id: e.uuid || e.id, cal: c.name || 'TimeTree', title: e.title || '(sans titre)', start: e.start_at, end: e.end_at || e.start_at, allDay: !!e.all_day,
+          out.push({ id: e.uuid || e.id, calId: c.id, cal: c.name || 'TimeTree', title: e.title || '(sans titre)', start: e.start_at, end: e.end_at || e.start_at, allDay: !!e.all_day,
             tz: e.start_timezone || 'UTC', location: e.location || '', note: e.note || '', rec: Array.isArray(e.recurrences) ? e.recurrences : [], color: labels[lid] || ttColor(c.color) || '#4caf8f' });
         });
       }
@@ -677,8 +693,8 @@ function ttExpand(from, to) {
     for (const s of starts.slice(0, 400)) {
       if (s + dur < from - 864e5 || s > to + 864e5) continue;
       res.push(e.allDay
-        ? { id: e.id + ':' + s, cal: e.cal, title: e.title, allDay: true, date: ttDay(s, e.tz), endDate: ttDay(s + dur, e.tz), location: e.location, note: e.note, color: e.color }
-        : { id: e.id + ':' + s, cal: e.cal, title: e.title, allDay: false, start: s, end: s + dur, location: e.location, note: e.note, color: e.color });
+        ? { id: e.id + ':' + s, uuid: e.id, calId: e.calId, recurring: starts.length > 1 || e.rec.some(x => /^RRULE/i.test(x)), cal: e.cal, title: e.title, allDay: true, date: ttDay(s, e.tz), endDate: ttDay(s + dur, e.tz), location: e.location, note: e.note, color: e.color }
+        : { id: e.id + ':' + s, uuid: e.id, calId: e.calId, recurring: e.rec.some(x => /^RRULE/i.test(x)), cal: e.cal, title: e.title, allDay: false, start: s, end: s + dur, location: e.location, note: e.note, color: e.color });
     }
   }
   return res;
@@ -981,6 +997,16 @@ const routes = {
     log('TimeTree : événement « ' + title + ' » créé dans ' + cal.name);
     setTimeout(() => ttSync().catch(() => {}), 1500);
     return { ok: true, cal: cal.name, uuid: (r.event || {}).uuid || null };
+  },
+  'POST /timetree/delete': async (q, b) => {
+    if (!S.timetree) throw Object.assign(new Error('TimeTree non connecté'), { code: 400 });
+    const ev = ((S.ttCache || {}).events || []).find(e => e.id === b.uuid && String(e.calId) === String(b.cal));
+    if (!ev) throw Object.assign(new Error('Événement TimeTree introuvable, actualise l’agenda'), { code: 404 });
+    await ttDelete(ev.calId, ev.id);
+    S.ttCache.events = S.ttCache.events.filter(e => e !== ev); save();
+    log('TimeTree : événement « ' + ev.title + ' » supprimé de ' + ev.cal);
+    setTimeout(() => ttSync().catch(() => {}), 1500);
+    return { ok: true };
   },
   'GET /timetree/events': async q => {
     if (!S.timetree) return { enabled: false, items: [] };
