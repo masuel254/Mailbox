@@ -613,6 +613,24 @@ async function ttGet(p, retried) {
   if (!r.ok) throw new Error('TimeTree ' + r.status);
   return r.json();
 }
+// Jeton anti-falsification exigé par TimeTree pour toute écriture (lu dans la page d'accueil, session ouverte)
+let ttCsrf = null;
+async function ttGetCsrf() {
+  if (!ttSess) ttSess = await ttLogin();
+  const r = await fetch(TT.replace(/\/api\/v1$/, '') + '/', { headers: { Cookie: '_session_id=' + ttSess, 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(15000) });
+  const m = (await r.text()).match(/<meta\s+name="csrf-token"\s+content="([^"]+)"/i);
+  if (!m) throw new Error('TimeTree : jeton d’écriture introuvable');
+  return (ttCsrf = m[1]);
+}
+async function ttCreate(calId, ev, retried) {
+  if (!ttSess) ttSess = await ttLogin();
+  const csrf = ttCsrf || await ttGetCsrf();
+  const r = await fetch(TT + '/calendar/' + encodeURIComponent(calId) + '/event', { method: 'POST', signal: AbortSignal.timeout(20000),
+    headers: Object.assign({ Cookie: '_session_id=' + ttSess, 'x-csrf-token': csrf }, TT_HDR), body: JSON.stringify(ev) });
+  if ((r.status === 401 || r.status === 403 || r.status === 422) && !retried) { if (r.status === 401) ttSess = null; ttCsrf = null; return ttCreate(calId, ev, true); }
+  if (!r.ok) { let t = ''; try { t = (await r.text()).slice(0, 200); } catch (e) {} throw Object.assign(new Error('TimeTree a refusé l’événement (' + r.status + ')'), { code: 502, detail: t }); }
+  return r.json().catch(() => ({}));
+}
 const ttColor = c => typeof c === 'number' ? '#' + c.toString(16).padStart(6, '0') : (c || '');
 async function ttSync() {
   if (!S.timetree) return;
@@ -632,7 +650,7 @@ async function ttSync() {
             tz: e.start_timezone || 'UTC', location: e.location || '', note: e.note || '', rec: Array.isArray(e.recurrences) ? e.recurrences : [], color: labels[lid] || ttColor(c.color) || '#4caf8f' });
         });
       }
-      S.ttCache = { at: Date.now(), cals: cals.map(c => c.name), events: out, error: null }; save();
+      S.ttCache = { at: Date.now(), cals: cals.map(c => c.name), calIds: cals.map(c => ({ id: c.id, name: c.name })), events: out, error: null }; save();
       log('TimeTree : ' + out.length + ' événement(s) dans ' + cals.length + ' calendrier(s)');
     } catch (e) {
       S.ttCache = Object.assign({}, S.ttCache || { events: [] }, { error: e.message }); save();
@@ -945,13 +963,32 @@ const routes = {
     return { ok: true, email: user, events: ((S.ttCache || {}).events || []).length, cals: (S.ttCache || {}).cals || [], error: (S.ttCache || {}).error || null };
   },
   'DELETE /timetree/account': async () => { S.timetree = null; S.ttCache = null; ttSess = null; save(); return { ok: true }; },
+  // Création d'un événement dans un calendrier TimeTree (uniquement sur demande explicite depuis l'app)
+  'POST /timetree/event': async (q, b) => {
+    if (!S.timetree) throw Object.assign(new Error('TimeTree non connecté'), { code: 400 });
+    if (!(S.ttCache || {}).calIds) await ttSync();
+    const cal = ((S.ttCache || {}).calIds || []).find(c => String(c.id) === String(b.cal));
+    if (!cal) throw Object.assign(new Error('Calendrier TimeTree inconnu'), { code: 400 });
+    const title = String(b.title || '').trim().slice(0, 200);
+    if (!title) throw Object.assign(new Error('Titre manquant'), { code: 400 });
+    let start_at, end_at, tz = String(b.tz || 'UTC');
+    if (b.allDay) {
+      const [y1, m1, d1] = String(b.date).split('-').map(Number), [y2, m2, d2] = String(b.endDate || b.date).split('-').map(Number);
+      start_at = Date.UTC(y1, m1 - 1, d1); end_at = Date.UTC(y2, m2 - 1, d2); tz = 'UTC';
+    } else { start_at = +b.start; end_at = Math.max(+b.end || 0, start_at); }
+    if (!start_at || isNaN(start_at)) throw Object.assign(new Error('Date invalide'), { code: 400 });
+    const r = await ttCreate(cal.id, { title, all_day: !!b.allDay, start_at, start_timezone: tz, end_at, end_timezone: tz, category: 1, note: String(b.note || '').slice(0, 2000), location: String(b.location || '').slice(0, 200), attendees: [], recurrences: [], alerts: [], file_uuids: [] });
+    log('TimeTree : événement « ' + title + ' » créé dans ' + cal.name);
+    setTimeout(() => ttSync().catch(() => {}), 1500);
+    return { ok: true, cal: cal.name, uuid: (r.event || {}).uuid || null };
+  },
   'GET /timetree/events': async q => {
     if (!S.timetree) return { enabled: false, items: [] };
     const c = S.ttCache;
-    if (!c || !c.at) await ttSync();
+    if (!c || !c.at || !c.calIds) await ttSync();
     else if (Date.now() - c.at > 15 * 60000 || q.get('fresh')) ttSync();
     const from = +q.get('from') || Date.now(), to = +q.get('to') || from + 31 * 864e5;
-    return { enabled: true, email: S.timetree.user, at: (S.ttCache || {}).at || 0, error: (S.ttCache || {}).error || null, cals: (S.ttCache || {}).cals || [], items: ttExpand(from, to) };
+    return { enabled: true, email: S.timetree.user, at: (S.ttCache || {}).at || 0, error: (S.ttCache || {}).error || null, cals: (S.ttCache || {}).cals || [], calIds: (S.ttCache || {}).calIds || [], items: ttExpand(from, to) };
   },
   'GET /health': async () => ({ ok: true, gmail: !!S.gmail, free: !!S.free, subs: S.subs.length }),
   'GET /status': async () => ({ gmail: S.gmail ? { email: S.gmail.email } : null, free: S.free ? { email: S.free.user, name: S.free.name || '' } : null, subs: S.subs.length, badge: { gmail: S.badge.gmail, free: S.badge.free, total: total() }, vapid: C.vapidPub, ai: !!S.ai, timetree: S.timetree ? { email: S.timetree.user } : null }),

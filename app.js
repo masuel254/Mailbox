@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '4.0.0';
+const APP_VERSION = '4.1.0';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -3076,7 +3076,7 @@ async function renderAgenda() {
     : [startOfDay(new Date()), addDays(startOfDay(new Date()), 60)];
   const ck = mode + range[0].getTime();
   let evs = [], tasks = [], tt = [], gErr = null, ttInfo = null;
-  const ttJob = relayOn() ? rapi('/timetree/events?' + new URLSearchParams({ from: range[0].getTime(), to: range[1].getTime() })).then(r => { ttInfo = r; tt = r.items || []; }).catch(() => {}) : Promise.resolve();
+  const ttJob = relayOn() ? rapi('/timetree/events?' + new URLSearchParams({ from: range[0].getTime(), to: range[1].getTime() })).then(r => { ttInfo = r; tt = r.items || []; state.ttCals = r.enabled ? (r.calIds || []) : []; }).catch(() => {}) : Promise.resolve();
   try {
     if (state.agCache && state.agCache.k === ck && Date.now() - state.agCache.at < 60000) evs = state.agCache.evs;
     else {
@@ -3154,6 +3154,7 @@ function eventSheet(ev, onDone) {
     <div class="ev-grid"><label class="f">Date<input type="date" id="ev-d" value="${toInputDate(s)}"></label><label class="f ev-tm">Début<input type="time" id="ev-s" value="${toInputTime(s)}"></label><label class="f ev-tm">Fin<input type="time" id="ev-e" value="${toInputTime(e)}"></label></div>
     <label class="f">Lieu<input id="ev-loc" autocomplete="off" value="${esc(isNew ? ev.location || '' : ev.location || '')}" placeholder="Adresse ou visio"></label>
     <label class="f">Note<input id="ev-note" autocomplete="off" value="${esc(isNew ? ev.note || '' : String(ev.description || '').replace(/<[^>]+>/g, ' '))}"></label>
+    ${isNew && state.ttCals && state.ttCals.length ? `<label class="f">Enregistrer dans<select id="ev-dest"><option value="g">Google Agenda</option>${state.ttCals.map(c => `<option value="t:${esc(c.id)}">TimeTree · ${esc(c.name)}</option><option value="b:${esc(c.id)}">Google + TimeTree · ${esc(c.name)}</option>`).join('')}</select></label>` : ''}
     ${ev.mailUrl ? `<p class="fhint" style="margin:0">Lié au mail « ${esc(ev.mailSubject || '')} »</p>` : ''}
     <div style="display:grid;grid-template-columns:${isNew ? '1fr 1fr' : '1fr 1fr 1fr'};gap:10px">${isNew ? '<button class="btn" data-close>Annuler</button>' : '<button class="btn danger" id="ev-del">Supprimer</button><button class="btn" data-close>Fermer</button>'}<button class="btn primary" id="ev-ok">Enregistrer</button></div>`);
   const syncAll = () => $$('.ev-tm').forEach(x => { x.style.display = $('#ev-all').checked ? 'none' : ''; });
@@ -3174,7 +3175,13 @@ function eventSheet(ev, onDone) {
     if (ev.mailUrl) note = (note ? note + '\n' : '') + 'Mail : ' + location.origin + location.pathname + ev.mailUrl;
     const body = { summary: title, location: $('#ev-loc').value.trim(), description: note, start, end };
     const b = $('#ev-ok'); b.disabled = true; b.textContent = 'Enregistrement…';
+    const dest = ($('#ev-dest') || {}).value || 'g', ttCal = dest.includes(':') ? dest.split(':')[1] : null;
     try {
+      if (ttCal) {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const r = await rapi('/timetree/event', { method: 'POST', body: all ? { cal: ttCal, title, allDay: true, date: d, endDate: d, location: body.location, note } : { cal: ttCal, title, allDay: false, start: Date.parse(start.dateTime), end: Date.parse(end.dateTime), tz, location: body.location, note } });
+        if (dest.startsWith('t:')) { state.agCache = null; closeSheet(); toast('Ajouté dans TimeTree · ' + r.cal); if (onDone) onDone(); return; }
+      }
       if (isNew) await gx('https://www.googleapis.com/calendar/v3/calendars/primary/events', { method: 'POST', body });
       else await gx('https://www.googleapis.com/calendar/v3/calendars/primary/events/' + encodeURIComponent(ev.id), { method: 'PATCH', body });
       state.agCache = null; closeSheet();
