@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.11.3';
+const APP_VERSION = '2.12.0';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -257,7 +257,7 @@ function route() {
   exitSelect(true);
   document.body.classList.toggle('no-tabbar', view === 'thread' || view === 'compose' || view === 'free');
   const lk = parts[1] === 'UNREAD' ? 'INBOX' : (parts[1] || 'INBOX');
-  $$('#tabbar a').forEach(a => a.classList.toggle('on', a.dataset.tab === (view === 'list' ? (['INBOX', 'SENT'].includes(lk) ? lk : 'labels') : view === 'waiting' ? 'labels' : view)));
+  $$('#tabbar a').forEach(a => a.classList.toggle('on', a.dataset.tab === (view === 'list' ? (['INBOX', 'SENT'].includes(lk) ? lk : 'labels') : view === 'waiting' ? 'labels' : view === 'guide' ? 'settings' : view)));
   $('#view').scrollTop = 0;
   if (!settings.clientId && !relayGmailOn() && view !== 'settings') return renderWelcome();
   if (view === 'thread') return renderThread(decodeURIComponent(parts[1]));
@@ -265,6 +265,7 @@ function route() {
   if (view === 'compose') return renderCompose(new URLSearchParams(h.split('?')[1] || ''));
   if (view === 'labels') return renderLabels();
   if (view === 'waiting') return renderWaiting();
+  if (view === 'guide') return renderGuide();
   if (view === 'settings') return renderSettings();
   if (view === 'search') return renderList('SEARCH', decodeURIComponent(parts.slice(1).join('/')));
   return renderList(parts[1] || 'INBOX');
@@ -1317,6 +1318,78 @@ function buildTree(items, sep) {
   return root;
 }
 /* Suivi : en attente de réponse */
+/* ---------- Guide d'utilisation intégré ---------- */
+const GUIDE = [
+  ['👋', 'Prise en main', `
+    <p>MailBox réunit <b>Gmail</b> (pastille bleue) et <b>Free</b> (pastille rose) dans une seule appli, plus lisible que Gmail.</p>
+    <p>En bas : <b>Reçus</b>, <b>Envoyés</b>, <b>Écrire</b>, <b>Dossiers</b>, <b>Réglages</b>. Le chiffre sur Reçus et sur l'icône de l'iPhone est le nombre de mails non lus.</p>
+    <p>Un mail <b>non lu</b> a un cadre jaune et un rond jaune plein. Un mail <b>lu</b> est gris avec un rond vide.</p>
+    <div class="tip">Les mots de passe ne sont jamais dans l'appli ni sur GitHub : Gmail passe par Google, Free par ton serveur, chiffré.</div>`],
+  ['👆', 'Les gestes', `
+    <div class="gges"><span>← court<br><b>Supprimer</b></span><span>←← jusqu'au bord<br><b>Bloquer</b></span><span>→<br><b>Lu / non lu</b></span></div>
+    <p><b>Appui long</b> sur un mail : mode sélection. Coche plusieurs mails (ou « Tout sélectionner ») puis Lu, Non lu, Archiver, Supprimer ou Bloquer.</p>
+    <p><b>Depuis le bord gauche</b> de l'écran, glisse vers la droite pour revenir en arrière.</p>
+    <p>Dans <b>Dossiers</b> : balaye un dossier à gauche pour le supprimer, à droite pour le déplacer ou le renommer.</p>
+    <div class="tip">Après chaque action, un bouton <b>Annuler</b> reste 6 secondes en bas de l'écran.</div>`],
+  ['📥', 'Réception et non lus', `
+    <p>Les onglets <b>Tous / Gmail / Free</b> filtrent par boîte, avec le nombre de non lus de chacune. Le bouton <b>Non lus</b> n'affiche que ceux-là.</p>
+    <p><b>Tout marquer lu</b> (à droite de « Non lus ») passe toute la boîte en lu, avec Annuler.</p>
+    <p>Dans un mail : <b>Répondre</b>, <b>À tous</b>, <b>Transférer</b>, <b>Classer</b>, <b>Archiver</b>, <b>Bloquer</b>, <b>Suivre</b> (étoile). Les citations des anciens messages sont repliées.</p>
+    <p><b>Se désabonner</b> : sur une newsletter, une barre en haut du mail permet de se désinscrire en un appui.</p>
+    <p>Réglages › Affichage › <b>Principal seulement</b> masque Promotions, Réseaux sociaux, etc. de la réception et du compteur.</p>`],
+  ['✍️', 'Écrire', `
+    <p>Le champ <b>De</b> permet de choisir l'adresse d'envoi : Gmail ou Free. L'envoi Free apparaît aussi dans les Envoyés Free.</p>
+    <p>En transférant un mail, ses pièces jointes suivent.</p>`],
+  ['⛔', 'Bloquer et indésirables', `
+    <p>Bloquer range automatiquement <b>tous les mails de la marque</b> (ex. toutes les adresses @aliexpress.com) dans « Indésirables », côté Gmail et Free : <b>pas de notification, pas de pastille</b>.</p>
+    <p>Pour bloquer : balayage long vers la gauche, bouton <b>Bloquer</b> dans un mail, ou sélection multiple.</p>
+    <p>Réglages › <b>Voir les mails indésirables</b> : taille occupée et <b>Tout supprimer</b> (vers la corbeille).</p>
+    <p>Réglages › <b>Voir les expéditeurs bloqués</b> : tri par date ou A → Z, <b>Débloquer</b>, et « Regrouper par marque ».</p>
+    <div class="tip">Une adresse Gmail, Hotmail, Free… est bloquée seule, jamais tout le domaine.</div>`],
+  ['📁', 'Dossiers', `
+    <p>Gmail et Free sont rangés en accordéons. La flèche jaune déplie les sous-dossiers. Le chiffre est le nombre de non lus.</p>
+    <p><b>☆</b> épingle un dossier dans les Favoris, en haut. <b>Chercher un dossier</b> filtre par nom.</p>
+    <p><b>＋</b> crée un dossier (Gmail ou Free, au premier niveau ou dans un autre).</p>
+    <p>Un dossier « thème » (ex. Maison) affiche ses sous-dossiers en haut : ses mails sont dedans.</p>
+    <p>Dans un dossier : <b>Tout marquer lu</b>, <b>Tout supprimer</b>, sélection et gestes comme dans la réception.</p>
+    <p><b>⏳ En attente de réponse</b> : les mails reçus de vraies personnes sans réponse de ta part, et tes envois restés sans réponse.</p>`],
+  ['🧹', 'Ranger et transférer', `
+    <p><b>Ranger</b> liste les dossiers vraiment vides à supprimer (décoche ceux à garder : ils ne seront plus proposés).</p>
+    <p><b>✦ Remplacer INBOX par des thèmes</b> : l'IA propose de regrouper tes dossiers en grands thèmes. Le plan est groupé par thème ; <b>✎</b> change le thème, en crée un nouveau ou renomme ; rien n'est appliqué sans ta validation, aucun mail n'est supprimé.</p>
+    <p><b>Free → Gmail</b> : balaye un dossier Free vers la droite › onglet <b>Vers Gmail</b>. Les mails sont copiés avec dates, pièces jointes et état lu/non lu ; le transfert tourne sur ton serveur et reprend tout seul s'il est interrompu. Une barre en haut de Dossiers suit la progression.</p>`],
+  ['✦', 'Assistant IA', `
+    <p>Dans la loupe, écris une phrase : « la promo Devred de mon anniversaire », « mes plus gros mails », « la facture EDF du mois dernier ». L'assistant la traduit en recherche précise sur Gmail et Free.</p>
+    <p>Un encadré jaune montre ce qu'il a compris ; « Chercher les mots exacts » relance une recherche simple. Les mails bloqués portent l'étiquette rouge <b>Bloqué</b>.</p>
+    <p>Recherche par taille : résultats du plus gros au plus petit, taille affichée.</p>
+    <div class="tip">L'IA (Groq) ne reçoit que ta question ou les noms de tes dossiers, jamais le contenu de tes mails. Clé dans Réglages › Relais et notifications.</div>`],
+  ['🔔', 'Pastille et notifications', `
+    <p>Le serveur prévient l'iPhone à chaque nouveau mail : notification <b>discrète</b> (sans son) et pastille sur l'icône.</p>
+    <p><b>Heures calmes</b> (22 h – 7 h par défaut) : rien la nuit, un seul résumé au réveil.</p>
+    <p><b>Pastille seule, sans notification</b> : Réglages de l'iPhone › Notifications › MailBox › décoche Écran verrouillé, Centre de notifications et Bannières ; laisse Pastilles.</p>
+    <p>Si tu lis tes mails ailleurs (PC), la pastille de l'iPhone se recale dans les 2 minutes.</p>`],
+  ['🛠', 'Mises à jour et dépannage', `
+    <p><b>Mettre à jour l'appli</b> : Réglages › Application › Mettre à jour (ou le bandeau jaune quand il apparaît).</p>
+    <p><b>Mettre à jour le serveur</b> (quand c'est indiqué) : dans Termius, colle :</p>
+    <code>curl -fsSL https://raw.githubusercontent.com/masuel254/Mailbox/main/relay/install.sh | sudo bash</code>
+    <p>Ta configuration, Gmail, Free et la clé IA sont conservés. n8n n'est pas touché.</p>
+    <p><b>Voir ce qui se passe sur le serveur</b> :</p>
+    <code>sudo docker logs mailbox-relay 2>&1 | tail -20</code>
+    <p><b>Un mail affiche des caractères bizarres</b> : mets l'appli à jour, ils sont réparés automatiquement.</p>
+    <p><b>Gmail demande de ralentir</b> : attends une minute, l'appli réessaie seule.</p>
+    <div class="tip">Ne partage jamais le code d'accès du relais, ni la capture qui l'affiche à la fin d'une installation.</div>`]
+];
+function renderGuide() {
+  const v = $('#view');
+  v.innerHTML = `<div class="sticky-head"><a class="back back-sm" href="#/settings">${ICON.back}Réglages</a><div class="top"><h1>Guide MailBox</h1></div>
+    <div class="searchbar"><input type="search" id="gq" placeholder="Chercher : bloquer, dossier, pastille…" autocomplete="off"></div></div>
+    <div id="guide">${GUIDE.map(([ic, t, body], i) => `<details class="set gsec" data-g="${i}"><summary><span class="gic">${ic}</span><span class="set-t">${esc(t)}</span><span class="chev" aria-hidden="true"></span></summary><div class="card gbody">${body}</div></details>`).join('')}
+    <p class="fhint" style="text-align:center;margin-top:14px">MailBox v${esc(APP_VERSION)}</p></div>`;
+  const norm = t => t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  $('#gq').oninput = e => {
+    const q = norm(e.target.value.trim());
+    $$('#guide .gsec').forEach(d => { const hit = !q || norm(d.textContent).includes(q); d.hidden = !hit; d.open = !!q && hit; });
+  };
+}
 async function renderWaiting() {
   const v = $('#view');
   v.innerHTML = `<div class="top"><a class="back" href="#/labels">${ICON.back}Dossiers</a></div><h1 class="thread-title">En attente</h1>
@@ -1926,6 +1999,7 @@ function renderSettings() {
   const connected = !!LS.get('token', null) || relayGmailOn();
   $('#view').innerHTML = `
     <div class="top"><h1>Réglages</h1></div>
+    <a class="set-link" href="#/guide"><span class="set-t">📖 Guide d'utilisation</span><span class="set-s">Gestes, dossiers, IA…</span><span class="chev-r" aria-hidden="true"></span></a>
     <a class="set-link" id="s-junk" href="#/labels"><span class="set-t">Voir les mails indésirables</span><span class="set-s">${freeOn() ? 'Gmail + Free' : 'Gmail'}</span><span class="chev-r" aria-hidden="true"></span></a>
     <details class="set" data-set="blocked"><summary><span class="set-t">Voir les expéditeurs bloqués</span><span class="set-s" id="s-blk-n"></span><span class="chev" aria-hidden="true"></span></summary>
     <section class="card" id="s-blocked"><p>Chargement…</p></section></details>
