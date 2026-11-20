@@ -462,3 +462,4 @@ body.selecting .item .mark{display:flex}
 .f-multi .linkish{align-self:flex-start;padding:4px 0}
 .f-multi input{height:48px;border-radius:11px;border:1px solid var(--line2);background:var(--bg);color:var(--text);padding:0 12px;font-size:1rem;outline:none;width:100%;box-sizing:border-box}
 .f-multi input:focus{border-color:var(--accent)}
+.tt-tag{display:inline-block;font-size:.66rem;font-weight:800;padding:1px 6px;border-radius:5px;background:#4caf8f;color:#0d1f17;margin-right:2px;vertical-align:1px}

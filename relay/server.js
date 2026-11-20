@@ -582,6 +582,90 @@ async function blockedTargets() {
 }
 const isBlocked = (email, targets) => targets.some(t => email === t || (!t.includes('@') && (email.endsWith('@' + t) || email.endsWith('.' + t))));
 
+/* ---------- TimeTree (lecture seule, API web non officielle) ----------
+   Connexion par mail + mot de passe (gardé chiffré), relecture des calendriers toutes les 15 min.
+   Rien n'est jamais écrit dans TimeTree. */
+const { rrulestr } = require('rrule');
+const TT = process.env.TT_URL || 'https://timetreeapp.com/api/v1';
+const TT_HDR = { 'Content-Type': 'application/json', 'X-Timetreea': 'web/2.1.0/fr' };
+let ttSess = null, ttLoginAt = 0, ttBusy = null;
+async function ttLogin(user, pass) {
+  // TimeTree limite les connexions : jamais plus d'une tentative par minute
+  if (Date.now() - ttLoginAt < 60000 && !user) throw Object.assign(new Error('TimeTree : nouvelle connexion trop rapprochée'), { code: 429 });
+  ttLoginAt = Date.now();
+  const r = await fetch(TT + '/auth/email/signin', { method: 'PUT', headers: TT_HDR, signal: AbortSignal.timeout(15000),
+    body: JSON.stringify({ uid: user || S.timetree.user, password: pass || dec(S.timetree.pass), uuid: crypto.randomBytes(16).toString('hex') }) });
+  if (r.status !== 200) {
+    let code = null; try { code = ((await r.json()).error || {}).code; } catch (e) {}
+    if (code === -702) throw Object.assign(new Error('TimeTree : mail ou mot de passe incorrect'), { code: 401 });
+    if (code === -495) throw Object.assign(new Error('TimeTree limite les connexions, réessaie dans quelques minutes'), { code: 429 });
+    throw Object.assign(new Error('TimeTree : connexion refusée (' + r.status + ')'), { code: 502 });
+  }
+  const sc = (r.headers.getSetCookie ? r.headers.getSetCookie() : [r.headers.get('set-cookie') || '']).join(';');
+  const m = sc.match(/_session_id=([^;]+)/);
+  if (!m) throw Object.assign(new Error('TimeTree : session introuvable'), { code: 502 });
+  return m[1];
+}
+async function ttGet(p, retried) {
+  if (!ttSess) ttSess = await ttLogin();
+  const r = await fetch(TT + p, { headers: Object.assign({ Cookie: '_session_id=' + ttSess }, TT_HDR), signal: AbortSignal.timeout(20000) });
+  if ((r.status === 401 || r.status === 403) && !retried) { ttSess = null; return ttGet(p, true); }
+  if (!r.ok) throw new Error('TimeTree ' + r.status);
+  return r.json();
+}
+const ttColor = c => typeof c === 'number' ? '#' + c.toString(16).padStart(6, '0') : (c || '');
+async function ttSync() {
+  if (!S.timetree) return;
+  if (ttBusy) return ttBusy;
+  ttBusy = (async () => {
+    try {
+      const cals = ((await ttGet('/calendars?since=0')).calendars || []).filter(c => !c.deactivated_at);
+      const out = [];
+      for (const c of cals.slice(0, 10)) {
+        let labels = {};
+        try { ((await ttGet('/calendar/' + c.id + '/labels')).calendar_labels || []).forEach(l => { labels[l.id] = ttColor(l.color); }); } catch (e) {}
+        let j = await ttGet('/calendar/' + c.id + '/events/sync'), evs = j.events || [], n = 0;
+        while (j.chunk === true && n++ < 40) { j = await ttGet('/calendar/' + c.id + '/events/sync?since=' + j.since); evs = evs.concat(j.events || []); }
+        evs.filter(e => e && !e.deactivated_at && e.type !== 1 && e.category !== 2 && e.start_at != null).forEach(e => {
+          let lid = e.label_id; if (lid == null) { try { const x = e.relationships.label.data.id; lid = +String(x).split(',').pop(); } catch (er) {} }
+          out.push({ id: e.uuid || e.id, cal: c.name || 'TimeTree', title: e.title || '(sans titre)', start: e.start_at, end: e.end_at || e.start_at, allDay: !!e.all_day,
+            tz: e.start_timezone || 'UTC', location: e.location || '', note: e.note || '', rec: Array.isArray(e.recurrences) ? e.recurrences : [], color: labels[lid] || ttColor(c.color) || '#4caf8f' });
+        });
+      }
+      S.ttCache = { at: Date.now(), cals: cals.map(c => c.name), events: out, error: null }; save();
+      log('TimeTree : ' + out.length + ' événement(s) dans ' + cals.length + ' calendrier(s)');
+    } catch (e) {
+      S.ttCache = Object.assign({}, S.ttCache || { events: [] }, { error: e.message }); save();
+      log('TimeTree', e.message);
+    } finally { ttBusy = null; }
+  })();
+  return ttBusy;
+}
+// Date « murale » d'un instant dans un fuseau (pour les journées entières)
+const ttDay = (ms, tz) => { try { return new Intl.DateTimeFormat('en-CA', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms)); } catch (e) { return new Date(ms).toISOString().slice(0, 10); } };
+function ttExpand(from, to) {
+  const res = [];
+  for (const e of ((S.ttCache || {}).events || [])) {
+    const dur = Math.max(0, e.end - e.start);
+    let starts = [e.start];
+    const rr = e.rec.filter(x => /^(RRULE|EXDATE|RDATE)/i.test(x));
+    if (rr.some(x => /^RRULE/i.test(x))) {
+      try {
+        const dt = new Date(e.start).toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+        const set = rrulestr('DTSTART:' + dt + '\n' + rr.join('\n'), { forceset: true });
+        starts = set.between(new Date(from - dur - 864e5), new Date(to + 864e5), true).map(d => +d);
+      } catch (er) { starts = [e.start]; }
+    }
+    for (const s of starts.slice(0, 400)) {
+      if (s + dur < from - 864e5 || s > to + 864e5) continue;
+      res.push(e.allDay
+        ? { id: e.id + ':' + s, cal: e.cal, title: e.title, allDay: true, date: ttDay(s, e.tz), endDate: ttDay(s + dur, e.tz), location: e.location, note: e.note, color: e.color }
+        : { id: e.id + ':' + s, cal: e.cal, title: e.title, allDay: false, start: s, end: s + dur, location: e.location, note: e.note, color: e.color });
+    }
+  }
+  return res;
+}
+
 /* ---------- Notifications ---------- */
 async function push(payload) {
   const dead = [];
@@ -852,8 +936,25 @@ async function pollOnce() {
 
 /* ---------- Routes ---------- */
 const routes = {
+  'POST /timetree/account': async (q, b) => {
+    const user = String(b.email || '').trim().toLowerCase();
+    if (!user || !b.password) throw Object.assign(new Error('Mail et mot de passe TimeTree requis'), { code: 400 });
+    ttSess = await ttLogin(user, b.password);
+    S.timetree = { user, pass: enc(b.password) }; S.ttCache = null; save();
+    await ttSync();
+    return { ok: true, email: user, events: ((S.ttCache || {}).events || []).length, cals: (S.ttCache || {}).cals || [], error: (S.ttCache || {}).error || null };
+  },
+  'DELETE /timetree/account': async () => { S.timetree = null; S.ttCache = null; ttSess = null; save(); return { ok: true }; },
+  'GET /timetree/events': async q => {
+    if (!S.timetree) return { enabled: false, items: [] };
+    const c = S.ttCache;
+    if (!c || !c.at) await ttSync();
+    else if (Date.now() - c.at > 15 * 60000 || q.get('fresh')) ttSync();
+    const from = +q.get('from') || Date.now(), to = +q.get('to') || from + 31 * 864e5;
+    return { enabled: true, email: S.timetree.user, at: (S.ttCache || {}).at || 0, error: (S.ttCache || {}).error || null, cals: (S.ttCache || {}).cals || [], items: ttExpand(from, to) };
+  },
   'GET /health': async () => ({ ok: true, gmail: !!S.gmail, free: !!S.free, subs: S.subs.length }),
-  'GET /status': async () => ({ gmail: S.gmail ? { email: S.gmail.email } : null, free: S.free ? { email: S.free.user, name: S.free.name || '' } : null, subs: S.subs.length, badge: { gmail: S.badge.gmail, free: S.badge.free, total: total() }, vapid: C.vapidPub, ai: !!S.ai }),
+  'GET /status': async () => ({ gmail: S.gmail ? { email: S.gmail.email } : null, free: S.free ? { email: S.free.user, name: S.free.name || '' } : null, subs: S.subs.length, badge: { gmail: S.badge.gmail, free: S.badge.free, total: total() }, vapid: C.vapidPub, ai: !!S.ai, timetree: S.timetree ? { email: S.timetree.user } : null }),
   'GET /gmail/token': async () => { const t = await gmailToken(); return { access_token: t.access_token, expires_in: Math.floor((t.exp - Date.now()) / 1000), scope: t.scope, email: S.gmail.email }; },
   'DELETE /gmail': async () => { S.gmail = null; gTok = null; save(); return { ok: true }; },
   'POST /push/subscribe': async (q, b) => { if (!b.subscription || !b.subscription.endpoint) throw Object.assign(new Error('abonnement invalide'), { code: 400 }); S.subs = S.subs.filter(s => s.endpoint !== b.subscription.endpoint).concat([b.subscription]); save(); return { ok: true, count: S.subs.length }; },
@@ -1104,6 +1205,7 @@ server.listen(C.port, () => {
   log('Relais MailBox prêt sur le port ' + C.port);
   setTimeout(() => poll().catch(() => {}), 3000);
   setInterval(() => poll().catch(() => {}), C.pollMs);
+  setInterval(() => { if (S.timetree) ttSync().catch(() => {}); }, 15 * 60000);
   setTimeout(() => startIdle().catch(() => {}), 5000);
   setTimeout(() => { if (!S.contacts || !S.contacts.at || Date.now() - S.contacts.at > 7 * 864e5) buildContacts(); }, 20000);
   // reprise d'un transfert interrompu par un redémarrage

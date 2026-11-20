@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.9.8';
+const APP_VERSION = '4.0.0';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -2660,7 +2660,8 @@ function renderSettings() {
       <label class="f">Identifiant Google (Client ID)<input id="s-cid" value="${esc(settings.clientId)}" placeholder="xxxx.apps.googleusercontent.com" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
       ${connected ? '<button class="btn" id="s-logout">Se déconnecter</button>' : '<button class="btn primary" id="s-login">Se connecter avec Google</button>'}
     </section>
-    <section class="card" id="s-free"></section></details>
+    <section class="card" id="s-free"></section>
+    <section class="card" id="s-tt"></section></details>
     <details class="set" data-set="relay"><summary><span class="set-t">Relais et notifications</span><span class="set-s">${relayOn() ? 'Connecté' : 'Non connecté'}</span><span class="chev" aria-hidden="true"></span></summary>
     <section class="card" id="s-relay">
       <p>Ton serveur personnel : Gmail connecté en permanence, notifications et pastille en temps réel, boîte Free.</p>
@@ -2769,7 +2770,28 @@ async function renderRelay() {
       };
     }
   };
+  const drawTT = st => {
+    const tb = $('#s-tt'); if (!tb) return;
+    const head = (c, t) => `<h3><span class="dot" style="background:#4caf8f"></span>TimeTree<span class="st" style="color:${c}">${t}</span></h3>`;
+    if (!relayOn() || !st) { tb.innerHTML = head('var(--muted)', 'Relais requis') + '<p>Connecte d’abord le serveur relais pour afficher tes calendriers TimeTree dans l’Agenda.</p>'; return; }
+    if (st.timetree) {
+      tb.innerHTML = head('var(--ok)', 'Connecté') + `<p>${esc(st.timetree.email)}</p><p>Lecture seule : tes événements TimeTree s’affichent dans l’Agenda, relus toutes les 15 min. Connexion non officielle, elle peut cesser de marcher si TimeTree change son site.</p><button class="btn" id="s-tt-off">Retirer TimeTree</button>`;
+      $('#s-tt-off').onclick = async () => { if (!confirm('Retirer TimeTree de l’appli ?')) return; try { await rapi('/timetree/account', { method: 'DELETE' }); state.agCache = null; renderSettings(); } catch (e) { toast(e.message); } };
+    } else {
+      tb.innerHTML = head('var(--muted)', 'À configurer') + `
+        <label class="f">Mail TimeTree<input id="s-ttmail" type="email" inputmode="email" autocomplete="username" autocapitalize="off"></label>
+        <label class="f">Mot de passe TimeTree<input id="s-ttpass" type="password" autocomplete="current-password"></label>
+        <p>Envoyé directement à ton serveur, qui le garde chiffré. Il ne passe ni par GitHub ni par Claude. Lecture seule : rien n’est jamais modifié dans TimeTree.</p>
+        <button class="btn primary" id="s-ttsave">Tester et enregistrer</button>`;
+      $('#s-ttsave').onclick = async () => {
+        const b = $('#s-ttsave'); b.disabled = true; b.textContent = 'Connexion à TimeTree…';
+        try { const r = await rapi('/timetree/account', { method: 'POST', body: { email: $('#s-ttmail').value.trim(), password: $('#s-ttpass').value } }); state.agCache = null; toast(r.error ? 'TimeTree connecté, lecture : ' + r.error : 'TimeTree connecté · ' + r.events + ' événement' + (r.events > 1 ? 's' : '') + (r.cals.length ? ' (' + r.cals.join(', ') + ')' : '')); renderSettings(); }
+        catch (e) { b.disabled = false; b.textContent = 'Tester et enregistrer'; toast(e.message); }
+      };
+    }
+  };
   const draw = st => {
+    drawTT(st);
     if (!st) { box.innerHTML = ''; drawFree(null); return; }
     const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
     const perm = 'Notification' in window ? Notification.permission : 'absent';
@@ -3053,7 +3075,8 @@ async function renderAgenda() {
     : mode === 'month' ? (() => { const f = new Date(d0.getFullYear(), d0.getMonth(), 1); const s = monday(f); return [s, addDays(s, 42)]; })()
     : [startOfDay(new Date()), addDays(startOfDay(new Date()), 60)];
   const ck = mode + range[0].getTime();
-  let evs = [], tasks = [];
+  let evs = [], tasks = [], tt = [], gErr = null, ttInfo = null;
+  const ttJob = relayOn() ? rapi('/timetree/events?' + new URLSearchParams({ from: range[0].getTime(), to: range[1].getTime() })).then(r => { ttInfo = r; tt = r.items || []; }).catch(() => {}) : Promise.resolve();
   try {
     if (state.agCache && state.agCache.k === ck && Date.now() - state.agCache.at < 60000) evs = state.agCache.evs;
     else {
@@ -3061,10 +3084,13 @@ async function renderAgenda() {
       evs = ((await gx('https://www.googleapis.com/calendar/v3/calendars/primary/events?' + p)) || {}).items || [];
       state.agCache = { k: ck, at: Date.now(), evs };
     }
-  } catch (e) { if (e.message === 'auth') return; $('#ag-list').innerHTML = googleHelp(e, 'Agenda'); bindHelp(); return; }
+  } catch (e) { if (e.message === 'auth') return; gErr = e; }
+  await ttJob;
+  if (gErr && !(ttInfo && ttInfo.enabled)) { $('#ag-list').innerHTML = googleHelp(gErr, 'Agenda'); bindHelp(); return; }
   if (relayOn()) { try { tasks = ((await rapi('/tasks')).tasks || []).filter(t => !t.done && t.due && t.due >= range[0].getTime() && t.due < range[1].getTime()); } catch (e) {} }
   const items = evs.filter(e => e.status !== 'cancelled').map(e => Object.assign({ kind: 'ev', ev: e }, evTimes(e)))
     .concat(tasks.map(t => ({ kind: 'task', t, s: new Date(t.due), e: new Date(t.due), allDay: false })))
+    .concat(tt.map(x => x.allDay ? { kind: 'tt', x, s: new Date(x.date + 'T00:00'), e: addDays(new Date(x.endDate + 'T00:00'), 1), allDay: true } : { kind: 'tt', x, s: new Date(x.start), e: new Date(x.end), allDay: false }))
     .sort((a, b) => (b.allDay - a.allDay) || (a.s - b.s));
   const byDay = new Map();
   items.forEach(it => {
@@ -3092,6 +3118,7 @@ async function renderAgenda() {
     : mode === 'month' ? [startOfDay(d0)]
     : [...Array(60)].map((_, i) => addDays(startOfDay(new Date()), i)).filter(d => byDay.has(dayKey(d)));
   const evRow = it => {
+    if (it.kind === 'tt') { const x = it.x; return `<button class="ev" style="--c:${esc(x.color || '#4caf8f')}" data-tt="${esc(x.id)}"><span class="t">${it.allDay ? 'Journée' : hhmm(it.s) + (it.e > it.s ? '<br>' + hhmm(it.e) : '')}</span><span class="ev-b"><b>${esc(x.title)}</b><small><span class="tt-tag">TimeTree</span> ${esc(x.cal)}${x.location ? ' · 📍 ' + esc(x.location) : ''}</small></span></button>`; }
     if (it.kind === 'task') return `<button class="ev" style="--c:#9be3b4" data-task="${esc(it.t.id)}"><span class="t">${hhmm(it.s)}</span><span class="ev-b"><b>${esc(it.t.title)}</b><small>Tâche MailBox${it.t.ref && it.t.ref.from ? ' · mail de ' + esc(it.t.ref.from) : ''}</small></span></button>`;
     const e = it.ev;
     return `<button class="ev" style="--c:${EV_COLORS[e.colorId] || '#8fb6ff'}" data-ev="${esc(e.id)}"><span class="t">${it.allDay ? 'Journée' : hhmm(it.s) + '<br>' + hhmm(it.e)}</span><span class="ev-b"><b>${esc(e.summary || '(sans titre)')}</b>${e.location || e.description ? `<small>${e.location ? '📍 ' + esc(e.location) : ''}${e.location && e.description ? ' · ' : ''}${e.description ? esc(String(e.description).replace(/<[^>]+>/g, ' ').slice(0, 80)) : ''}</small>` : ''}</span></button>`;
@@ -3101,6 +3128,16 @@ async function renderAgenda() {
     || '<div class="empty">Rien de prévu sur les 60 prochains jours.</div>';
   $$('[data-ev]', box).forEach(b => b.onclick = () => { const e = evs.find(x => x.id === b.dataset.ev); if (e) eventSheet(e, () => { state.agCache = null; renderAgenda(); }); });
   $$('[data-task]', box).forEach(b => b.onclick = () => { location.hash = '#/tasks'; });
+  $$('[data-tt]', box).forEach(b => b.onclick = () => {
+    const it = items.find(i => i.kind === 'tt' && i.x.id === b.dataset.tt); if (!it) return; const x = it.x;
+    openSheet(`<span class="grip"></span><h2>${esc(x.title)}</h2><p class="fhint" style="margin:0"><span class="tt-tag">TimeTree</span> ${esc(x.cal)}</p>
+      <div class="ct-info"><div>📅 ${esc(it.s.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }))}${it.allDay ? ' · journée entière' : ' · ' + hhmm(it.s) + (it.e > it.s ? ' – ' + hhmm(it.e) : '')}</div>${x.location ? `<div>📍 ${esc(x.location)}</div>` : ''}${x.note ? `<div>📝 ${esc(x.note)}</div>` : ''}</div>
+      <p class="fhint" style="margin:0">Lecture seule : pour le modifier, passe par l’app TimeTree.</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn" id="tt-copy">Copier dans Google Agenda</button><button class="btn" data-close>Fermer</button></div>`);
+    $('#tt-copy').onclick = () => { closeSheet(); eventSheet({ title: x.title, start: it.s, end: it.allDay ? null : it.e, allDay: it.allDay, location: x.location, note: (x.note ? x.note + ' · ' : '') + 'Depuis TimeTree (' + x.cal + ')' }, () => { state.agCache = null; renderAgenda(); }); };
+  });
+  if (gErr) box.insertAdjacentHTML('afterbegin', googleHelp(gErr, 'Agenda')), bindHelp();
+  if (ttInfo && ttInfo.error) box.insertAdjacentHTML('afterbegin', `<p class="fhint">TimeTree : ${esc(ttInfo.error)}${ttInfo.at ? ' · données du ' + esc(new Date(ttInfo.at).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })) : ''}</p>`);
   agendaSuggestions();
 }
 const defaultStart = d => { const x = new Date(d); const n = new Date(); if (dayKey(x) === dayKey(n)) { x.setHours(n.getHours() + 1, 0, 0, 0); } else x.setHours(9, 0, 0, 0); return x; };
