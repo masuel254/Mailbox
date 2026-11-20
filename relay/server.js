@@ -117,8 +117,10 @@ async function runTransfer(job) {
   try {
     await client.connect();
     const list = await client.list();
-    const root = list.find(m => m.path === job.path);
-    if (!root) throw new Error('Dossier Free introuvable');
+    const norm = p => String(p || '').normalize('NFC').toLowerCase().replace(/[./]/g, '/');
+    const root = list.find(m => m.path === job.path) || list.find(m => norm(m.path) === norm(job.path)) || list.find(m => norm(m.name) === norm(job.path.split(/[./]/).pop()));
+    if (!root) { log('transfert : dossiers Free disponibles', list.map(m => m.path).join(' | ')); throw new Error('Dossier Free introuvable : ' + job.path); }
+    job.path = root.path;
     const d = root.delimiter || '/';
     const dirs = list.filter(m => m.path === job.path || m.path.startsWith(job.path + d)).sort((a, b) => a.path.length - b.path.length);
     const trash = (await folders(client)).trash;
