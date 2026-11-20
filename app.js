@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '4.4.0';
+const APP_VERSION = '4.4.1';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -265,9 +265,19 @@ function parseFreeId(id) { const p = id.split(':'); return { uid: +p[1], folder:
 function freeItem(x) {
   return { id: 'f:' + x.uid + ':' + x.folder, acc: 'free', folder: x.folder, uid: x.uid, subject: fixMojibake(x.subject), from: x.from.name || x.from.email, fromEmail: (x.from.email || '').toLowerCase(), fromName: x.from.name || '', to: x.to || '', sentByMe: false, snippet: cleanSnippet(x.snippet), date: x.date, count: 1, size: x.size || 0, att: !!x.att, mine: !!x.mine, toEmail: (x.toEmail || '').toLowerCase(), unread: !x.seen, starred: !!x.flagged, labels: [] };
 }
+/* Travail de fond (lecture des mails pour la pertinence) : arrêté dès qu'on change d'écran,
+   et jamais de nouvel essai si Gmail freine, pour laisser le quota aux actions de l'utilisateur */
+let bgGen = 0;
+const bgAlive = g => g === bgGen;
+async function bgApi(path, g) {
+  if (!bgAlive(g)) throw new Error('bg-stop');
+  try { return await api(path, {}, 3); }
+  catch (e) { if (/ralentir|quota|rate/i.test(e.message)) bgGen++; throw e; }
+}
 function route() {
   auth.handleRedirect();
   const h = location.hash || '#/list/INBOX';
+  if (h !== state.curHash) bgGen++;
   const parts = h.slice(2).split('?')[0].split('/');
   const view = parts[0];
   state.prevHash = state.curHash; state.curHash = h;
@@ -3364,9 +3374,10 @@ async function agendaSuggestions() {
 const STOPW = new Set(['le', 'la', 'les', 'de', 'des', 'du', 'un', 'une', 'et', 'ou', 'a', 'à', 'au', 'aux', 'en', 'pour', 'par', 'sur', 'mon', 'ma', 'mes', 'avec', 'dans', 'que', 'qui', 'd', 'l']);
 const searchWords = q => [...new Set(nrm(String(q).replace(/\b(from|to|subject|in|is|has|label|category|after|before|newer_than|older_than|larger|filename):\S*/gi, ' ').replace(/[()"]/g, ' ').replace(/\bOR\b/g, ' ')).split(/[^a-z0-9@.\-]+/).filter(w => w.length > 1 && !STOPW.has(w)))];
 const bodyCache = new Map();
-async function threadText(id) {
+async function threadText(id, g) {
   if (bodyCache.has(id)) return bodyCache.get(id);
-  const t = await api('threads/' + id + '?format=full').catch(() => null);
+  const t = await (g != null ? bgApi('threads/' + id + '?format=full', g) : api('threads/' + id + '?format=full')).catch(() => null);
+  if (!t && g != null && !bgAlive(g)) return '';
   const txt = t ? (t.messages || []).map(m => hdr(m, 'Subject') + '\n' + plainOf(m).split('\n').filter(l => !/^\s*>/.test(l)).join('\n')).join('\n\n').replace(/\s+/g, ' ').slice(0, 20000) : '';
   bodyCache.set(id, txt); if (bodyCache.size > 400) bodyCache.delete(bodyCache.keys().next().value);
   return txt;
@@ -3400,10 +3411,11 @@ function relScore(it, words, passage) {
   if (it.promo || PROMO_RE.test(it.fromEmail || '')) sc = Math.min(sc * 0.3, 4);
   return sc;
 }
-async function enrich(items, words, max) {
+async function enrich(items, words, max, g) {
   const top = items.slice(0, max);
-  await pool(top, 5, async it => {
-    const text = it.acc === 'free' ? (it.subject + ' ' + (it.body || it.snippet)) : await threadText(it.id);
+  await pool(top, g != null ? 3 : 5, async it => {
+    if (g != null && !bgAlive(g)) { it.passage = { hits: 0, near: 0, excerpt: '' }; it.rel = -99; return; }
+    const text = it.acc === 'free' ? (it.subject + ' ' + (it.body || it.snippet)) : await threadText(it.id, g);
     const p = bestPassage(text, words);
     it.passage = p; it.rel = relScore(it, words, p);
   });
@@ -3427,31 +3439,37 @@ async function bestMatches(q) {
   const box = $('#best'); if (!box) return;
   const src = state.aiNote && state.aiNote.q === q && state.aiNote.ask ? state.aiNote.ask : q;
   const words = searchWords(src); if (!words.length || /\b(from|to|larger|filename):/i.test(q)) return;
+  const bc = (state.bestCache || (state.bestCache = {}))[q];
+  if (bc && Date.now() - bc.at < 15 * 60000) { box.innerHTML = bc.html; return; }
+  const g = bgGen;
   box.innerHTML = '<div class="ai-note"><span>Lecture des mails pour trouver les plus pertinents…</span></div>';
   const base = words.join(' ');
   const cand = new Map();
   const grab = async (gq, n) => {
-    const r = (await api('threads?' + new URLSearchParams({ q: gq, maxResults: n })).catch(() => null)) || {};
-    const ts = await pool(r.threads || [], 6, t => threadMeta(t).catch(() => null));
+    const r = (await bgApi('threads?' + new URLSearchParams({ q: gq, maxResults: n }), g).catch(() => null)) || {};
+    const ts = await pool(r.threads || [], 3, t => bgAlive(g) ? threadMeta(t).catch(() => null) : null);
     ts.filter(Boolean).forEach(t => { if (!cand.has(t.id)) cand.set(t.id, Object.assign(summarize(t), { acc: 'gmail' })); });
   };
   const jobs = [];
   const NOPUB = ' -category:promotions -category:social -category:forums';
   if (settings.clientId || relayGmailOn()) {
-    jobs.push(grab(base + NOPUB, 30), grab('in:sent ' + base, 20), labelGrab(words, cand, 25));
-    if (words.length >= 3) pairQueries(words).forEach(p => jobs.push(grab(p + NOPUB, 15), grab('in:sent ' + p, 10)));
+    jobs.push(grab(base + NOPUB, 25), grab('in:sent ' + base, 15), labelGrab(words, cand, 20));
+    if (words.length >= 3) pairQueries(words).slice(0, 3).forEach(p => jobs.push(grab(p + NOPUB, 10), grab('in:sent ' + p, 8)));
   }
   if (freeOn()) jobs.push(rapi('/free/search?' + new URLSearchParams({ q: base, limit: '20' })).then(r => (r.items || []).forEach(x => { const it = freeItem(x); it.body = x.text || ''; cand.set(it.id, it); })).catch(() => {}));
   await Promise.all(jobs);
   if (!$('#best')) return;
   // priorité de lecture : dossiers correspondants, mails envoyés et échanges, puis les autres
-  const all = await enrich([...cand.values()].sort((a, b) => ((b.labelHit || 0) - (a.labelHit || 0)) || ((b.mine ? 1 : 0) - (a.mine ? 1 : 0)) || (b.date - a.date)), words, 70);
+  if (!bgAlive(g)) return;
+  const all = await enrich([...cand.values()].sort((a, b) => ((b.labelHit || 0) - (a.labelHit || 0)) || ((b.mine ? 1 : 0) - (a.mine ? 1 : 0)) || (b.date - a.date)), words, 45, g);
+  if (!bgAlive(g)) { const bx = $('#best'); if (bx) bx.innerHTML = ''; return; }
   let best = all.filter(x => x.rel >= 6 && x.passage.hits >= Math.min(2, words.length)).sort((a, b) => b.rel - a.rel || b.date - a.date);
   if (best.length) best = best.filter(x => x.rel >= best[0].rel * 0.5).slice(0, 6);
   if (!$('#best')) return;
   if (!best.length) { box.innerHTML = ''; return; }
   state.showAcc = freeOn(); state.dayMode = false;
   box.innerHTML = `<h2 class="sec">Les plus pertinents · ${best.length}</h2>` + best.map(i => itemHTML(Object.assign({}, i, { snippet: '« ' + i.passage.excerpt + ' »' }), '')).join('') + '<h2 class="sec">Tous les résultats, du plus récent au plus ancien</h2>';
+  state.bestCache[q] = { at: Date.now(), html: box.innerHTML };
 }
 
 /* ---------- Démarrage ---------- */
