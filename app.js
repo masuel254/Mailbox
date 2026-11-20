@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.7.0';
+const APP_VERSION = '3.7.1';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -2358,9 +2358,9 @@ async function renderLabels() {
       const fv = favs.map(k => byKey.get(k)).filter(Boolean);
       $l.innerHTML = (fv.length ? `<h2 class="sec"><span class="fav-t">★</span>Favoris</h2><div class="card fold">${fv.map(x => `<a class="frow" data-k="${esc(x.key)}" href="${x.href}">${FOLD_ICON}<span class="nm">${esc(x.full.split(x.delim || '/').join(' › '))}</span>${dot(x.acc)}${nb(x.n)}${star(x.key)}</a>`).join('')}</div>` : '<p class="fhint">Touche ☆ à côté d’un dossier pour l’épingler ici.</p>')
         + section('Gmail', 'gmail', g.filter(x => !isBlk(x))) + section('Free', 'free', f.filter(x => !isBlk(x)))
-        + common()
         + `<a class="set-link" href="#/list/STARRED"><span class="set-t">⭐ Suivis</span><span class="set-s">Mails marqués « Suivre »</span><span class="chev-r" aria-hidden="true"></span></a>`
-        + `<a class="set-link" href="#/list/DRAFT"><span class="set-t">📝 Brouillons</span><span class="set-s">Gmail</span><span class="chev-r" aria-hidden="true"></span></a>`;
+        + `<a class="set-link" href="#/list/DRAFT"><span class="set-t">📝 Brouillons</span><span class="set-s">Gmail</span><span class="chev-r" aria-hidden="true"></span></a>`
+        + common();
       $$('details.fsec', $l).forEach(d => d.addEventListener('toggle', () => { openSecs[d.dataset.sec] = d.open; LS.set('openSecs', openSecs); }));
     }
     $$('[data-fav]', $l).forEach(b => b.onclick = e => {
