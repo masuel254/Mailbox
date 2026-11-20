@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.2.0';
+const APP_VERSION = '3.2.1';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -1879,20 +1879,29 @@ async function renderSmart(question) {
     if (freeOn()) jobs.push(rapi('/free/search?' + new URLSearchParams({ q, limit: '12' })).then(r => (r.items || []).forEach(x => { const it = freeItem(x); cand.set(it.id, it); })).catch(() => {}));
     await Promise.all(jobs);
   }));
-  const all = [...cand.values()].sort((a, b) => b.date - a.date).slice(0, 80);
+  // pré-tri local : on garde d'abord les mails qui contiennent les mots des pistes
+  const kw = [...new Set(qs.join(' ').toLowerCase().replace(/\b(from|to|subject|in|is|has|newer_than|older_than|after|before|label|category):\S*/g, ' ').replace(/[()"]/g, ' ').split(/\s+/).filter(w => w.length > 3 && w !== 'or' && w !== 'and'))];
+  const hits = x => { const t = (x.subject + ' ' + x.snippet + ' ' + x.from).toLowerCase(); return kw.filter(w => t.includes(w)).length; };
+  const all = [...cand.values()].sort((a, b) => (hits(b) - hits(a)) || (b.date - a.date)).slice(0, 50);
   if (!all.length) { $('#list').innerHTML = '<div class="empty">Rien trouvé, même en élargissant. Essaie avec un autre mot ou un expéditeur.</div>'; return; }
   step(all.length + ' mails candidats, tri par pertinence…');
   let ranked = [], contact = null;
-  try { const rr = await rapi('/ai/rank', { method: 'POST', body: { q: question, indices: plan.indices || '', items: all.map((x, i) => ({ i, date: new Date(x.date).toLocaleDateString('fr-FR'), from: x.mine && x.count === 1 ? 'Samuel → ' + (x.to || '') : x.from, email: x.fromEmail || x.toEmail || '', n: x.count, mine: x.mine, subject: x.subject, snippet: x.snippet })) } }) ; contact = rr.contact && rr.contact.email && /@/.test(rr.contact.email) ? rr.contact : null; ranked = (rr.results || []).filter(r => all[r.i]); } catch (e) { toast(e.message); }
+  try { const rr = await rapi('/ai/rank', { method: 'POST', body: { q: question, indices: plan.indices || '', items: all.map((x, i) => ({ i, date: new Date(x.date).toLocaleDateString('fr-FR'), from: x.mine && x.count === 1 ? 'Samuel → ' + (x.to || '') : x.from, email: x.fromEmail || x.toEmail || '', n: x.count, mine: x.mine, subject: x.subject, snippet: x.snippet })) } }) ; contact = rr.contact && rr.contact.email && /@/.test(rr.contact.email) ? rr.contact : null; ranked = (rr.results || []).filter(r => all[r.i]); } catch (e) { ranked = null; step('Tri par l’IA indisponible (' + e.message + ')'); }
+  if (ranked === null) {
+    const loc = all.filter(x => hits(x) > 0);
+    state.showAcc = freeOn(); state.dayMode = false;
+    $('#list').innerHTML = loc.length ? `<h2 class="sec">Contiennent les mots recherchés · ${loc.length}</h2>` + loc.map(i => itemHTML(Object.assign({}, i, { unread: false }), '')).join('') : '<div class="empty">Rien de pertinent trouvé. Réessaie dans une minute ou ajoute un détail (nom, ville, mois).</div>';
+    return;
+  }
   const mk = r => Object.assign({}, all[r.i], { snippet: '✦ ' + (r.why || ''), unread: false });
   const best = ranked.filter(r => (r.score == null ? 7 : r.score) >= 7).map(mk), maybe = ranked.filter(r => r.score != null && r.score < 7).map(mk);
-  step(ranked.length ? (best.length + maybe.length) + ' résultat' + (best.length + maybe.length > 1 ? 's' : '') + ' sur ' + all.length + ' mails examinés' : 'Tri impossible, voici tous les candidats');
+  step(ranked.length ? (best.length + maybe.length) + ' résultat' + (best.length + maybe.length > 1 ? 's' : '') + ' sur ' + all.length + ' mails examinés' : all.length + ' mails examinés, aucun ne correspond vraiment');
   state.showAcc = freeOn(); state.dayMode = false;
   $('#list').innerHTML = (contact ? `<a class="set-link contact-link" href="#/search/${encodeURIComponent('from:' + contact.email + ' OR to:' + contact.email)}"><span class="set-t">👤 Tous les échanges avec ${esc(contact.name || contact.email)}</span><span class="set-s">${esc(contact.email)}</span><span class="chev-r" aria-hidden="true"></span></a>` : '') + (ranked.length
     ? (best.length ? `<h2 class="sec">Correspond le mieux · ${best.length}</h2>` + best.map(i => itemHTML(i, '')).join('') : '')
       + (maybe.length ? `<h2 class="sec">Peut-être aussi · ${maybe.length}</h2>` + maybe.map(i => itemHTML(i, '')).join('') : '')
       + `<details class="set" style="margin-top:12px"><summary><span class="set-t">Pistes explorées</span><span class="chev"></span></summary><div class="card" style="font-size:.8rem;color:var(--muted)">${qs.map(q => `<code>${esc(q)}</code>`).join('<br>')}${plan.indices ? '<br><br>' + esc(plan.indices) : ''}</div></details>`
-    : all.map(i => itemHTML(i, '')).join(''));
+    : '<div class="empty">Aucun mail ne correspond vraiment. Ajoute un détail : le nom de l’entreprise, la ville, le mois…</div>');
 }
 /* ---------- Tâches ---------- */
 async function taskSheet(t, ctx) {
