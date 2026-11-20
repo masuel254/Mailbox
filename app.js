@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.9.0';
+const APP_VERSION = '3.9.1';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -3184,7 +3184,7 @@ function bestPassage(text, words) {
   let best = { k: 0, at: pos[0][0] };
   for (let i = 0; i < pos.length; i++) { const seen = new Set(); for (let j = i; j < pos.length && pos[j][0] - pos[i][0] < 70; j++) seen.add(pos[j][1]); if (seen.size > best.k) best = { k: seen.size, at: pos[i][0] }; }
   const all = new Set(pos.map(p => p[1])).size;
-  const s = Math.max(0, best.at - 50), e = Math.min(text.length, best.at + 170);
+  const s = Math.max(0, best.at - 25), e = Math.min(text.length, best.at + 190);
   return { hits: all, near: best.k, excerpt: (s ? '…' : '') + text.slice(s, e).trim() + (e < text.length ? '…' : '') };
 }
 const PROMO_RE = /no-?reply|newsletter|news@|marketing|promo|offre|mailing|info@|bonjour@|hello@|e\.?mail\./i;
@@ -3194,7 +3194,8 @@ function relScore(it, words, passage) {
   sc += passage.hits * 1.5 + (passage.near >= Math.min(2, words.length) ? 4 : 0) + (passage.near === words.length && words.length > 1 ? 4 : 0);
   if (words.length > 1 && nrm(passage.excerpt + ' ' + it.subject).includes(words.join(' '))) sc += 3;
   if (it.mine || it.count > 1) sc += 2;
-  if (it.promo || PROMO_RE.test(it.fromEmail || '')) sc -= 7;
+  // pubs et newsletters : fortement déclassées (elles parlent de tout, mais ne sont presque jamais le mail cherché)
+  if (it.promo || PROMO_RE.test(it.fromEmail || '')) sc = Math.min(sc * 0.3, 4);
   return sc;
 }
 async function enrich(items, words, max) {
@@ -3219,7 +3220,7 @@ async function bestMatches(q) {
     ts.filter(Boolean).forEach(t => { if (!cand.has(t.id)) cand.set(t.id, Object.assign(summarize(t), { acc: 'gmail' })); });
   };
   const jobs = [];
-  if (settings.clientId || relayGmailOn()) jobs.push(grab(base + ' -category:promotions -category:social -category:forums', 30), grab('in:sent ' + base, 20), grab('subject:(' + base + ')', 10));
+  if (settings.clientId || relayGmailOn()) jobs.push(grab(base + ' -category:promotions -category:social -category:forums', 30), grab('in:sent ' + base, 20), grab('subject:(' + base + ') -category:promotions -category:social', 10));
   if (freeOn()) jobs.push(rapi('/free/search?' + new URLSearchParams({ q: base, limit: '20' })).then(r => (r.items || []).forEach(x => { const it = freeItem(x); it.body = x.text || ''; cand.set(it.id, it); })).catch(() => {}));
   await Promise.all(jobs);
   if (!$('#best')) return;

@@ -456,3 +456,4 @@ body.selecting .item .mark{display:flex}
 .sugg small{color:var(--muted);font-size:.8rem}
 .sugg div{display:flex;gap:8px;margin-top:6px}.sugg .btn{height:38px;font-size:.82rem}
 .ev-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.ev-grid label:first-child{grid-column:1/-1}.ev-grid input{min-width:0;width:100%;box-sizing:border-box}
+#best .item .snip{white-space:normal;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;color:var(--text);font-style:italic}
