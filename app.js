@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.9.4';
+const APP_VERSION = '3.9.5';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -438,9 +438,22 @@ async function loadList(key, q, cacheKey, plain, reset) {
         } catch (e) { toast('Free : ' + e.message); freeMore = false; }
       })());
     }
-    await Promise.all(jobs);
-    const fresh = gItems.concat(fItems).sort((a, b) => b.date - a.date);
-    const data = { at: Date.now(), next, freeBefore, freeMore, items: more ? prev.items.concat(fresh) : fresh };
+    // Réception : les non lus plus anciens que la première page sont ajoutés, pour que le compteur et la liste disent la même chose
+    let extraUnread = [];
+    if (key === 'INBOX' && !more) {
+      const xs = [];
+      if (acc !== 'free' && !settings.primaryOnly) xs.push((async () => {
+        const r = (await api('threads?' + new URLSearchParams({ labelIds: 'UNREAD', q: 'in:inbox', maxResults: 30 })).catch(() => null)) || {};
+        const ts = await pool(r.threads || [], 8, t => threadMeta(t).catch(() => null));
+        ts.filter(Boolean).forEach(t => extraUnread.push(Object.assign(summarize(t), { acc: 'gmail' })));
+      })());
+      if (acc !== 'gmail' && freeOn()) xs.push(rapi('/free/list?' + new URLSearchParams({ folder: 'INBOX', unread: '1', limit: '30' })).then(r => (r.items || []).forEach(x => extraUnread.push(freeItem(x)))).catch(() => {}));
+      xs.push(Promise.all(jobs));
+      await Promise.all(xs);
+    } else await Promise.all(jobs);
+    const seenIds = new Set(gItems.concat(fItems).map(i => i.id));
+    const fresh = gItems.concat(fItems, extraUnread.filter(i => i.unread && !seenIds.has(i.id) && seenIds.add(i.id))).sort((a, b) => b.date - a.date);
+    const data = { at: Date.now(), next, freeBefore, freeMore, items: more ? (ids => prev.items.concat(fresh.filter(i => !ids.has(i.id))))(new Set(prev.items.map(i => i.id))) : fresh };
     state.lists[cacheKey] = data;
     if (['INBOX', 'UNREAD', 'SENT'].includes(key) && !more) { try { LS.set('list:' + cacheKey, { next: data.next, freeBefore: data.freeBefore, freeMore: data.freeMore, items: data.items.slice(0, 40) }); } catch (e) {} }
     if (state.current === cacheKey) { const y = scrollY; drawList(data, plain); if (reset && y) scrollTo(0, y); }
