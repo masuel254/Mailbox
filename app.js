@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.9.5';
+const APP_VERSION = '3.9.6';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -328,7 +328,7 @@ async function renderList(key, q) {
   const cacheKey = (acc !== 'gmail' ? acc + '|' : '') + (isSearch ? 'S:' + q : key);
   state.current = cacheKey;
   const showTitle = key === 'INBOX' ? 'Réception' : String(title).split(/\//).pop();
-  const backTo = ['INBOX', 'UNREAD', 'SENT'].includes(key) ? null : isSearch ? ['#/list/INBOX', 'Réception'] : ['#/labels', 'Dossiers'];
+  const backTo = key === 'UNREAD' ? ['#/list/INBOX', 'Toute la réception'] : ['INBOX', 'SENT'].includes(key) ? null : isSearch ? ['#/list/INBOX', 'Réception'] : ['#/labels', 'Dossiers'];
   v.innerHTML = `<div class="sticky-head">
     ${backTo ? `<a class="back back-sm" href="${backTo[0]}">${ICON.back}${backTo[1]}</a>` : ''}
     <div class="top">
@@ -346,7 +346,7 @@ async function renderList(key, q) {
       ${[['all', 'Tous', ''], ['gmail', 'Gmail', 'var(--gmail)'], ['free', 'Free', 'var(--free)']].map(([k, n, c]) => `<button role="tab" aria-selected="${acc === k}" class="${acc === k ? 'on' : ''}" data-acc="${k}"><span class="acc-l">${c ? `<span class="dot" style="background:${c}"></span>` : ''}${n}</span>${inboxish ? `<small class="acc-n" data-n="${k}"></small>` : ''}</button>`).join('')}
     </div>` : '';
       if (!inboxish) return accs;
-      const pill = `<a class="unr-pill ${key === 'UNREAD' ? 'on' : ''}" href="#/list/${key === 'UNREAD' ? 'INBOX' : 'UNREAD'}" aria-pressed="${key === 'UNREAD'}">Non lus<span class="fcount" id="fcount"></span></a>`;
+      const pill = `<a class="unr-pill ${key === 'UNREAD' ? 'on' : ''}" href="#/list/${key === 'UNREAD' ? 'INBOX' : 'UNREAD'}" aria-pressed="${key === 'UNREAD'}">Non lus<span class="fcount" id="fcount"></span>${key === 'UNREAD' ? '<span class="unr-x" aria-hidden="true"> ✕</span>' : ''}</a>`;
       return `<div class="tabrow">${accs || '<div class="accounts one"><button class="on" aria-selected="true">Réception</button></div>'}${pill}</div>`;
     })()}</div>
     ${contactQ ? `<div class="ai-note"><b>👤 ${esc(contactQ)}</b><span>Tous vos mails, dans les deux sens, Gmail et Free.</span>${settings.ai && relayOn() ? `<button class="btn" id="hist-go" style="margin-top:4px">${ICON.spark}Retracer l’historique</button>` : ''}</div><div id="hist-out"></div>` : ''}
