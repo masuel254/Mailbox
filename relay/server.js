@@ -88,7 +88,7 @@ async function gmailToken() {
 async function gapi(p, opt = {}) {
   const t = await gmailToken();
   const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/' + p, { method: opt.method || 'GET', headers: Object.assign({ Authorization: 'Bearer ' + t.access_token }, opt.body ? { 'Content-Type': 'application/json' } : {}), body: opt.body ? JSON.stringify(opt.body) : undefined });
-  if (!r.ok) throw new Error('Gmail ' + r.status);
+  if (!r.ok) { let why = ''; try { const j = await r.json(); why = (j.error && ((j.error.errors && j.error.errors[0] && j.error.errors[0].reason) || j.error.status || j.error.message)) || ''; } catch (e) {} throw new Error('Gmail ' + r.status + (why ? ' ' + why : '')); }
   return r.status === 204 ? null : r.json().catch(() => null);
 }
 
@@ -1012,7 +1012,7 @@ async function startIdle() {
   const again = () => { if (idle === client) { idle = null; idleTimer = setTimeout(() => startIdle().catch(() => {}), 30000); } };
   client.on('close', again); client.on('error', e => log('IDLE Free', e.message));
   client.on('exists', () => { clearTimeout(idleDebounce); idleDebounce = setTimeout(() => poll().catch(() => {}), 1500); });
-  try { await client.connect(); await client.mailboxOpen('INBOX'); log('Free en temps réel (IDLE) actif'); } catch (e) { log('IDLE Free impossible', e.message); again(); }
+  try { await client.connect(); await client.mailboxOpen('INBOX'); log('Free en temps réel (IDLE) actif'); client.list().then(l => log('Free dossiers : ' + l.map(m => m.path + (m.specialUse ? ' [' + m.specialUse + ']' : '') + (m.flags && m.flags.has('\\Noselect') ? ' [noselect]' : '')).join(' | ') + ' ; spam regroupé depuis : ' + (junkPaths(l).join(', ') || 'aucun'))).catch(() => {}); } catch (e) { log('IDLE Free impossible', e.message); again(); }
 }
 server.listen(C.port, () => {
   log('Relais MailBox prêt sur le port ' + C.port);
