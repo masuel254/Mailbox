@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.6.8';
+const APP_VERSION = '3.7.0';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -398,6 +398,12 @@ async function loadList(key, q, cacheKey, plain, reset) {
         const threads = await pool(r.threads || [], 12, t => api('threads/' + t.id + '?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date'));
         gItems = threads.filter(Boolean).map(t => Object.assign(summarize(t), { acc: 'gmail' }));
         next = r.nextPageToken || null;
+        // Indésirables commun : on y montre aussi le spam Gmail (sans le déplacer, pour ne pas dérégler le filtre de Gmail)
+        if (isBlockLabel(key) && !more) {
+          const rs = (await api('threads?' + new URLSearchParams({ labelIds: 'SPAM', includeSpamTrash: 'true', maxResults: 50 })).catch(() => null)) || {};
+          const st = await pool(rs.threads || [], 8, t => api('threads/' + t.id + '?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date').catch(() => null));
+          const have = new Set(gItems.map(i => i.id)); gItems = gItems.concat(st.filter(t => t && !have.has(t.id)).map(t => Object.assign(summarize(t), { acc: 'gmail' })));
+        }
       })());
     } else if (acc === 'free') next = null;
     if (acc !== 'gmail' && key === 'SEARCH' && !more) {
@@ -453,6 +459,7 @@ function summarize(t) {
     mine: msgs.some(m => (m.labelIds || []).includes('SENT')),
     unread: msgs.some(m => (m.labelIds || []).includes('UNREAD')),
     starred: labels.has('STARRED'),
+    spam: labels.has('SPAM'),
     labels: [...labels].filter(id => /^Label_/.test(id))
   };
 }
@@ -461,7 +468,7 @@ function itemHTML(it, cls, sentView) {
   const who = sentView && it.to ? 'À : ' + it.to : it.from;
   const curKey = keyOf(state.current);
   const blocked = it.folder === BLOCK_LABEL || it.labels.some(id => (labelById(id) || {}).name === BLOCK_LABEL);
-  const chips = (blocked ? '<span class="chip blocked">Bloqué</span>' : '') + it.labels.map(id => { const l = labelById(id); return l && l.name !== BLOCK_LABEL && id !== curKey ? `<span class="chip lab" style="--c:${esc(labelColor(l))}">${esc(l.name)}</span>` : ''; }).join('');
+  const chips = (it.spam ? '<span class="chip blocked">Spam</span>' : blocked ? '<span class="chip blocked">Bloqué</span>' : '') + it.labels.map(id => { const l = labelById(id); return l && l.name !== BLOCK_LABEL && id !== curKey ? `<span class="chip lab" style="--c:${esc(labelColor(l))}">${esc(l.name)}</span>` : ''; }).join('');
   const sel = state.sel && state.sel.has(it.id) ? ' sel' : '';
   const href = it.acc === 'free' ? '#/free/' + encodeURIComponent(it.folder) + '/' + it.uid : '#/thread/' + encodeURIComponent(it.id);
   const sizeChip = state.showSize && it.size ? `<span class="chip size">${it.size >= 1048576 ? (it.size / 1048576).toFixed(1).replace('.', ',') + ' Mo' : Math.max(1, Math.round(it.size / 1024)) + ' Ko'}</span>` : '';
@@ -957,6 +964,7 @@ async function labelSize(labelId) {
   const gmail = (async () => {
     const lab = (await api('labels/' + encodeURIComponent(labelId))) || {};
     let count = lab.messagesTotal || 0;
+    if (isBlockLabel(labelId)) { try { count += ((await api('labels/SPAM?fields=messagesTotal')) || {}).messagesTotal || 0; } catch (e) {} }
     // Gmail met parfois du temps à recompter un dossier renommé ou déplacé : on vérifie au lieu de croire « 0 »
     if (!count) { const r = (await api('messages?' + new URLSearchParams({ labelIds: labelId, maxResults: 100 }))) || {}; count = (r.messages || []).length; }
     if (!count) return { count: 0, bytes: 0 };
@@ -1006,6 +1014,19 @@ async function emptyLabel(labelId, name) {
         b.textContent = total + ' supprimés…';
         page = r.nextPageToken;
       } while (page);
+      if (isBlockLabel(labelId)) {
+        // spam Gmail : à la corbeille aussi
+        let sp = null;
+        do {
+          const p = new URLSearchParams({ labelIds: 'SPAM', includeSpamTrash: 'true', maxResults: 500 });
+          const r = (await api('messages?' + p.toString())) || {};
+          const ids = (r.messages || []).map(m => m.id);
+          if (!ids.length) break;
+          await api('messages/batchModify', { method: 'POST', body: { ids, addLabelIds: ['TRASH'], removeLabelIds: ['SPAM', 'UNREAD'] } });
+          total += ids.length; b.textContent = total + ' supprimés…';
+          sp = r.nextPageToken;
+        } while (sp);
+      }
       if (freeOn() && isBlockLabel(labelId)) { try { total += (await rapi('/free/empty', { method: 'POST', body: { folder: 'BLOCKED' } })).moved || 0; } catch (e) { toast('Free : ' + e.message); } }
       closeSheet();
       Object.keys(state.lists).forEach(k => delete state.lists[k]);
@@ -2311,7 +2332,7 @@ async function renderLabels() {
     const [gt, ft, gbn, fbn] = await Promise.all([
       api('labels/TRASH?fields=messagesTotal').then(x => (x && x.messagesTotal) || 0).catch(() => null),
       freeOn() ? rapi('/free/size?folder=TRASH').then(x => x.count || 0).catch(() => null) : Promise.resolve(0),
-      gb ? api('labels/' + encodeURIComponent(gb.id) + '?fields=messagesTotal').then(x => (x && x.messagesTotal) || 0).catch(() => null) : Promise.resolve(0),
+      gb ? Promise.all([api('labels/' + encodeURIComponent(gb.id) + '?fields=messagesTotal'), api('labels/SPAM?fields=messagesTotal')]).then(([x, y]) => ((x && x.messagesTotal) || 0) + ((y && y.messagesTotal) || 0)).catch(() => null) : Promise.resolve(0),
       freeOn() ? rapi('/free/size?folder=BLOCKED').then(x => x.count || 0).catch(() => null) : Promise.resolve(0)
     ]);
     cnt.blk = gbn == null || fbn == null ? null : gbn + fbn;
@@ -2339,8 +2360,7 @@ async function renderLabels() {
         + section('Gmail', 'gmail', g.filter(x => !isBlk(x))) + section('Free', 'free', f.filter(x => !isBlk(x)))
         + common()
         + `<a class="set-link" href="#/list/STARRED"><span class="set-t">⭐ Suivis</span><span class="set-s">Mails marqués « Suivre »</span><span class="chev-r" aria-hidden="true"></span></a>`
-        + `<a class="set-link" href="#/list/DRAFT"><span class="set-t">📝 Brouillons</span><span class="set-s">Gmail</span><span class="chev-r" aria-hidden="true"></span></a>`
-        + `<a class="set-link" href="#/list/SPAM"><span class="set-t">⚠️ Spam Gmail</span><span class="set-s">Filtré par Gmail</span><span class="chev-r" aria-hidden="true"></span></a>`;
+        + `<a class="set-link" href="#/list/DRAFT"><span class="set-t">📝 Brouillons</span><span class="set-s">Gmail</span><span class="chev-r" aria-hidden="true"></span></a>`;
       $$('details.fsec', $l).forEach(d => d.addEventListener('toggle', () => { openSecs[d.dataset.sec] = d.open; LS.set('openSecs', openSecs); }));
     }
     $$('[data-fav]', $l).forEach(b => b.onclick = e => {
