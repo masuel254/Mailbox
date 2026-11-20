@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '4.5.1';
+const APP_VERSION = '4.6.0';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -3192,8 +3192,7 @@ async function renderAgenda() {
     const it = items.find(i => i.kind === 'tt' && i.x.id === b.dataset.tt); if (!it) return; const x = it.x;
     openSheet(`<span class="grip"></span><h2>${esc(x.title)}</h2><p class="fhint" style="margin:0"><span class="tt-tag">TimeTree</span> ${esc(x.cal)}</p>
       <div class="ct-info"><div>📅 ${esc(it.s.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }))}${it.allDay ? ' · journée entière' : ' · ' + hhmm(it.s) + (it.e > it.s ? ' – ' + hhmm(it.e) : '')}</div>${x.location ? `<div>${locChip(x.location)}</div>` : ''}${x.note ? `<div>📝 ${esc(x.note)}</div>` : ''}</div>
-      <p class="fhint" style="margin:0">Pour le modifier, passe par l’app TimeTree.</p>
-      <button class="btn" id="tt-copy">Copier dans Google Agenda</button>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn primary" id="tt-edit">✏️ Modifier</button><button class="btn" id="tt-copy">Copier dans Google</button></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn danger" id="tt-del">🗑 Supprimer</button><button class="btn" data-close>Fermer</button></div>`);
     $('#tt-del').onclick = async () => {
       if (!confirm('Supprimer « ' + x.title + ' » de TimeTree (' + x.cal + ') ?' + (x.recurring ? '\n\nC’est un événement qui se répète : TOUTES les occurrences seront supprimées.' : '') + '\n\nIl disparaîtra aussi pour les autres membres du calendrier.')) return;
@@ -3201,6 +3200,7 @@ async function renderAgenda() {
       try { await rapi('/timetree/delete', { method: 'POST', body: { cal: x.calId, uuid: x.uuid } }); closeSheet(); toast('Supprimé de TimeTree'); state.agCache = null; renderAgenda(); }
       catch (e) { db.disabled = false; db.textContent = '🗑 Supprimer'; toast(e.message); }
     };
+    $('#tt-edit').onclick = () => { closeSheet(); eventSheet({ ttEdit: x, title: x.title, start: it.s, end: it.allDay ? addDays(it.e, -1) : it.e, allDay: it.allDay, location: x.location || '', note: x.note || '' }, () => { state.agCache = null; renderAgenda(); }); };
     $('#tt-copy').onclick = () => { closeSheet(); eventSheet({ title: x.title, start: it.s, end: it.allDay ? null : it.e, allDay: it.allDay, location: x.location, note: (x.note ? x.note + ' · ' : '') + 'Depuis TimeTree (' + x.cal + ')' }, () => { state.agCache = null; renderAgenda(); }); };
   });
   if (gErr) box.insertAdjacentHTML('afterbegin', googleHelp(gErr, 'Agenda')), bindHelp();
@@ -3323,20 +3323,21 @@ const defaultStart = d => { const x = new Date(d); const n = new Date(); if (day
 const toInputDate = d => dayKey(d), toInputTime = d => String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
 // ev : événement Google existant, ou brouillon { title, start (Date), end, allDay, location, note }
 function eventSheet(ev, onDone) {
-  const isNew = !ev.id;
+  const tt = ev.ttEdit || null, isNew = !ev.id && !tt, ttRec = !!(tt && tt.recurring);
   let s, e, allDay;
-  if (isNew) { s = ev.start || defaultStart(new Date()); e = ev.end || new Date(s.getTime() + 3600000); allDay = !!ev.allDay; }
+  if (isNew || tt) { s = ev.start || defaultStart(new Date()); e = ev.end || new Date(s.getTime() + 3600000); allDay = !!ev.allDay; }
   else { const t = evTimes(ev); s = t.s; e = t.allDay ? addDays(t.e, -1) : t.e; allDay = t.allDay; }
-  openSheet(`<span class="grip"></span><h2>${isNew ? 'Nouvel événement' : 'Événement'}</h2>
-    <label class="f">Titre<input id="ev-title" autocomplete="off" value="${esc(isNew ? ev.title || '' : ev.summary || '')}" placeholder="ex. Point avec Claire"></label>
-    <label class="switch">Journée entière<input type="checkbox" id="ev-all" ${allDay ? 'checked' : ''}></label>
-    <div class="ev-grid"><label class="f">Date<input type="date" id="ev-d" value="${toInputDate(s)}"></label><label class="f ev-tm">Début<input type="time" id="ev-s" value="${toInputTime(s)}"></label><label class="f ev-tm">Fin<input type="time" id="ev-e" value="${toInputTime(e)}"></label></div>
+  openSheet(`<span class="grip"></span><h2>${tt ? 'Modifier · <span class="tt-tag">TimeTree</span>' : isNew ? 'Nouvel événement' : 'Événement'}</h2>
+    ${tt ? `<p class="fhint" style="margin:0">${esc(tt.cal)}${ttRec ? ' · événement qui se répète : seuls le titre, le lieu et la note sont modifiables ici (les dates déplaceraient toute la série)' : ''}</p>` : ''}
+    <label class="f">Titre<input id="ev-title" autocomplete="off" value="${esc(isNew || tt ? ev.title || '' : ev.summary || '')}" placeholder="ex. Point avec Claire"></label>
+    <label class="switch" ${ttRec ? 'style="display:none"' : ''}>Journée entière<input type="checkbox" id="ev-all" ${allDay ? 'checked' : ''}></label>
+    <div class="ev-grid" ${ttRec ? 'style="display:none"' : ''}><label class="f">Date<input type="date" id="ev-d" value="${toInputDate(s)}"></label><label class="f ev-tm">Début<input type="time" id="ev-s" value="${toInputTime(s)}"></label><label class="f ev-tm">Fin<input type="time" id="ev-e" value="${toInputTime(e)}"></label></div>
     <label class="f">Lieu<input id="ev-loc" autocomplete="off" value="${esc(ev.location || '')}" placeholder="Adresse, visio ou lien Maps"></label>
     <div class="ev-locbar"><button type="button" class="linkish" id="ev-paste">📋 Coller un lien Maps</button><button type="button" class="linkish" id="ev-map">🗺 Voir sur la carte</button></div>
-    <label class="f">Note<input id="ev-note" autocomplete="off" value="${esc(isNew ? ev.note || '' : String(ev.description || '').replace(/<[^>]+>/g, ' '))}"></label>
+    <label class="f">Note<input id="ev-note" autocomplete="off" value="${esc(isNew || tt ? ev.note || '' : String(ev.description || '').replace(/<[^>]+>/g, ' '))}"></label>
     ${isNew && state.ttCals && state.ttCals.length ? `<label class="f">Enregistrer dans<select id="ev-dest"><option value="g">Google Agenda</option>${state.ttCals.map(c => `<option value="t:${esc(c.id)}">TimeTree · ${esc(c.name)}</option><option value="b:${esc(c.id)}">Google + TimeTree · ${esc(c.name)}</option>`).join('')}</select></label>` : ''}
     ${ev.mailUrl ? `<p class="fhint" style="margin:0">Lié au mail « ${esc(ev.mailSubject || '')} »</p>` : ''}
-    <div style="display:grid;grid-template-columns:${isNew ? '1fr 1fr' : '1fr 1fr 1fr'};gap:10px">${isNew ? '<button class="btn" data-close>Annuler</button>' : '<button class="btn danger" id="ev-del">Supprimer</button><button class="btn" data-close>Fermer</button>'}<button class="btn primary" id="ev-ok">Enregistrer</button></div>`);
+    <div style="display:grid;grid-template-columns:${isNew || tt ? '1fr 1fr' : '1fr 1fr 1fr'};gap:10px">${isNew || tt ? '<button class="btn" data-close>Annuler</button>' : '<button class="btn danger" id="ev-del">Supprimer</button><button class="btn" data-close>Fermer</button>'}<button class="btn primary" id="ev-ok">Enregistrer</button></div>`);
   $('#ev-paste').onclick = async () => {
     try { const t = (await navigator.clipboard.readText() || '').trim(); if (!t) { toast('Presse-papiers vide : copie d’abord le lien dans Maps (Partager › Copier)'); return; } $('#ev-loc').value = t; toast(isMapUrl(t) ? 'Lien Maps ajouté' : 'Texte collé'); }
     catch (e) { toast('Colle le lien dans le champ Lieu (appui long › Coller)'); $('#ev-loc').focus(); }
@@ -3348,10 +3349,13 @@ function eventSheet(ev, onDone) {
   $('#ev-ok').onclick = async () => {
     const title = $('#ev-title').value.trim(); if (!title) { toast('Donne un titre'); return; }
     const d = $('#ev-d').value, all = $('#ev-all').checked;
+    // événement sur plusieurs jours : on garde le même écart entre le jour de début et le jour de fin
+    const span = Math.max(0, Math.round((startOfDay(e) - startOfDay(s)) / 864e5));
+    const dEnd = span ? dayKey(addDays(new Date(d + 'T00:00'), span)) : d;
     let start, end;
-    if (all) { start = { date: d }; end = { date: dayKey(addDays(new Date(d + 'T00:00'), 1)) }; }
+    if (all) { start = { date: d }; end = { date: dayKey(addDays(new Date(dEnd + 'T00:00'), 1)) }; }
     else {
-      const sd = new Date(d + 'T' + ($('#ev-s').value || '09:00')); let ed = new Date(d + 'T' + ($('#ev-e').value || $('#ev-s').value || '10:00'));
+      const sd = new Date(d + 'T' + ($('#ev-s').value || '09:00')); let ed = new Date(dEnd + 'T' + ($('#ev-e').value || $('#ev-s').value || '10:00'));
       if (ed <= sd) ed = new Date(sd.getTime() + 3600000);
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
       start = { dateTime: sd.toISOString(), timeZone: tz }; end = { dateTime: ed.toISOString(), timeZone: tz };
@@ -3362,6 +3366,12 @@ function eventSheet(ev, onDone) {
     const b = $('#ev-ok'); b.disabled = true; b.textContent = 'Enregistrement…';
     const dest = ($('#ev-dest') || {}).value || 'g', ttCal = dest.includes(':') ? dest.split(':')[1] : null;
     try {
+      if (tt) {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const r = await rapi('/timetree/update', { method: 'POST', body: Object.assign({ cal: tt.calId, uuid: tt.uuid, title, location: body.location, note },
+          all ? { allDay: true, date: d, endDate: dEnd } : { allDay: false, start: Date.parse(start.dateTime), end: Date.parse(end.dateTime), tz }) });
+        state.agCache = null; closeSheet(); toast(r.recurring ? 'Série modifiée dans TimeTree' : 'Modifié dans TimeTree'); if (onDone) onDone(); return;
+      }
       if (ttCal) {
         const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
         const r = await rapi('/timetree/event', { method: 'POST', body: all ? { cal: ttCal, title, allDay: true, date: d, endDate: d, location: body.location, note } : { cal: ttCal, title, allDay: false, start: Date.parse(start.dateTime), end: Date.parse(end.dateTime), tz, location: body.location, note } });

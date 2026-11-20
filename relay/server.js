@@ -648,6 +648,16 @@ async function ttDelete(calId, uuid, retried) {
   if (!r.ok) throw Object.assign(new Error('TimeTree a refusé la suppression (' + r.status + ')'), { code: 502 });
   return { ok: true };
 }
+async function ttUpdate(calId, uuid, body, retried) {
+  if (!ttSess) ttSess = await ttLogin();
+  const csrf = ttCsrf || await ttGetCsrf();
+  const r = await fetch(TT + '/calendar/' + encodeURIComponent(calId) + '/event/' + encodeURIComponent(uuid), { method: 'PUT', signal: AbortSignal.timeout(20000),
+    headers: Object.assign({ Cookie: '_session_id=' + ttSess, 'x-csrf-token': csrf }, TT_HDR), body: JSON.stringify(body) });
+  if ((r.status === 401 || r.status === 403 || r.status === 422) && !retried) { if (r.status === 401) ttSess = null; ttCsrf = null; return ttUpdate(calId, uuid, body, true); }
+  if (r.status === 404) throw Object.assign(new Error('Événement TimeTree introuvable (supprimé ailleurs ?)'), { code: 404 });
+  if (!r.ok) { let t = ''; try { t = (await r.text()).slice(0, 200); } catch (e) {} throw Object.assign(new Error('TimeTree a refusé la modification (' + r.status + ')'), { code: 502, detail: t }); }
+  return r.json().catch(() => ({}));
+}
 const ttColor = c => typeof c === 'number' ? '#' + c.toString(16).padStart(6, '0') : (c || '');
 async function ttSync() {
   if (!S.timetree) return;
@@ -1008,6 +1018,33 @@ const routes = {
     log('TimeTree : événement « ' + ev.title + ' » supprimé de ' + ev.cal);
     setTimeout(() => ttSync().catch(() => {}), 1500);
     return { ok: true };
+  },
+  // Modification d'un événement TimeTree existant (envoi partiel : seuls les champs modifiables)
+  'POST /timetree/update': async (q, b) => {
+    if (!S.timetree) throw Object.assign(new Error('TimeTree non connecté'), { code: 400 });
+    const ev = ((S.ttCache || {}).events || []).find(e => e.id === b.uuid && String(e.calId) === String(b.cal));
+    if (!ev) throw Object.assign(new Error('Événement TimeTree introuvable, actualise l’agenda'), { code: 404 });
+    const title = String(b.title || '').trim().slice(0, 200);
+    if (!title) throw Object.assign(new Error('Titre manquant'), { code: 400 });
+    const body = { title, note: String(b.note || '').slice(0, 2000), location: String(b.location || '').slice(0, 200) };
+    // Pour une série récurrente, on ne touche pas aux dates (elles déplaceraient toute la série)
+    const isRec = (ev.rec || []).some(x => /^RRULE/i.test(x));
+    if (!isRec) {
+      let start_at, end_at, tz = String(ev.tz || b.tz || 'UTC');
+      if (b.allDay) {
+        const [y1, m1, d1] = String(b.date).split('-').map(Number), [y2, m2, d2] = String(b.endDate || b.date).split('-').map(Number);
+        start_at = Date.UTC(y1, m1 - 1, d1); end_at = Date.UTC(y2, m2 - 1, d2); tz = 'UTC';
+      } else { start_at = +b.start; end_at = Math.max(+b.end || 0, start_at); if (tz === 'UTC' && b.tz) tz = String(b.tz); }
+      if (!start_at || isNaN(start_at)) throw Object.assign(new Error('Date invalide'), { code: 400 });
+      Object.assign(body, { all_day: !!b.allDay, start_at, start_timezone: tz, end_at, end_timezone: tz });
+    }
+    await ttUpdate(ev.calId, ev.id, body);
+    Object.assign(ev, { title: body.title, note: body.note, location: body.location });
+    if (body.start_at) Object.assign(ev, { allDay: body.all_day, start: body.start_at, end: body.end_at, tz: body.start_timezone });
+    save();
+    log('TimeTree : événement « ' + title + ' » modifié dans ' + ev.cal);
+    setTimeout(() => ttSync().catch(() => {}), 1500);
+    return { ok: true, recurring: isRec };
   },
   'GET /timetree/events': async q => {
     if (!S.timetree) return { enabled: false, items: [] };
