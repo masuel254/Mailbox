@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.12.2';
+const APP_VERSION = '2.12.3';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -569,8 +569,8 @@ function bindListGestures(list) {
       if (Math.abs(dx) > 90) {
         const a = cur, id = a.dataset.id, it = findItem(id), kind = dx < -200 ? 'block' : dx < 0 ? 'trash' : (it && it.unread ? 'read' : 'unread');
         if (navigator.vibrate) navigator.vibrate(10);
-        if (kind === 'block') { a.style.transition = 'transform .2s'; a.style.transform = 'translateX(-110%)'; quickBlock(it); setTimeout(() => { if (bg) bg.remove(); bg = null; cur = null; lock = null; }, 220); return; }
-        if (kind === 'trash') { a.style.transition = 'transform .2s'; a.style.transform = 'translateX(-110%)'; }
+        if (kind === 'block') { collapseRow(a); quickBlock(it); setTimeout(() => { if (bg) bg.remove(); bg = null; cur = null; lock = null; }, 220); return; }
+        if (kind === 'trash') collapseRow(a);
         else reset();
         swipeAct(id, kind);
         setTimeout(() => { if (bg) bg.remove(); bg = null; cur = null; lock = null; }, 220);
@@ -585,6 +585,13 @@ function bindListGestures(list) {
     if (longDone || swiped) { e.preventDefault(); longDone = false; swiped = false; return; }
     if (state.sel) { e.preventDefault(); toggleSel(a); }
   });
+}
+/* Retire une ligne de la liste en la refermant (pas de trou) */
+function collapseRow(a) {
+  if (!a || !a.parentNode) return;
+  a.style.transition = 'transform .2s, opacity .2s'; a.style.transform = 'translateX(-110%)'; a.style.opacity = '0';
+  setTimeout(() => { a.style.overflow = 'hidden'; a.style.height = a.offsetHeight + 'px'; a.offsetHeight; a.style.transition = 'height .2s, margin .2s, padding .2s'; a.style.height = '0'; a.style.margin = '0'; a.style.paddingTop = a.style.paddingBottom = '0'; a.style.borderWidth = '0'; }, 180);
+  setTimeout(() => { a.remove(); $$('#list .swipe-bg').forEach(x => x.remove()); }, 420);
 }
 function findItem(id) { for (const d of Object.values(state.lists)) { const i = d.items.find(x => x.id === id); if (i) return i; } return null; }
 async function swipeAct(id, kind) {
@@ -742,6 +749,7 @@ async function quickBlock(item) {
     let moved = await moveExisting(t, lab);
     if (freeOn()) { try { moved += (await rapi('/free/block', { method: 'POST', body: { target: t } })).moved || 0; } catch (e) {} }
     const hit = e => e && (e.toLowerCase() === t || blockTarget(e) === t);
+    $$('#list a.item').forEach(a => { const i = findItem(a.dataset.id); if (i && hit(i.fromEmail)) collapseRow(a); });
     Object.values(state.lists).forEach(d => { d.items = d.items.filter(i => !hit(i.fromEmail)); });
     reDraw(); badgeNow(0);
     undoToast(names[t] + ' bloqué' + (moved > 1 ? ' · ' + moved + ' mails rangés' : ''), async () => {

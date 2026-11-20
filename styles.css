@@ -341,3 +341,4 @@ body.selecting .item .mark{visibility:visible}
 .item:not(.u) .who{font-weight:750;color:#c4c9cf}
 :root[data-theme="light"] .item:not(.u) .who{color:#4a5058}
 @media (prefers-color-scheme: light){:root[data-theme="auto"] .item:not(.u) .who{color:#4a5058}}
+#list .swipe-bg{pointer-events:none}
