@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.6.0';
+const APP_VERSION = '3.6.1';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -1011,29 +1011,29 @@ function emptyTrash() {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn danger" id="trash-ok">Vider</button></div>`);
   $('#trash-ok').onclick = async () => {
     const b = $('#trash-ok'); b.disabled = true; b.textContent = 'Suppression…';
-    let total = 0, scopeMissing = false;
+    let job;
     try {
-      let page = null;
-      do {
-        const p = new URLSearchParams({ labelIds: 'TRASH', maxResults: 500, includeSpamTrash: 'true' });
-        if (page) p.set('pageToken', page);
-        const r = (await api('messages?' + p.toString())) || {};
-        const ids = (r.messages || []).map(m => m.id);
-        for (let i = 0; i < ids.length; i += 1000) await api('messages/batchDelete', { method: 'POST', body: { ids: ids.slice(i, i + 1000) } });
-        total += ids.length; b.textContent = total + ' effacés…';
-        page = r.nextPageToken;
-      } while (page);
-    } catch (e) { if (e.message === 'scope' || /insufficient|scope|permission/i.test(e.message)) scopeMissing = true; else if (e.message !== 'auth') toast('Gmail : ' + e.message); }
-    if (freeOn()) { try { total += (await rapi('/free/purge', { method: 'POST', body: { folder: 'TRASH' } })).deleted || 0; } catch (e) { toast('Free : ' + e.message); } }
+      job = await rapi('/trash/empty', { method: 'POST' });
+      // Le relais travaille seul ; on affiche l'avancement (tu peux quitter l'app, il continue)
+      const sub = $('#sheet p'); if (sub) sub.innerHTML = 'Effacement en cours sur le serveur. Tu peux fermer l\u2019app, il continue tout seul.';
+      while (job.running) {
+        await new Promise(r => setTimeout(r, 2000));
+        job = await rapi('/trash/empty');
+        const bb = $('#trash-ok'); if (!bb) break;
+        bb.textContent = (job.gmail + job.free) + ' effacés…';
+      }
+    } catch (e) { closeSheet(); toast('Échec : ' + e.message); return; }
     closeSheet();
     Object.keys(state.lists).forEach(k => delete state.lists[k]);
     try { localStorage.removeItem('ml-size-TRASH'); } catch (e) {}
-    if (scopeMissing) {
+    const total = (job.gmail || 0) + (job.free || 0);
+    if (job.error === 'scope') {
       openSheet(`<span class="grip"></span><h2>Autorisation Gmail à ajouter</h2>
         <p style="margin:0;color:var(--muted);font-size:.85rem;line-height:1.5">${freeOn() ? 'La corbeille Free est vidée. ' : ''}Pour effacer définitivement la corbeille Gmail, Google demande une autorisation de plus. Appuie sur Autoriser, choisis ton compte et accepte : tu reviens ici ensuite, puis relance « Vider ».</p>
         <button class="btn primary" id="tr-auth">Autoriser</button><button class="btn" data-close>Plus tard</button>`);
       $('#tr-auth').onclick = () => { location.href = relayGoogleStart(); };
-    } else toast(total ? total + ' mail' + (total > 1 ? 's' : '') + ' effacé' + (total > 1 ? 's' : '') + ' définitivement' : 'La corbeille était déjà vide');
+    } else if (job.error) toast(total + ' effacés, puis arrêt : ' + job.error + '. Relance « Vider » pour finir.');
+    else toast(total ? total + ' mail' + (total > 1 ? 's' : '') + ' effacé' + (total > 1 ? 's' : '') + ' définitivement' : 'La corbeille était déjà vide');
     route();
   };
 }

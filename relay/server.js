@@ -470,6 +470,32 @@ async function freeFolderSize(folderKey) {
     } finally { lock.release(); }
   });
 }
+/* Vider la corbeille Gmail + Free côté serveur : continue même si l'iPhone se met en veille.
+   On relit toujours la première page (pas de pageToken : effacer décale les pages et en ferait sauter). */
+let trashJob = null;
+const pause = ms => new Promise(r => setTimeout(r, ms));
+async function runEmptyTrash(job) {
+  if (S.gmail) {
+    let tries = 0;
+    while (true) {
+      try {
+        const r = (await gapi('messages?' + new URLSearchParams({ labelIds: 'TRASH', includeSpamTrash: 'true', maxResults: 500 }))) || {};
+        const ids = (r.messages || []).map(m => m.id);
+        if (!ids.length) break;
+        await gapi('messages/batchDelete', { method: 'POST', body: { ids } });
+        job.gmail += ids.length; tries = 0;
+        await pause(400);
+      } catch (e) {
+        if (/insufficient|scope|PERMISSION/i.test(e.message)) { job.error = 'scope'; break; }
+        if (/ 429| 403|rate|quota|5\d\d/i.test(e.message) && tries < 12) { tries++; await pause(3000 * tries); continue; }
+        job.error = e.message; break;
+      }
+    }
+  }
+  if (S.free) { try { job.free = (await freePurge('TRASH')).deleted || 0; } catch (e) { job.error = job.error || 'Free : ' + e.message; } }
+  job.running = false; job.end = Date.now();
+  log('corbeille vidée : Gmail ' + job.gmail + ', Free ' + job.free + (job.error ? ' (' + job.error + ')' : ''));
+}
 /* Corbeille Free : effacement définitif (uniquement la corbeille) */
 async function freePurge(folderKey) {
   if (folderKey !== 'TRASH') throw Object.assign(new Error('Seule la corbeille peut être vidée définitivement'), { code: 400 });
@@ -964,6 +990,11 @@ const routes = {
   'GET /free/size': async q => freeFolderSize(q.get('folder') || 'BLOCKED'),
   'POST /free/empty': async (q, b) => freeEmpty(b.folder || 'BLOCKED'),
   'POST /free/purge': async (q, b) => freePurge(b.folder),
+  'POST /trash/empty': async () => {
+    if (!trashJob || !trashJob.running) { trashJob = { running: true, gmail: 0, free: 0, error: null, start: Date.now() }; runEmptyTrash(trashJob).catch(e => { trashJob.running = false; trashJob.error = e.message; }); }
+    return trashJob;
+  },
+  'GET /trash/empty': async () => trashJob || { running: false, gmail: 0, free: 0, error: null },
   'POST /free/block': async (q, b) => {
     const t = (b.target || '').toLowerCase(); if (!t) throw Object.assign(new Error('cible manquante'), { code: 400 });
     blockedCache.at = 0;
