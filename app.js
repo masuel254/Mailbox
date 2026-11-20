@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.4.1';
+const APP_VERSION = '3.4.2';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -346,7 +346,7 @@ async function renderList(key, q) {
     })()}</div>
     ${contactQ ? `<div class="ai-note"><b>👤 ${esc(contactQ)}</b><span>Tous vos mails, dans les deux sens, Gmail et Free.</span>${settings.ai && relayOn() ? `<button class="btn" id="hist-go" style="margin-top:4px">${ICON.spark}Retracer l’historique</button>` : ''}</div><div id="hist-out"></div>` : ''}
     ${isSearch && state.aiNote && state.aiNote.q === q ? `<div class="ai-note"><b>✦ ${esc(state.aiNote.resume || 'Recherche de l’assistant')}</b><span>« ${esc(state.aiNote.ask)} » → <code>${esc(q)}</code></span><span class="ai-links"><a href="#/smart/${encodeURIComponent(state.aiNote.ask)}">✦ Pas trouvé ? Recherche par le sens</a><a href="#/search/${encodeURIComponent(state.aiNote.ask)}" id="ai-raw">Mots exacts</a></span></div>` : ''}
-    ${isFolderView(key) ? `<div class="banner"><span style="display:flex;flex-direction:column;gap:2px"><span>${title === BLOCK_LABEL ? 'Mails des expéditeurs bloqués' : 'Dossier « ' + esc(title) + ' »'}</span><b id="lab-size" style="color:var(--accent)">Calcul de la taille…</b></span><button class="btn danger" id="btn-empty">${ICON.trash}Tout supprimer</button></div>` : ''}
+    ${isFolderView(key) ? `<div class="banner"><span style="display:flex;flex-direction:column;gap:2px"><span>${title === BLOCK_LABEL ? 'Expéditeurs bloqués et spam' : 'Dossier « ' + esc(title) + ' »'}</span><b id="lab-size" style="color:var(--accent)">Calcul de la taille…</b></span><button class="btn danger" id="btn-empty">${ICON.trash}Tout supprimer</button></div>` : ''}
     <div id="subdirs"></div>
     <div id="list"><div class="loading">Chargement…</div></div>`;
   // Sous-dossiers du dossier ouvert : un dossier « thème » ne contient souvent rien lui-même, ses mails sont dans ses sous-dossiers

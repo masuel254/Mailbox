@@ -186,6 +186,24 @@ async function folders(client) {
     archive: find('\\Archive', /^(archive|archives)$/i) || null
   };
 }
+/* Dossiers spam du fournisseur (Junk, Spam, Courrier indésirable…) : leur contenu est regroupé dans « Indésirables » */
+const JUNK_RE = /^(junk|spam|bulk|courrier ind|junk e-?mail)/i;
+function junkPaths(list) {
+  return list.filter(m => m.path !== BLOCK_LABEL && !(m.flags && m.flags.has('\\Noselect')) && (m.specialUse === '\\Junk' || JUNK_RE.test(m.name || '') || JUNK_RE.test(m.path))).map(m => m.path);
+}
+async function sweepJunk(client) {
+  let n = 0;
+  for (const path of junkPaths(await client.list())) {
+    let st; try { st = await client.status(path, { messages: true }); } catch (e) { continue; }
+    if (!st.messages) continue;
+    const lock = await client.getMailboxLock(path);
+    try {
+      const uids = (await client.search({ all: true }, { uid: true })) || [];
+      if (uids.length) { await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true }); await ensureFolder(client, BLOCK_LABEL); await client.messageMove(uids, BLOCK_LABEL, { uid: true }); n += uids.length; }
+    } finally { lock.release(); }
+  }
+  return n;
+}
 async function ensureFolder(client, name) { try { await client.mailboxCreate(name); } catch (e) { /* existe déjà */ } return name; }
 async function resolveFolder(client, key) {
   const f = await folders(client);
@@ -581,6 +599,7 @@ async function pollFree() {
       const st = await client.status('INBOX', { unseen: true });
       S.badge.free = st.unseen || 0;
     } finally { lock.release(); }
+    try { const n = await sweepJunk(client); if (n) log('Free : ' + n + ' spam(s) regroupé(s) dans ' + BLOCK_LABEL); } catch (e) { log('spam Free', e.message); }
     return out;
   });
 }
@@ -796,7 +815,7 @@ const routes = {
     const f = await folders(c);
     if (q.get('tree') === '1') {
       const list = await c.list();
-      const skip = new Set(['INBOX', f.sent, f.trash, f.junk, f.drafts]);
+      const skip = new Set(['INBOX', f.sent, f.trash, f.junk, f.drafts].concat(junkPaths(list)));
       const user = list.filter(m => !skip.has(m.path) && !(m.flags && m.flags.has('\\Noselect')) && !m.specialUse);
       const out = [];
       for (const m of user) {
