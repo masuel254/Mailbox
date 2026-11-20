@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.0.3';
+const APP_VERSION = '3.1.0';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -422,6 +422,8 @@ async function loadList(key, q, cacheKey, plain, reset) {
     state.lists[cacheKey] = data;
     if (['INBOX', 'UNREAD', 'SENT'].includes(key) && !more) { try { LS.set('list:' + cacheKey, { next: data.next, freeBefore: data.freeBefore, freeMore: data.freeMore, items: data.items.slice(0, 40) }); } catch (e) {} }
     if (state.current === cacheKey) { const y = scrollY; drawList(data, plain); if (reset && y) scrollTo(0, y); }
+    // Recherche de l'assistant qui ne trouve presque rien : on bascule seul sur la recherche par le sens
+    if (key === 'SEARCH' && !more && settings.ai && state.aiNote && state.aiNote.q === q && !state.aiNote.auto && data.items.length < 3) { state.aiNote.auto = true; toast('Peu de résultats, je cherche par le sens…'); location.hash = '#/smart/' + encodeURIComponent(state.aiNote.ask); }
     if (key === 'INBOX' || key === 'UNREAD') updateBadge();
   } catch (e) {
     if (e.message === 'auth') return;
@@ -1421,7 +1423,7 @@ const GUIDE = [
     <p><b>Résumer</b> (en haut d’un mail) : résumé, points clés, suivi de l’échange (qui a dit quoi, quand), engagements et échéances. Chaque échéance a un bouton <b>+ Tâche</b>.</p>
     <p><b>Réponse IA</b> : 3 propositions (accepter, décliner, demander une précision) ou selon ta consigne (« accepter jeudi, proposer 10 h »). <b>Utiliser et modifier</b> ouvre la réponse pré-remplie.</p>
     <p><b>Classer</b> : une suggestion 💡 apparaît en haut (là où sont déjà les mails de cet expéditeur, sinon « Suggérer un dossier »). La case <b>Toujours ranger…</b> crée une règle automatique pour les prochains mails.</p>
-    <p><b>Recherche</b> : écris une phrase dans la loupe (« la promo Devred de mon anniversaire », « mes plus gros mails »). Si rien ne vient, <b>Recherche par le sens</b> explore plusieurs pistes et trie les résultats en expliquant pourquoi.</p>
+    <p><b>Recherche</b> : écris une phrase dans la loupe (« la promo Devred de mon anniversaire », « mes plus gros mails »). S’il trouve moins de 3 mails, il bascule tout seul sur la <b>recherche par le sens</b> : il déduit les expéditeurs probables, les synonymes et la période, examine jusqu’à 80 mails Gmail et Free, puis les classe en « Correspond le mieux » et « Peut-être aussi », avec la raison de chaque résultat.</p>
     <div class="tip">Ces fonctions envoient à Groq le texte du mail concerné, uniquement quand tu touches le bouton. Le rangement des dossiers n’envoie que leurs noms.</div>`],
   ['🔔', 'Pastille et notifications', `
     <p>Le serveur prévient l'iPhone à chaque nouveau mail : notification <b>discrète</b> (sans son) et pastille sur l'icône.</p>
@@ -1858,28 +1860,34 @@ async function renderSmart(question) {
   const step = t => { const e = $('#sm-step'); if (e) e.textContent = t; };
   let plan;
   try { plan = await rapi('/ai/smart', { method: 'POST', body: { q: question, today: today() } }); } catch (e) { $('#list').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
-  const qs = (plan.queries || []).filter(Boolean).slice(0, 5);
+  const qs = (plan.queries || []).filter(Boolean).slice(0, 6);
+  if (state.aiNote && state.aiNote.ask === question && state.aiNote.q && !qs.includes(state.aiNote.q)) qs.unshift(state.aiNote.q);
   step('Pistes : ' + qs.join(' · '));
   const cand = new Map();
   await Promise.all(qs.map(async q => {
     const jobs = [];
     if (settings.clientId || relayGmailOn()) jobs.push((async () => {
-      const r = (await api('threads?' + new URLSearchParams({ q, maxResults: 8 }))) || {};
+      const r = (await api('threads?' + new URLSearchParams({ q, maxResults: 12 }))) || {};
       const ts = await pool(r.threads || [], 6, t => api('threads/' + t.id + '?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date').catch(() => null));
       ts.filter(Boolean).forEach(t => { const it = summarize(t); it.acc = 'gmail'; cand.set(it.id, it); });
     })().catch(() => {}));
-    if (freeOn()) jobs.push(rapi('/free/search?' + new URLSearchParams({ q, limit: '8' })).then(r => (r.items || []).forEach(x => { const it = freeItem(x); cand.set(it.id, it); })).catch(() => {}));
+    if (freeOn()) jobs.push(rapi('/free/search?' + new URLSearchParams({ q, limit: '12' })).then(r => (r.items || []).forEach(x => { const it = freeItem(x); cand.set(it.id, it); })).catch(() => {}));
     await Promise.all(jobs);
   }));
-  const all = [...cand.values()].sort((a, b) => b.date - a.date).slice(0, 60);
+  const all = [...cand.values()].sort((a, b) => b.date - a.date).slice(0, 80);
   if (!all.length) { $('#list').innerHTML = '<div class="empty">Rien trouvé, même en élargissant. Essaie avec un autre mot ou un expéditeur.</div>'; return; }
   step(all.length + ' mails candidats, tri par pertinence…');
   let ranked = [];
-  try { ranked = ((await rapi('/ai/rank', { method: 'POST', body: { q: question, items: all.map((x, i) => ({ i, date: new Date(x.date).toLocaleDateString('fr-FR'), from: x.from, subject: x.subject, snippet: x.snippet })) } })).results || []).filter(r => all[r.i]); } catch (e) { toast(e.message); }
-  const items = ranked.length ? ranked.map(r => Object.assign({}, all[r.i], { snippet: '✦ ' + (r.why || ''), unread: false })) : all;
-  step(ranked.length ? ranked.length + ' résultat' + (ranked.length > 1 ? 's' : '') + ', du plus pertinent au moins pertinent' : 'Tri impossible, voici tous les candidats');
+  try { ranked = ((await rapi('/ai/rank', { method: 'POST', body: { q: question, indices: plan.indices || '', items: all.map((x, i) => ({ i, date: new Date(x.date).toLocaleDateString('fr-FR'), from: x.from, subject: x.subject, snippet: x.snippet })) } })).results || []).filter(r => all[r.i]); } catch (e) { toast(e.message); }
+  const mk = r => Object.assign({}, all[r.i], { snippet: '✦ ' + (r.why || ''), unread: false });
+  const best = ranked.filter(r => (r.score == null ? 7 : r.score) >= 7).map(mk), maybe = ranked.filter(r => r.score != null && r.score < 7).map(mk);
+  step(ranked.length ? (best.length + maybe.length) + ' résultat' + (best.length + maybe.length > 1 ? 's' : '') + ' sur ' + all.length + ' mails examinés' : 'Tri impossible, voici tous les candidats');
   state.showAcc = freeOn(); state.dayMode = false;
-  $('#list').innerHTML = items.map(i => itemHTML(i, '')).join('');
+  $('#list').innerHTML = ranked.length
+    ? (best.length ? `<h2 class="sec">Correspond le mieux · ${best.length}</h2>` + best.map(i => itemHTML(i, '')).join('') : '')
+      + (maybe.length ? `<h2 class="sec">Peut-être aussi · ${maybe.length}</h2>` + maybe.map(i => itemHTML(i, '')).join('') : '')
+      + `<details class="set" style="margin-top:12px"><summary><span class="set-t">Pistes explorées</span><span class="chev"></span></summary><div class="card" style="font-size:.8rem;color:var(--muted)">${qs.map(q => `<code>${esc(q)}</code>`).join('<br>')}${plan.indices ? '<br><br>' + esc(plan.indices) : ''}</div></details>`
+    : all.map(i => itemHTML(i, '')).join('');
 }
 /* ---------- Tâches ---------- */
 async function taskSheet(t, ctx) {
