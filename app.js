@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '4.3.3';
+const APP_VERSION = '4.3.4';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -3162,9 +3162,10 @@ async function agendaSynthesis(scope, btn) {
   const old = btn.textContent; btn.disabled = true; btn.textContent = 'Analyse…';
   try {
     const p = new URLSearchParams({ timeMin: from.toISOString(), timeMax: to.toISOString(), singleEvents: 'true', orderBy: 'startTime', maxResults: 100 });
+    const errs = [];
     const [g, t, tk] = await Promise.all([
-      gx('https://www.googleapis.com/calendar/v3/calendars/primary/events?' + p).then(r => (r || {}).items || []).catch(() => []),
-      rapi('/timetree/events?' + new URLSearchParams({ from: from.getTime(), to: to.getTime() })).then(r => r.items || []).catch(() => []),
+      gx('https://www.googleapis.com/calendar/v3/calendars/primary/events?' + p).then(r => (r || {}).items || []).catch(e => { errs.push('Google Agenda : ' + e.message); return []; }),
+      rapi('/timetree/events?' + new URLSearchParams({ from: from.getTime(), to: to.getTime() })).then(r => { if (r.error) errs.push('TimeTree : ' + r.error); return r.items || []; }).catch(e => { errs.push('TimeTree : ' + e.message); return []; }),
       rapi('/tasks').then(r => (r.tasks || []).filter(x => !x.done && x.due >= from.getTime() && x.due < to.getTime())).catch(() => [])
     ]);
     const fmtD = d => d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
@@ -3184,13 +3185,14 @@ async function agendaSynthesis(scope, btn) {
     lines.sort((a, b) => a[0] - b[0]);
     const label = scope === 'week' ? 'semaine du ' + fmtD(from) : scope === 'weekend' ? 'week-end du ' + fmtD(from) : fmtD(from);
     if (!lines.length) { out.innerHTML = `<div class="ai-note"><b>Rien de prévu</b><span>Aucun événement ${scope === 'week' ? 'cette semaine' : scope === 'weekend' ? 'ce week-end' : 'ce jour-là'} : ${esc(label)}.</span></div>`; return; }
-    const r = await rapi('/ai/agenda', { method: 'POST', body: { scope, now: new Date().toLocaleString('fr-FR'), text: 'Période : ' + label + '\n' + lines.map(l => l[1]).join('\n') } });
+    const cnt = { g: 0, t: 0, k: 0 }; lines.forEach(l => { if (/\[Google\]$/.test(l[1])) cnt.g++; else if (/\[TimeTree/.test(l[1])) cnt.t++; else cnt.k++; });
+    const r = await rapi('/ai/agenda', { method: 'POST', body: { scope, now: new Date().toLocaleString('fr-FR'), text: 'PÉRIODE : ' + label + '\nNOMBRE D’ÉVÉNEMENTS : ' + lines.length + '\nÉVÉNEMENTS (un par ligne) :\n' + lines.map((l, i) => (i + 1) + '. ' + l[1]).join('\n') } });
     const ul = (h, a) => a && a.length ? `<h4>${h}</h4><ul>${a.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '';
     out.innerHTML = `<div class="ag-syn"><div class="ag-syn-h"><b>✦ ${esc(r.titre || 'Synthèse')}</b><button class="linkish" id="ag-syn-x" aria-label="Fermer">✕</button></div>
       ${r.resume ? `<p>${esc(r.resume)}</p>` : ''}
       ${scope !== 'day' ? (r.jours || []).map(j => j.points && j.points.length ? `<h4>${esc(j.jour)}</h4><ul>${j.points.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '').join('') : ''}
       ${ul('⚠️ Attention', r.attention)}${ul('🕒 Créneaux libres', r.libre)}${ul('📋 À préparer', r.preparer)}
-      <p class="fhint" style="margin:6px 0 0">${lines.length} élément${lines.length > 1 ? 's' : ''} analysé${lines.length > 1 ? 's' : ''} · ${esc(label)}</p></div>`;
+      <p class="fhint" style="margin:6px 0 0">${esc(label)} · Google ${cnt.g} · TimeTree ${cnt.t}${cnt.k ? ' · tâches ' + cnt.k : ''}${errs.length ? '<br>⚠️ ' + errs.map(esc).join(' · ') : ''}</p></div>`;
     $('#ag-syn-x').onclick = () => { out.innerHTML = ''; };
   } catch (e) { if (e.message !== 'auth') toast('Synthèse impossible : ' + e.message); }
   finally { btn.disabled = false; btn.textContent = old; }
