@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '4.2.2';
+const APP_VERSION = '4.3.0';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -3065,7 +3065,7 @@ async function renderAgenda() {
   state.agDay = state.agDay || startOfDay(new Date());
   v.innerHTML = `<div class="sticky-head"><div class="top"><h1>Agenda</h1><button class="icon-btn" id="ag-new" aria-label="Nouvel événement">${ICON.plus}</button><button class="icon-btn" id="ag-ref" aria-label="Actualiser">${ICON.refresh}</button></div>
     <div class="seg" id="ag-seg">${[['week', 'Semaine'], ['month', 'Mois'], ['list', 'Liste']].map(([k, n]) => `<button data-m="${k}" class="${mode === k ? 'on' : ''}">${n}</button>`).join('')}</div>
-    <div id="ag-nav"></div></div><div id="ag-sug"></div><div id="ag-list"><div class="loading">Chargement…</div></div>`;
+    <div id="ag-nav"></div></div>${settings.ai && relayOn() ? '<div class="ag-ai"><button class="btn" id="ag-ai-day">✦ Synthèse du jour</button><button class="btn" id="ag-ai-week">✦ Synthèse de la semaine</button></div><div id="ag-ai-out"></div>' : ''}<div id="ag-sug"></div><div id="ag-list"><div class="loading">Chargement…</div></div>`;
   $$('#ag-seg button').forEach(b => b.onclick = () => { LS.set('agMode', b.dataset.m); renderAgenda(); });
   $('#ag-new').onclick = () => eventSheet({ start: defaultStart(state.agDay) }, () => renderAgenda());
   $('#ag-ref').onclick = () => { state.agCache = null; renderAgenda(); };
@@ -3146,7 +3146,44 @@ async function renderAgenda() {
   if (gErr) box.insertAdjacentHTML('afterbegin', googleHelp(gErr, 'Agenda')), bindHelp();
   if (ttInfo && ttInfo.error) box.insertAdjacentHTML('afterbegin', `<p class="fhint">TimeTree : ${esc(ttInfo.error)}${ttInfo.at ? ' · données du ' + esc(new Date(ttInfo.at).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })) : ''}</p>`);
   bindAgendaSwipe(box, evs, items);
+  const aiD = $('#ag-ai-day'), aiW = $('#ag-ai-week');
+  if (aiD) aiD.onclick = () => agendaSynthesis('day', aiD);
+  if (aiW) aiW.onclick = () => agendaSynthesis('week', aiW);
   agendaSuggestions();
+}
+/* Synthèse IA du jour ou de la semaine (jour choisi / semaine qui le contient), Google Agenda + TimeTree + tâches */
+async function agendaSynthesis(scope, btn) {
+  const out = $('#ag-ai-out'); if (!out) return;
+  const d0 = startOfDay(state.agDay || new Date());
+  const from = scope === 'week' ? monday(d0) : d0, to = scope === 'week' ? addDays(monday(d0), 7) : addDays(d0, 1);
+  const old = btn.textContent; btn.disabled = true; btn.textContent = 'Analyse…';
+  try {
+    const p = new URLSearchParams({ timeMin: from.toISOString(), timeMax: to.toISOString(), singleEvents: 'true', orderBy: 'startTime', maxResults: 100 });
+    const [g, t, tk] = await Promise.all([
+      gx('https://www.googleapis.com/calendar/v3/calendars/primary/events?' + p).then(r => (r || {}).items || []).catch(() => []),
+      rapi('/timetree/events?' + new URLSearchParams({ from: from.getTime(), to: to.getTime() })).then(r => r.items || []).catch(() => []),
+      rapi('/tasks').then(r => (r.tasks || []).filter(x => !x.done && x.due >= from.getTime() && x.due < to.getTime())).catch(() => [])
+    ]);
+    const fmtD = d => d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+    const lines = [];
+    g.filter(e => e.status !== 'cancelled').forEach(e => { const t = evTimes(e); lines.push([t.s, fmtD(t.s) + ' · ' + (t.allDay ? 'journée' : hhmm(t.s) + '-' + hhmm(t.e)) + ' · ' + (e.summary || '(sans titre)') + (e.location ? ' · lieu : ' + e.location : '') + ' [Google]']); });
+    t.forEach(x => { const s = x.allDay ? new Date(x.date + 'T00:00') : new Date(x.start), e = x.allDay ? null : new Date(x.end); lines.push([s, fmtD(s) + ' · ' + (x.allDay ? 'journée' : hhmm(s) + '-' + hhmm(e)) + ' · ' + x.title + (x.location ? ' · lieu : ' + x.location : '') + ' [TimeTree ' + x.cal + ']']); });
+    tk.forEach(x => { const s = new Date(x.due); lines.push([s, fmtD(s) + ' · ' + hhmm(s) + ' · tâche : ' + x.title]); });
+    // le relais renvoie une marge d'un jour : on ne garde que la période demandée
+    for (let i = lines.length - 1; i >= 0; i--) if (lines[i][0] < from || lines[i][0] >= to) lines.splice(i, 1);
+    lines.sort((a, b) => a[0] - b[0]);
+    const label = scope === 'week' ? 'semaine du ' + fmtD(from) : fmtD(from);
+    if (!lines.length) { out.innerHTML = `<div class="ai-note"><b>Rien de prévu</b><span>Aucun événement ${scope === 'week' ? 'cette semaine' : 'ce jour-là'} : ${esc(label)}.</span></div>`; return; }
+    const r = await rapi('/ai/agenda', { method: 'POST', body: { scope, now: new Date().toLocaleString('fr-FR'), text: 'Période : ' + label + '\n' + lines.map(l => l[1]).join('\n') } });
+    const ul = (h, a) => a && a.length ? `<h4>${h}</h4><ul>${a.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '';
+    out.innerHTML = `<div class="ag-syn"><div class="ag-syn-h"><b>✦ ${esc(r.titre || 'Synthèse')}</b><button class="linkish" id="ag-syn-x" aria-label="Fermer">✕</button></div>
+      ${r.resume ? `<p>${esc(r.resume)}</p>` : ''}
+      ${scope === 'week' ? (r.jours || []).map(j => j.points && j.points.length ? `<h4>${esc(j.jour)}</h4><ul>${j.points.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '').join('') : ''}
+      ${ul('⚠️ Attention', r.attention)}${ul('🕒 Créneaux libres', r.libre)}${ul('📋 À préparer', r.preparer)}
+      <p class="fhint" style="margin:6px 0 0">${lines.length} élément${lines.length > 1 ? 's' : ''} analysé${lines.length > 1 ? 's' : ''} · ${esc(label)}</p></div>`;
+    $('#ag-syn-x').onclick = () => { out.innerHTML = ''; };
+  } catch (e) { if (e.message !== 'auth') toast('Synthèse impossible : ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = old; }
 }
 /* Glisser un événement vers la gauche : bouton Supprimer (Google Agenda ou TimeTree) */
 function bindAgendaSwipe(box, evs, items) {

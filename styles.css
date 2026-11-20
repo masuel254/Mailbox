@@ -469,3 +469,12 @@ body.selecting .item .mark{display:flex}
 .ev-del svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2}
 .ev-del small{font-size:.72rem}
 .ev-del.full{background:#c9302c}
+.ag-ai{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0 4px}
+.ag-ai .btn{height:42px;font-size:.82rem;padding:0 6px}
+.ag-syn{background:var(--card);border:1.5px solid var(--accent-fill);border-radius:14px;padding:12px 14px;margin:8px 0;font-size:.9rem;line-height:1.45}
+.ag-syn-h{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+.ag-syn-h b{color:var(--accent)}
+.ag-syn p{margin:6px 0}
+.ag-syn h4{margin:10px 0 2px;font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.ag-syn h4::first-letter{text-transform:uppercase}
+.ag-syn ul{margin:2px 0;padding-left:18px}
