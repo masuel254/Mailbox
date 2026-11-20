@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.12.4';
+const APP_VERSION = '3.0.0';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -40,6 +40,9 @@ function toast(msg, action) {
 const undoToast = (msg, undo) => toast(msg, { label: 'Annuler', run: async () => { try { await undo(); toast('Action annulée'); } catch (e) { toast('Annulation impossible : ' + e.message); } Object.keys(state.lists).forEach(k => delete state.lists[k]); route(); badgeNow(0); } });
 const ICON = {
   folder: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+  clock: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  todo: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8 12l3 3 5-6"/></svg>',
+  spark: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg>',
   plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
   search: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>',
   refresh: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>',
@@ -269,7 +272,7 @@ function route() {
   exitSelect(true);
   document.body.classList.toggle('no-tabbar', view === 'thread' || view === 'compose' || view === 'free');
   const lk = parts[1] === 'UNREAD' ? 'INBOX' : (parts[1] || 'INBOX');
-  $$('#tabbar a').forEach(a => a.classList.toggle('on', a.dataset.tab === (view === 'list' ? (['INBOX', 'SENT'].includes(lk) ? lk : 'labels') : view === 'waiting' ? 'labels' : view === 'guide' ? 'settings' : view)));
+  $$('#tabbar a').forEach(a => a.classList.toggle('on', a.dataset.tab === (view === 'list' ? (['INBOX', 'SENT'].includes(lk) ? lk : 'labels') : view === 'waiting' ? 'labels' : view === 'guide' ? 'settings' : view === 'tasks' ? 'labels' : view)));
   $('#view').scrollTop = 0;
   if (!settings.clientId && !relayGmailOn() && view !== 'settings') return renderWelcome();
   if (view === 'thread') return renderThread(decodeURIComponent(parts[1]));
@@ -278,6 +281,8 @@ function route() {
   if (view === 'labels') return renderLabels();
   if (view === 'waiting') return renderWaiting();
   if (view === 'guide') return renderGuide();
+  if (view === 'tasks') return renderTasks();
+  if (view === 'smart') return renderSmart(decodeURIComponent(parts.slice(1).join('/')));
   if (view === 'settings') return renderSettings();
   if (view === 'search') return renderList('SEARCH', decodeURIComponent(parts.slice(1).join('/')));
   return renderList(parts[1] || 'INBOX');
@@ -335,7 +340,7 @@ async function renderList(key, q) {
       const pill = `<a class="unr-pill ${key === 'UNREAD' ? 'on' : ''}" href="#/list/${key === 'UNREAD' ? 'INBOX' : 'UNREAD'}" aria-pressed="${key === 'UNREAD'}">Non lus<span class="fcount" id="fcount"></span></a>`;
       return `<div class="tabrow">${accs || '<div class="accounts one"><button class="on" aria-selected="true">Réception</button></div>'}${pill}</div>`;
     })()}</div>
-    ${isSearch && state.aiNote && state.aiNote.q === q ? `<div class="ai-note"><b>✦ ${esc(state.aiNote.resume || 'Recherche de l’assistant')}</b><span>« ${esc(state.aiNote.ask)} » → <code>${esc(q)}</code></span><a href="#/search/${encodeURIComponent(state.aiNote.ask)}" id="ai-raw">Chercher les mots exacts</a></div>` : ''}
+    ${isSearch && state.aiNote && state.aiNote.q === q ? `<div class="ai-note"><b>✦ ${esc(state.aiNote.resume || 'Recherche de l’assistant')}</b><span>« ${esc(state.aiNote.ask)} » → <code>${esc(q)}</code></span><span class="ai-links"><a href="#/smart/${encodeURIComponent(state.aiNote.ask)}">✦ Pas trouvé ? Recherche par le sens</a><a href="#/search/${encodeURIComponent(state.aiNote.ask)}" id="ai-raw">Mots exacts</a></span></div>` : ''}
     ${isFolderView(key) ? `<div class="banner"><span style="display:flex;flex-direction:column;gap:2px"><span>${title === BLOCK_LABEL ? 'Mails des expéditeurs bloqués' : 'Dossier « ' + esc(title) + ' »'}</span><b id="lab-size" style="color:var(--accent)">Calcul de la taille…</b></span><button class="btn danger" id="btn-empty">${ICON.trash}Tout supprimer</button></div>` : ''}
     <div id="subdirs"></div>
     <div id="list"><div class="loading">Chargement…</div></div>`;
@@ -987,7 +992,10 @@ async function renderThread(id) {
       <button id="t-trash">${ICON.trash}Supprimer</button>
       <button id="t-unread">${ICON.unread}Non lu</button>
       <button id="t-star" aria-pressed="${starred}">${starred ? ICON.starOn : ICON.star}${starred ? 'Suivi' : 'Suivre'}</button>
+      <button id="t-todo">${ICON.todo}À faire</button>
+      <button id="t-snooze">${ICON.clock}Plus tard</button>
     </div>
+    ${aiBar()}
     <div id="msgs"></div>
     <div class="reply-bar">
       <button class="btn primary" id="r-reply">Répondre</button>
@@ -1013,6 +1021,7 @@ async function renderThread(id) {
     } catch (e) { if (e.message !== 'auth') toast(e.message); }
   };
   $('#t-label').onclick = () => labelSheet(id, labels);
+  bindReadTools();
   $('#t-block').onclick = () => { const it = Object.assign({ id }, summarize(t)); goBack(); quickBlock(it); };
   const un = $('#t-unsub'); if (un) un.onclick = () => unsubscribe(unsubH, unsubP, 'gmail', (hdr(lastM, 'From').match(/^\s*"?([^"<]*?)"?\s*</) || [])[1] || hdr(lastM, 'From'));
 }
@@ -1037,7 +1046,10 @@ async function renderFree(folder, uid) {
       <button id="t-block">${ICON.block}Bloquer</button>
       <button id="t-trash">${ICON.trash}Supprimer</button>
       <button id="t-unread">${ICON.unread}Non lu</button>
+      <button id="t-todo">${ICON.todo}À faire</button>
+      <button id="t-snooze">${ICON.clock}Plus tard</button>
     </div>
+    ${aiBar()}
     <div id="msgs"><article class="msg"><div class="msg-head" style="cursor:default">
       <span class="avatar" aria-hidden="true">${esc(initials(m.from.name || m.from.email || '?'))}</span>
       <span class="meta"><span class="from" style="display:block">${esc(isMe(m.from.email) ? 'Moi' : (m.from.name || m.from.email))}</span><span class="to" style="display:block">à ${esc(m.to || '…')}${m.cc ? ', ' + esc(m.cc) : ''}</span></span>
@@ -1056,6 +1068,8 @@ async function renderFree(folder, uid) {
   $('#t-unread').onclick = async () => { try { await rapi('/free/flags', { method: 'POST', body: { folder, uids: [uid], seen: false } }); patchCached(id, i => Object.assign({}, i, { unread: true })); toast('Marqué non lu'); badgeNow(0); goBack(); } catch (e) { toast(e.message); } };
   $('#t-block').onclick = () => { goBack(); quickBlock({ id, fromEmail: m.from.email, fromName: m.from.name }); };
   $('#t-fmove').onclick = () => freeMoveSheet(id, folder, uid);
+  state.thread = null; state.freeCtx = { id, folder, uid };
+  bindReadTools();
   const un = $('#t-unsub'); if (un) un.onclick = () => unsubscribe(m.unsub, m.unsubPost, 'free', m.from.name || m.from.email);
   $('#r-reply').onclick = () => openCompose('reply', null, m);
   $('#r-all').onclick = () => openCompose('all', null, m);
@@ -1284,10 +1298,19 @@ async function labelSheet(threadId, current) {
   try { labels = await getLabels(true); } catch (e) { return; }
   const rows = [{ id: 'INBOX', name: 'Boîte de réception', c: 'var(--gmail)' }].concat(labels.map(l => ({ id: l.id, name: l.name, c: labelColor(l) })));
   openSheet(`<span class="grip"></span><h2>Classer dans…</h2>
+    <div id="lab-sug"></div>
     <p style="margin:0 0 6px;color:var(--muted);font-size:.8rem">Ce sont tes libellés Gmail : le classement apparaît aussi dans Gmail.</p>
     ${rows.map(r => `<label class="check"><input type="checkbox" value="${esc(r.id)}" ${current.has(r.id) ? 'checked' : ''}><span class="sw" style="--c:${esc(r.c)}"></span>${esc(r.name)}</label>`).join('')}
     <form id="newlab" style="display:flex;gap:8px;margin-top:6px"><label class="f" style="flex:1"><span class="sr">Nouveau libellé</span><input id="newlab-name" placeholder="Nouveau libellé"></label><button class="btn" type="submit">Créer</button></form>
+    ${state.thread && state.thread.id === threadId ? `<label class="switch" style="margin-top:6px">Toujours ranger les mails de cet expéditeur dans le dossier coché<input type="checkbox" id="lab-rule"></label>` : ''}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="lab-ok">Valider</button></div>`);
+  const ctx = state.thread && state.thread.id === threadId ? readCtx() : null;
+  if (ctx) suggestFolder(ctx, labels.map(l => ({ key: l.id, name: l.name })), (key, why) => {
+    const box = $('#lab-sug'); if (!box) return;
+    const l = labels.find(x => x.id === key); if (!l) return;
+    box.innerHTML = `<div class="sug"><span>💡 <b>${esc(l.name.split('/').join(' › '))}</b><small>${esc(why)}</small></span><button class="btn primary" id="sug-go">Ranger ici</button></div>`;
+    $('#sug-go').onclick = async () => { closeSheet(); try { await api('threads/' + threadId + '/modify', { method: 'POST', body: { addLabelIds: [key], removeLabelIds: ['INBOX'] } }); patchCached(threadId, () => null); toast('Rangé dans ' + l.name.split('/').pop()); badgeNow(0); goBack(); } catch (e) { if (e.message !== 'auth') toast(e.message); } };
+  });
   $('#newlab').onsubmit = async e => {
     e.preventDefault();
     const n = $('#newlab-name').value.trim(); if (!n) return;
@@ -1299,7 +1322,9 @@ async function labelSheet(threadId, current) {
     const ids = rows.map(r => r.id);
     const add = ids.filter(i => checked.has(i) && !current.has(i));
     const rem = ids.filter(i => !checked.has(i) && current.has(i));
+    const rule = $('#lab-rule') && $('#lab-rule').checked && ctx && ctx.fromEmail ? add.find(i => i !== 'INBOX') : null;
     closeSheet();
+    if (rule) api('settings/filters', { method: 'POST', body: { criteria: { from: ctx.fromEmail }, action: { addLabelIds: [rule], removeLabelIds: ['INBOX'] } } }).then(() => toast('Règle créée : les prochains mails de ' + ctx.fromEmail + ' iront directement dans ce dossier')).catch(e => toast(e.message === 'scope' ? 'Autorisation des règles manquante (Réglages › Comptes)' : 'Règle : ' + e.message));
     if (!add.length && !rem.length) return;
     try {
       await api('threads/' + threadId + '/modify', { method: 'POST', body: { addLabelIds: add, removeLabelIds: rem } });
@@ -1377,11 +1402,19 @@ const GUIDE = [
     <p><b>Ranger</b> liste les dossiers vraiment vides à supprimer (décoche ceux à garder : ils ne seront plus proposés).</p>
     <p><b>✦ Remplacer INBOX par des thèmes</b> : l'IA propose de regrouper tes dossiers en grands thèmes. Le plan est groupé par thème ; <b>✎</b> change le thème, en crée un nouveau ou renomme ; rien n'est appliqué sans ta validation, aucun mail n'est supprimé.</p>
     <p><b>Free → Gmail</b> : balaye un dossier Free vers la droite › onglet <b>Vers Gmail</b>. Les mails sont copiés avec dates, pièces jointes et état lu/non lu ; le transfert tourne sur ton serveur et reprend tout seul s'il est interrompu. Une barre en haut de Dossiers suit la progression.</p>`],
+  ['✅', 'Tâches et rappels', `
+    <p>Dans un mail, <b>À faire</b> transforme le mail en tâche : l’assistant propose l’intitulé et la date, tu ajustes (Ce soir, Demain 8 h, Lundi 8 h ou date précise).</p>
+    <p>À l’heure dite, une <b>notification</b> te le rappelle, même pendant les heures calmes.</p>
+    <p>Dossiers › <b>✅ Tâches</b> : en retard (en rouge), aujourd’hui, à venir, sans date. Le rond coche la tâche (avec Annuler), un appui sur le texte la modifie, <b>Mail</b> rouvre le mail d’origine, <b>＋</b> ajoute une tâche libre.</p>`],
+  ['⏰', 'Plus tard et annuler l’envoi', `
+    <p><b>Plus tard</b> dans un mail : il quitte la réception et revient, non lu, au moment choisi, avec une notification. En attendant il est dans le dossier « Mis de côté ».</p>
+    <p><b>Annuler l’envoi</b> : après Envoyer, tu as 6 secondes pour toucher Annuler ; le message reste à l’écran.</p>`],
   ['✦', 'Assistant IA', `
-    <p>Dans la loupe, écris une phrase : « la promo Devred de mon anniversaire », « mes plus gros mails », « la facture EDF du mois dernier ». L'assistant la traduit en recherche précise sur Gmail et Free.</p>
-    <p>Un encadré jaune montre ce qu'il a compris ; « Chercher les mots exacts » relance une recherche simple. Les mails bloqués portent l'étiquette rouge <b>Bloqué</b>.</p>
-    <p>Recherche par taille : résultats du plus gros au plus petit, taille affichée.</p>
-    <div class="tip">L'IA (Groq) ne reçoit que ta question ou les noms de tes dossiers, jamais le contenu de tes mails. Clé dans Réglages › Relais et notifications.</div>`],
+    <p><b>Résumer</b> (en haut d’un mail) : résumé, points clés, suivi de l’échange (qui a dit quoi, quand), engagements et échéances. Chaque échéance a un bouton <b>+ Tâche</b>.</p>
+    <p><b>Réponse IA</b> : 3 propositions (accepter, décliner, demander une précision) ou selon ta consigne (« accepter jeudi, proposer 10 h »). <b>Utiliser et modifier</b> ouvre la réponse pré-remplie.</p>
+    <p><b>Classer</b> : une suggestion 💡 apparaît en haut (là où sont déjà les mails de cet expéditeur, sinon « Suggérer un dossier »). La case <b>Toujours ranger…</b> crée une règle automatique pour les prochains mails.</p>
+    <p><b>Recherche</b> : écris une phrase dans la loupe (« la promo Devred de mon anniversaire », « mes plus gros mails »). Si rien ne vient, <b>Recherche par le sens</b> explore plusieurs pistes et trie les résultats en expliquant pourquoi.</p>
+    <div class="tip">Ces fonctions envoient à Groq le texte du mail concerné, uniquement quand tu touches le bouton. Le rangement des dossiers n’envoie que leurs noms.</div>`],
   ['🔔', 'Pastille et notifications', `
     <p>Le serveur prévient l'iPhone à chaque nouveau mail : notification <b>discrète</b> (sans son) et pastille sur l'icône.</p>
     <p><b>Heures calmes</b> (22 h – 7 h par défaut) : rien la nuit, un seul résumé au réveil.</p>
@@ -1721,12 +1754,208 @@ function deleteFolderSheet(x, all) {
     renderLabels();
   };
 }
+/* ---------- Outils de lecture : IA, tâches, plus tard ---------- */
+function aiBar() {
+  return settings.ai ? `<div class="ai-tools"><button class="btn" id="ai-sum">${ICON.spark}Résumer</button><button class="btn" id="ai-rep">${ICON.spark}Réponse IA</button></div><div id="ai-out"></div>` : '';
+}
+function readCtx() {
+  if (state.thread && location.hash.startsWith('#/thread/')) {
+    const { msgs, subject, id } = state.thread, last = msgs[msgs.length - 1] || {};
+    const fromH = hdr(last, 'From'), fa = parseAddr(fromH);
+    const firstOther = msgs.slice().reverse().find(m => !isMe(parseAddr(hdr(m, 'From')).email)) || last;
+    const fo = parseAddr(hdr(firstOther, 'From'));
+    const text = msgs.map(m => `--- ${hdr(m, 'From')} · ${fmtDate(+m.internalDate, true)}\n` + plainOf(m).split('\n').filter(l => !/^\s*>/.test(l)).join('\n').replace(/\n{3,}/g, '\n\n').slice(0, 5000)).join('\n\n');
+    return { acc: 'gmail', id, subject, from: fo.name || fo.email, fromEmail: fo.email, text, last, reply: prefill => { state.composeFrom = { mode: 'reply', m: last, prefill }; location.hash = '#/compose?mode=reply&t=' + Date.now(); }, url: '#/thread/' + encodeURIComponent(id) };
+  }
+  const m = state.freeMsg, c = state.freeCtx || {};
+  if (!m) return null;
+  return { acc: 'free', id: c.id, folder: c.folder, uid: c.uid, subject: m.subject, from: m.from.name || m.from.email, fromEmail: m.from.email, text: (m.text || htmlText(m.html || '')).slice(0, 9000), reply: prefill => { state.composeFrom = { mode: 'reply', fm: m, prefill }; location.hash = '#/compose?mode=reply&t=' + Date.now(); }, url: '#/free/' + encodeURIComponent(c.folder) + '/' + c.uid };
+}
+const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
+function bindReadTools() {
+  const ctx = readCtx(); if (!ctx) return;
+  $('#t-todo').onclick = () => taskSheet({ ref: { acc: ctx.acc, url: ctx.url, subject: ctx.subject, from: ctx.from } }, ctx);
+  $('#t-snooze').onclick = () => snoozeSheet(ctx);
+  const sb = $('#ai-sum'); if (sb) sb.onclick = () => aiSummary(ctx, sb);
+  const rb = $('#ai-rep'); if (rb) rb.onclick = () => aiReplySheet(ctx);
+}
+async function aiSummary(ctx, btn) {
+  const out = $('#ai-out'); if (!out) return;
+  if (out.innerHTML) { out.innerHTML = ''; return; }
+  btn.disabled = true; out.innerHTML = '<div class="ai-card"><div class="loading">L’assistant lit l’échange…</div></div>';
+  try {
+    const r = await rapi('/ai/summary', { method: 'POST', body: { text: 'Objet : ' + ctx.subject + '\n\n' + ctx.text, today: today() } });
+    const li = a => (a || []).filter(Boolean);
+    out.innerHTML = `<div class="ai-card"><h3>✦ Résumé</h3><p>${esc(r.resume || '')}</p>
+      ${li(r.points).length ? `<ul>${li(r.points).map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+      ${li(r.chronologie).length > 1 ? `<h4>Suivi de l’échange</h4><ol class="tl">${li(r.chronologie).map(x => `<li><b>${esc(x.date || '')}</b> ${esc(x.qui || '')} : ${esc(x.fait || '')}</li>`).join('')}</ol>` : ''}
+      ${li(r.engagements).length ? `<h4>Engagements</h4><ul>${li(r.engagements).map(x => `<li><b>${esc(x.qui || '')}</b> : ${esc(x.quoi || '')}${x.quand ? ' · ' + esc(x.quand) : ''}</li>`).join('')}</ul>` : ''}
+      ${li(r.echeances).length ? `<h4>Échéances</h4>${li(r.echeances).map((x, i) => `<div class="ai-due"><span>${esc(x.quoi || '')}${x.date ? ' · <b>' + esc(new Date(x.date + 'T12:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })) + '</b>' : ''}</span><button class="sec-btn" data-due="${i}">+ Tâche</button></div>`).join('')}` : ''}
+      <p class="ai-foot">Généré par l’IA à partir du mail : vérifie les points importants.</p></div>`;
+    $$('[data-due]', out).forEach(b => b.onclick = () => { const x = li(r.echeances)[+b.dataset.due]; taskSheet({ title: x.quoi, due: x.date ? new Date(x.date + 'T09:00').getTime() : 0, ref: { acc: ctx.acc, url: ctx.url, subject: ctx.subject, from: ctx.from } }, null); });
+  } catch (e) { out.innerHTML = ''; toast('Assistant : ' + e.message); }
+  btn.disabled = false;
+}
+function aiReplySheet(ctx) {
+  openSheet(`<span class="grip"></span><h2>✦ Réponse avec l’IA</h2>
+    <label class="f">Consigne (facultatif)<input id="ar-intent" autocomplete="off" placeholder="ex. accepter jeudi 10h, proposer plutôt vendredi"></label>
+    <button class="btn primary" id="ar-go">Proposer des réponses</button><div id="ar-out" class="ar-out"></div>`);
+  $('#ar-go').onclick = async () => {
+    const b = $('#ar-go'); b.disabled = true; b.textContent = 'Rédaction…';
+    try {
+      const r = await rapi('/ai/reply', { method: 'POST', body: { subject: ctx.subject, text: ctx.text, intent: $('#ar-intent').value.trim() } });
+      const vs = (r.variants || []).filter(v => v && v.body);
+      $('#ar-out').innerHTML = vs.map((v, i) => `<div class="ar-v"><b>${esc(v.label || 'Proposition ' + (i + 1))}</b><p>${esc(v.body).replace(/\n/g, '<br>')}</p><button class="btn" data-v="${i}">Utiliser et modifier</button></div>`).join('') || '<p class="fhint">Aucune proposition, reformule la consigne.</p>';
+      $$('[data-v]', $('#ar-out')).forEach(x => x.onclick = () => { closeSheet(); ctx.reply(vs[+x.dataset.v].body.trim() + '\n'); });
+    } catch (e) { toast('Assistant : ' + e.message); }
+    b.disabled = false; b.textContent = 'Proposer à nouveau';
+  };
+}
+/* Raccourcis de date */
+function quickDates() {
+  const at = (d, h, m) => { const x = new Date(d); x.setHours(h, m || 0, 0, 0); return x; };
+  const n = new Date(), tm = new Date(n); tm.setDate(n.getDate() + 1);
+  const mon = new Date(n); mon.setDate(n.getDate() + ((8 - n.getDay()) % 7 || 7));
+  const wk = new Date(n); wk.setDate(n.getDate() + 7);
+  const out = [];
+  if (n.getHours() < 17) out.push(['Ce soir 18 h', at(n, 18)]);
+  out.push(['Demain 8 h', at(tm, 8)], ['Lundi 8 h', at(mon, 8)], ['Dans 1 semaine', at(wk, 8)]);
+  return out;
+}
+const toLocalInput = ms => { if (!ms) return ''; const d = new Date(ms); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
+function snoozeSheet(ctx) {
+  const q = quickDates();
+  openSheet(`<span class="grip"></span><h2>Mettre de côté</h2>
+    <p style="margin:0;color:var(--muted);font-size:.85rem">Le mail quitte la réception et revient, non lu, au moment choisi${ctx.acc === 'gmail' ? ' (dossier « Mis de côté » en attendant)' : ''}.</p>
+    <div class="qd">${q.map((x, i) => `<button class="btn" data-q="${i}">${esc(x[0])}<small>${esc(x[1].toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }))}</small></button>`).join('')}</div>
+    <label class="f">Ou une date précise<input type="datetime-local" id="sn-at"></label>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="sn-ok">Mettre de côté</button></div>`);
+  const go = async until => {
+    if (!until || until < Date.now() + 60000) { toast('Choisis un moment dans le futur'); return; }
+    try {
+      await rapi('/snooze', { method: 'POST', body: Object.assign({ acc: ctx.acc, until, subject: ctx.subject, from: ctx.from }, ctx.acc === 'gmail' ? { threadId: ctx.id } : { folder: ctx.folder, uid: ctx.uid }) });
+      closeSheet(); patchCached(ctx.id, () => null); badgeNow(0);
+      toast('Revient le ' + new Date(until).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'short' }) + ' à ' + new Date(until).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }));
+      goBack();
+    } catch (e) { toast(e.message); }
+  };
+  $$('[data-q]').forEach(b => b.onclick = () => go(q[+b.dataset.q][1].getTime()));
+  $('#sn-ok').onclick = () => go(new Date($('#sn-at').value).getTime());
+}
+/* ---------- Recherche par le sens : plusieurs pistes, puis l'IA trie les candidats ---------- */
+async function renderSmart(question) {
+  const v = $('#view');
+  v.innerHTML = `<div class="sticky-head"><a class="back back-sm" href="#/list/INBOX">${ICON.back}Réception</a><div class="top"><h1>Recherche</h1></div></div>
+    <div class="ai-note"><b>✦ Recherche par le sens</b><span>« ${esc(question)} »</span><span id="sm-step">L’assistant explore plusieurs pistes…</span></div><div id="list"><div class="loading">Recherche…</div></div>`;
+  const step = t => { const e = $('#sm-step'); if (e) e.textContent = t; };
+  let plan;
+  try { plan = await rapi('/ai/smart', { method: 'POST', body: { q: question, today: today() } }); } catch (e) { $('#list').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const qs = (plan.queries || []).filter(Boolean).slice(0, 5);
+  step('Pistes : ' + qs.join(' · '));
+  const cand = new Map();
+  await Promise.all(qs.map(async q => {
+    const jobs = [];
+    if (settings.clientId || relayGmailOn()) jobs.push((async () => {
+      const r = (await api('threads?' + new URLSearchParams({ q, maxResults: 8 }))) || {};
+      const ts = await pool(r.threads || [], 6, t => api('threads/' + t.id + '?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date').catch(() => null));
+      ts.filter(Boolean).forEach(t => { const it = summarize(t); it.acc = 'gmail'; cand.set(it.id, it); });
+    })().catch(() => {}));
+    if (freeOn()) jobs.push(rapi('/free/search?' + new URLSearchParams({ q, limit: '8' })).then(r => (r.items || []).forEach(x => { const it = freeItem(x); cand.set(it.id, it); })).catch(() => {}));
+    await Promise.all(jobs);
+  }));
+  const all = [...cand.values()].sort((a, b) => b.date - a.date).slice(0, 60);
+  if (!all.length) { $('#list').innerHTML = '<div class="empty">Rien trouvé, même en élargissant. Essaie avec un autre mot ou un expéditeur.</div>'; return; }
+  step(all.length + ' mails candidats, tri par pertinence…');
+  let ranked = [];
+  try { ranked = ((await rapi('/ai/rank', { method: 'POST', body: { q: question, items: all.map((x, i) => ({ i, date: new Date(x.date).toLocaleDateString('fr-FR'), from: x.from, subject: x.subject, snippet: x.snippet })) } })).results || []).filter(r => all[r.i]); } catch (e) { toast(e.message); }
+  const items = ranked.length ? ranked.map(r => Object.assign({}, all[r.i], { snippet: '✦ ' + (r.why || ''), unread: false })) : all;
+  step(ranked.length ? ranked.length + ' résultat' + (ranked.length > 1 ? 's' : '') + ', du plus pertinent au moins pertinent' : 'Tri impossible, voici tous les candidats');
+  state.showAcc = freeOn(); state.dayMode = false;
+  $('#list').innerHTML = items.map(i => itemHTML(i, '')).join('');
+}
+/* ---------- Tâches ---------- */
+async function taskSheet(t, ctx) {
+  t = Object.assign({ title: '', due: 0, note: '' }, t);
+  const q = quickDates();
+  openSheet(`<span class="grip"></span><h2>${t.id ? 'Modifier la tâche' : 'Nouvelle tâche'}</h2>
+    ${t.ref && t.ref.subject ? `<p class="fhint" style="margin:0">Liée au mail : <b>${esc(t.ref.subject)}</b></p>` : ''}
+    <label class="f">À faire<input id="tk-title" autocomplete="off" value="${esc(t.title)}" placeholder="${ctx && settings.ai ? 'L’assistant propose…' : 'ex. Envoyer le devis'}"></label>
+    <div class="qd">${q.map((x, i) => `<button class="btn" type="button" data-q="${i}">${esc(x[0])}</button>`).join('')}</div>
+    <label class="f">Rappel<input type="datetime-local" id="tk-due" value="${toLocalInput(t.due)}"></label>
+    <label class="f">Note<input id="tk-note" autocomplete="off" value="${esc(t.note || '')}"></label>
+    <div style="display:grid;grid-template-columns:${t.id ? '1fr 1fr 1fr' : '1fr 1fr'};gap:10px">${t.id ? '<button class="btn danger" id="tk-del">Supprimer</button>' : '<button class="btn" data-close>Annuler</button>'}${t.id ? '<button class="btn" data-close>Fermer</button>' : ''}<button class="btn primary" id="tk-ok">Enregistrer</button></div>`);
+  $$('[data-q]').forEach(b => b.onclick = () => { $('#tk-due').value = toLocalInput(q[+b.dataset.q][1].getTime()); });
+  if (ctx && settings.ai && !t.title) {
+    rapi('/ai/task', { method: 'POST', body: { subject: ctx.subject, from: ctx.from, text: ctx.text, today: today() } }).then(r => {
+      const ti = $('#tk-title'); if (!ti || ti.value) return;
+      ti.value = r.title || ''; if (r.due && !$('#tk-due').value) { const d = new Date(r.due); if (!isNaN(d)) $('#tk-due').value = toLocalInput(d.getTime()); }
+      ti.placeholder = 'ex. Envoyer le devis';
+    }).catch(() => { const ti = $('#tk-title'); if (ti) ti.placeholder = 'ex. Envoyer le devis'; });
+  }
+  setTimeout(() => { const ti = $('#tk-title'); if (ti && !ctx) ti.focus(); }, 300);
+  $('#tk-ok').onclick = async () => {
+    const title = $('#tk-title').value.trim(); if (!title) { toast('Écris ce qu’il y a à faire'); return; }
+    const due = $('#tk-due').value ? new Date($('#tk-due').value).getTime() : 0;
+    try { await rapi('/tasks', { method: 'POST', body: { id: t.id, title, due, note: $('#tk-note').value.trim(), ref: t.ref } }); closeSheet(); toast(due ? 'Tâche enregistrée · rappel le ' + new Date(due).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) + ' à ' + new Date(due).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : 'Tâche enregistrée'); state.tasks = null; if (location.hash.startsWith('#/tasks')) renderTasks(); }
+    catch (e) { toast(e.message); }
+  };
+  const d = $('#tk-del'); if (d) d.onclick = async () => { try { await rapi('/tasks/delete', { method: 'POST', body: { id: t.id } }); closeSheet(); renderTasks(); } catch (e) { toast(e.message); } };
+}
+async function renderTasks() {
+  const v = $('#view');
+  v.innerHTML = `<div class="sticky-head"><a class="back back-sm" href="#/labels">${ICON.back}Dossiers</a><div class="top"><h1>Tâches</h1><button class="icon-btn" id="tk-new" aria-label="Nouvelle tâche">${ICON.plus}</button></div></div><div id="tasks"><div class="loading">Chargement…</div></div>`;
+  $('#tk-new').onclick = () => taskSheet({}, null);
+  if (!relayOn()) { $('#tasks').innerHTML = '<div class="empty">Les tâches et leurs rappels passent par ton serveur relais (Réglages).</div>'; return; }
+  let ts = [];
+  try { ts = (await rapi('/tasks')).tasks || []; } catch (e) { $('#tasks').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const now = Date.now(), eod = new Date(); eod.setHours(23, 59, 59, 999);
+  const open = ts.filter(t => !t.done).sort((a, b) => (a.due || 9e15) - (b.due || 9e15));
+  const groups = [['En retard', open.filter(t => t.due && t.due < now), 'late'], ['Aujourd’hui', open.filter(t => t.due >= now && t.due <= eod), ''], ['À venir', open.filter(t => t.due > eod), ''], ['Sans date', open.filter(t => !t.due), '']];
+  const done = ts.filter(t => t.done).sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
+  const row = t => `<div class="task ${t.done ? 'done' : ''}" data-t="${esc(t.id)}"><button class="tk-check" aria-label="${t.done ? 'Rouvrir' : 'Fait'}">${t.done ? '✓' : ''}</button><div class="tk-body"><b>${esc(t.title)}</b>${t.due ? `<small class="${!t.done && t.due < now ? 'late' : ''}">⏰ ${esc(new Date(t.due).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }))} · ${esc(new Date(t.due).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }))}</small>` : ''}${t.ref && t.ref.subject ? `<small>✉︎ ${esc((t.ref.from ? t.ref.from + ' · ' : '') + t.ref.subject)}</small>` : ''}${t.note ? `<small>${esc(t.note)}</small>` : ''}</div>${t.ref && t.ref.url ? `<a class="sec-btn" href="${esc(t.ref.url.replace(/^.*#/, '#'))}">Mail</a>` : ''}</div>`;
+  $('#tasks').innerHTML = (open.length ? groups.filter(g => g[1].length).map(g => `<div class="day-h ${g[2]}">${g[0]} · ${g[1].length}</div><div class="card fold">${g[1].map(row).join('')}</div>`).join('') : '<div class="empty">Rien à faire pour l’instant. Ouvre un mail et touche « À faire ».</div>')
+    + (done.length ? `<details class="set" style="margin-top:14px"><summary><span class="set-t">Terminées · ${done.length}</span><span class="chev"></span></summary><div class="card fold">${done.map(row).join('')}</div></details>` : '');
+  const byId = id => ts.find(t => t.id === id);
+  $$('#tasks .task').forEach(el => {
+    const t = byId(el.dataset.t);
+    $('.tk-check', el).onclick = async e => { e.stopPropagation(); try { await rapi('/tasks', { method: 'POST', body: { id: t.id, done: !t.done } }); if (!t.done) undoToast('Tâche terminée', () => rapi('/tasks', { method: 'POST', body: { id: t.id, done: false } })); renderTasks(); } catch (er) { toast(er.message); } };
+    $('.tk-body', el).onclick = () => taskSheet(t, null);
+  });
+}
+/* Suggestion de dossier : d'abord là où sont déjà les autres mails de l'expéditeur (Gmail), sinon l'IA */
+async function suggestFolder(ctx, folders, show) {
+  if (!folders.length) return;
+  if (ctx.acc === 'gmail' && ctx.fromEmail) {
+    try {
+      const r = (await api('messages?' + new URLSearchParams({ q: 'from:' + ctx.fromEmail + ' -in:inbox -in:trash -in:spam', maxResults: 8 }))) || {};
+      const ms = await pool((r.messages || []).slice(0, 6), 6, m => api('messages/' + m.id + '?format=minimal').catch(() => null));
+      const count = {};
+      ms.filter(Boolean).forEach(m => (m.labelIds || []).forEach(id => { if (folders.some(f => f.key === id)) count[id] = (count[id] || 0) + 1; }));
+      const best = Object.entries(count).sort((a, b) => b[1] - a[1])[0];
+      if (best) { show(best[0], best[1] > 1 ? best[1] + ' autres mails de cet expéditeur y sont déjà' : 'un autre mail de cet expéditeur y est déjà'); return; }
+    } catch (e) {}
+  }
+  if (!settings.ai || !relayOn()) return;
+  const box = $('#lab-sug'); if (!box) return;
+  box.innerHTML = `<button class="btn" id="sug-ai">${ICON.spark}Suggérer un dossier</button>`;
+  $('#sug-ai').onclick = async () => {
+    const b = $('#sug-ai'); b.disabled = true; b.lastChild.textContent = 'L’assistant réfléchit…';
+    try {
+      const r = await rapi('/ai/classify', { method: 'POST', body: { from: ctx.from + ' <' + ctx.fromEmail + '>', subject: ctx.subject, text: ctx.text, folders: folders.map(f => f.name) } });
+      const f = folders.find(x => x.name === r.folder);
+      if (f) show(f.key, r.why || 'proposé par l’assistant'); else { box.innerHTML = '<p class="fhint">Aucun dossier existant ne convient vraiment.</p>'; }
+    } catch (e) { toast(e.message); b.disabled = false; }
+  };
+}
 async function freeMoveSheet(id, folder, uid) {
-  openSheet(`<span class="grip"></span><h2>Classer dans…</h2><div id="fm-list"><div class="loading">Chargement…</div></div>
+  openSheet(`<span class="grip"></span><h2>Classer dans…</h2><div id="lab-sug"></div><div id="fm-list"><div class="loading">Chargement…</div></div>
+    <label class="switch">Toujours ranger les mails de cet expéditeur dans le dossier choisi<input type="checkbox" id="fm-rule"></label>
     <label class="f">Ou nouveau dossier<input id="fm-new" autocomplete="off" placeholder="ex. Factures 2026"></label>
     <button class="btn primary" id="fm-create">Créer et classer</button>`);
+  const fctx = readCtx();
   const go = async to => {
     try {
+      if ($('#fm-rule') && $('#fm-rule').checked && fctx && fctx.fromEmail && to !== 'INBOX') rapi('/free/rule', { method: 'POST', body: { from: fctx.fromEmail, folder: to } }).then(() => toast('Règle créée pour ' + fctx.fromEmail)).catch(e => toast(e.message));
       await rapi('/free/move', { method: 'POST', body: { folder, uids: [uid], to } });
       closeSheet(); Object.values(state.lists).forEach(d => { d.items = d.items.filter(i => i.id !== id); });
       state.folders = null; LS.del('foldersCache');
@@ -1739,6 +1968,11 @@ async function freeMoveSheet(id, folder, uid) {
   const dl = (dirs[0] || {}).delim || '/';
   l.innerHTML = `<div class="card fold" style="max-height:45vh;overflow:auto">${[{ path: 'INBOX', name: 'Réception' }].concat(dirs.filter(x => x.path !== folder && x.path !== BLOCK_LABEL).sort((a, b) => a.path.localeCompare(b.path, 'fr'))).map(x => `<button class="frow" style="width:100%;background:none;border:none;border-bottom:1px solid var(--line);text-align:left" data-to="${esc(x.path)}">${FOLD_ICON}<span class="nm">${esc(x.path === 'INBOX' ? 'Réception' : x.path.split(x.delim || '/').join(' › '))}</span></button>`).join('')}</div>`;
   $$('[data-to]', l).forEach(b => b.onclick = () => go(b.dataset.to));
+  if (fctx) suggestFolder(fctx, dirs.filter(x => x.path !== BLOCK_LABEL).map(x => ({ key: x.path, name: x.path.split(x.delim || '/').join('/') })), (key, why) => {
+    const box = $('#lab-sug'); if (!box) return;
+    box.innerHTML = `<div class="sug"><span>💡 <b>${esc(key.split(/[\/.]/).join(' › '))}</b><small>${esc(why)}</small></span><button class="btn primary" id="sug-go">Ranger ici</button></div>`;
+    $('#sug-go').onclick = () => go(key);
+  });
   $('#fm-create').onclick = async () => {
     const n = $('#fm-new').value.trim().replace(/[\/]/g, '-'); if (!n) { toast('Donne un nom au dossier'); return; }
     try { await rapi('/free/folder-create', { method: 'POST', body: { path: n } }); } catch (e) { if (!/existe/.test(e.message)) { toast(e.message); return; } }
@@ -1775,6 +2009,7 @@ async function renderLabels() {
   v.innerHTML = `<div class="sticky-head"><div class="top"><h1>Dossiers</h1><button class="icon-btn" id="btn-newdir" aria-label="Nouveau dossier">${ICON.plus}</button><button class="btn tidy-btn" id="btn-tidy">Ranger</button><button class="icon-btn" id="btn-refresh" aria-label="Actualiser">${ICON.refresh}</button></div>
     <div class="searchbar"><input type="search" id="fq" placeholder="Chercher un dossier" autocomplete="off" enterkeyhint="search"></div></div>
     <div id="xfer-bar" hidden></div>
+    <a class="set-link" href="#/tasks"><span class="set-t">✅ Tâches</span><span class="set-s" id="tk-count">À faire et rappels</span><span class="chev-r" aria-hidden="true"></span></a>
     <a class="set-link" href="#/waiting"><span class="set-t">⏳ En attente de réponse</span><span class="set-s">Suivi Gmail + Free</span><span class="chev-r" aria-hidden="true"></span></a>
     <div id="labs"><div class="loading">Chargement…</div></div>`;
   $('#btn-refresh').onclick = () => { state.folders = null; LS.del('foldersCache'); renderLabels(); };
@@ -1850,6 +2085,7 @@ async function renderLabels() {
   $('#fq').oninput = e => draw(e.target.value.trim());
   $('#btn-tidy').onclick = () => tidySheet(g, f);
   $('#btn-newdir').onclick = () => newFolderSheet(g, f);
+  if (relayOn()) rapi('/tasks').then(r => { const n = (r.tasks || []).filter(t => !t.done && t.due && t.due < Date.now() + 864e5).length, o = (r.tasks || []).filter(t => !t.done).length, el = $('#tk-count'); if (el && o) el.textContent = o + ' à faire' + (n ? ' · ' + n + ' pour aujourd’hui' : ''); }).catch(() => {});
   if (relayOn() && freeOn()) watchTransfer();
   bindFolderSwipe($('#labs'), k => byKey.get(k), async x => { if (x.acc === 'gmail' && x.m === 0 && !(await gIsEmpty(x.id).catch(() => false))) x = Object.assign({}, x, { m: -1 }); deleteFolderSheet(x, all); }, x => moveFolderSheet(x, all));
   redraw = () => {
@@ -1934,6 +2170,7 @@ function renderCompose(params) {
       body = `\n\nLe ${date}, ${parseAddr(from).name} a écrit :\n` + original.split('\n').map(l => '> ' + l).join('\n');
     }
   }
+  if (src.prefill) body = src.prefill + body;
   const title = mode === 'fwd' ? 'Transférer' : mode === 'new' ? 'Nouveau message' : 'Répondre';
   $('#view').innerHTML = `
     <div class="top"><a class="back" href="#" id="back">${ICON.back}Annuler</a><h1 style="text-align:center;font-size:1.1rem">${esc(title)}</h1><button class="btn primary" id="send" style="height:44px">${ICON.send}Envoyer</button></div>
@@ -1960,6 +2197,9 @@ function renderCompose(params) {
     const bad = splitAddrs([o.to, o.cc, o.bcc].join(',')).map(a => parseAddr(a).email).filter(e => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
     if (bad.length) { toast('Adresse invalide : ' + bad[0]); return; }
     const btn = $('#send'); btn.disabled = true; btn.lastChild.textContent = 'Envoi…';
+    // Annuler l'envoi : 6 secondes pour se raviser
+    const cancelled = await new Promise(res => { const t = setTimeout(() => res(false), 6200); toast('Envoi dans quelques secondes…', { label: 'Annuler', run: () => { clearTimeout(t); res(true); } }); });
+    if (cancelled) { btn.disabled = false; btn.lastChild.textContent = 'Envoyer'; toast('Envoi annulé, ton message est toujours là'); return; }
     try {
       if (fwdAtts.length) o.attachments = await Promise.all(fwdAtts.map(async a => ({ name: a.name, mime: a.mime, b64: await fetchAtt(a) })));
       const viaFree = $('#c-from') && $('#c-from').value === 'free';

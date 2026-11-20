@@ -314,6 +314,12 @@ async function aiJSON(sys, user, maxTokens) {
   };
   return (await call(C.aiModel, /gpt-oss/.test(C.aiModel) ? { reasoning_effort: 'low', include_reasoning: false } : {})) || (await call('llama-3.3-70b-versatile', {}));
 }
+async function aiCall(sys, user, maxTokens) {
+  if (!S.ai) throw Object.assign(new Error('Assistant IA non configuré (Réglages)'), { code: 400 });
+  const out = await aiJSON(sys, user, maxTokens);
+  if (!out) throw Object.assign(new Error('Réponse de l’IA illisible, réessaie'), { code: 502 });
+  return out;
+}
 async function aiFolders(list, focus) {
   if (!S.ai) throw Object.assign(new Error('IA non configurée'), { code: 400 });
   const names = list.filter(x => x && typeof x.name === 'string').slice(0, 400);
@@ -550,14 +556,17 @@ async function pollFree() {
           if (n) log('Free : ' + n + ' mail(s) d’expéditeurs bloqués rangés dans ' + BLOCK_LABEL);
         } catch (e) { log('nettoyage Free', e.message); }
       }
-      const toBlock = [];
+      const toBlock = [], toFile = {};
       if (fresh.length) {
         for await (const m of client.fetch(fresh, { envelope: true }, { uid: true })) {
           const f = addr(m.envelope.from);
           if (f.email && isBlocked(f.email, targets)) { toBlock.push(m.uid); continue; }
+          const rule = (S.rules || []).find(r => f.email && isBlocked(f.email, [r.from]));
+          if (rule) { (toFile[rule.folder] = toFile[rule.folder] || []).push(m.uid); }
           out.push({ acc: 'free', from: f.name || f.email, subject: m.envelope.subject || '(sans objet)', url: C.appUrl + '#/free/INBOX/' + m.uid });
         }
       }
+      for (const [folder, uids] of Object.entries(toFile)) { try { await ensureFolder(client, folder); await client.messageMove(uids, folder, { uid: true }); } catch (e) { log('règle Free', folder, e.message); } }
       if (toBlock.length) {
         await client.messageFlagsAdd(toBlock, ['\\Seen'], { uid: true });
         await ensureFolder(client, BLOCK_LABEL);
@@ -583,8 +592,66 @@ function scheduleBadgeSync() {
   }, wait);
 }
 function poll() { if (!pollP) pollP = pollOnce().finally(() => { pollP = null; }); return pollP; }
+/* ---------- Tâches (rappels) et mails mis de côté ---------- */
+const SNOOZE = 'Mis de côté';
+async function gLabelId(name) {
+  const all = ((await gapi('labels')) || {}).labels || [];
+  const l = all.find(x => x.name === name);
+  return l ? l.id : (await gapi('labels', { method: 'POST', body: { name, labelListVisibility: 'labelShow', messageListVisibility: 'show' } })).id;
+}
+async function snooze(b) {
+  const until = +b.until;
+  if (!until || until < Date.now()) throw Object.assign(new Error('Date invalide'), { code: 400 });
+  const item = { id: crypto.randomBytes(6).toString('hex'), acc: b.acc, until, subject: String(b.subject || '').slice(0, 200), from: String(b.from || '').slice(0, 120) };
+  if (b.acc === 'gmail') {
+    const lab = await gLabelId(SNOOZE);
+    await gapi('threads/' + encodeURIComponent(b.threadId) + '/modify', { method: 'POST', body: { addLabelIds: [lab], removeLabelIds: ['INBOX', 'UNREAD'] } });
+    item.threadId = b.threadId;
+  } else {
+    const r = await withImap(async client => {
+      const folder = await resolveFolder(client, b.folder || 'INBOX');
+      await ensureFolder(client, SNOOZE);
+      const lock = await client.getMailboxLock(folder);
+      try { await client.messageFlagsAdd([+b.uid], ['\\Seen'], { uid: true }); return await client.messageMove([+b.uid], SNOOZE, { uid: true }); } finally { lock.release(); }
+    });
+    const nu = r && r.uidMap ? r.uidMap.get(+b.uid) : null;
+    if (!nu) throw new Error('Déplacement impossible');
+    item.uid = nu;
+  }
+  S.snoozed = (S.snoozed || []).concat(item); save();
+  return { ok: true, id: item.id };
+}
+async function unsnooze(item) {
+  if (item.acc === 'gmail') {
+    const lab = await gLabelId(SNOOZE);
+    await gapi('threads/' + encodeURIComponent(item.threadId) + '/modify', { method: 'POST', body: { addLabelIds: ['INBOX', 'UNREAD'], removeLabelIds: [lab] } });
+  } else {
+    await withImap(async client => {
+      const lock = await client.getMailboxLock(SNOOZE);
+      try {
+        await client.messageFlagsRemove([item.uid], ['\\Seen'], { uid: true });
+        const r = await client.messageMove([item.uid], 'INBOX', { uid: true });
+        const nu = r && r.uidMap ? r.uidMap.get(item.uid) : null;
+        if (nu) S.seen.freeUid = Math.max(S.seen.freeUid || 0, nu);
+      } finally { lock.release(); }
+    });
+  }
+}
+async function checkTimers() {
+  const now = Date.now();
+  for (const it of (S.snoozed || []).filter(x => x.until <= now)) {
+    try { await unsnooze(it); } catch (e) { log('remise en réception', e.message); }
+    S.snoozed = S.snoozed.filter(x => x.id !== it.id); save();
+    if (S.subs.length && !isQuiet()) await push({ title: '↩︎ ' + (it.from || 'Mail') + ' revient', body: it.subject, url: C.appUrl + (it.acc === 'gmail' ? '#/thread/' + it.threadId : '#/list/INBOX'), tag: 'mailbox-snooze-' + it.id, badge: total(), silent: !!(S.prefs && S.prefs.silent) });
+  }
+  for (const t of (S.tasks || []).filter(x => !x.done && x.due && !x.notified && x.due <= now)) {
+    t.notified = true; save();
+    if (S.subs.length) await push({ title: '⏰ ' + t.title, body: t.ref && t.ref.subject ? (t.ref.from ? t.ref.from + ' · ' : '') + t.ref.subject : 'Tâche à faire', url: C.appUrl + '#/tasks', tag: 'mailbox-task-' + t.id, badge: total(), silent: false });
+  }
+}
 async function pollOnce() {
   if (polling) return; polling = true;
+  try { await checkTimers(); } catch (e) { log('rappels', e.message); }
   try {
     const before = total();
     const news = [];
@@ -727,6 +794,32 @@ const routes = {
     return { ok: true };
   },
   'GET /transfer/status': async () => { const t = S.transfer; return t ? { path: t.path, label: t.label, total: t.total, done: t.done, failed: t.failed, state: t.state, error: t.error || '', deleteSource: t.deleteSource } : { state: 'none' }; },
+  'GET /tasks': async () => ({ tasks: S.tasks || [] }),
+  'POST /tasks': async (q, b) => {
+    S.tasks = S.tasks || [];
+    let t = b.id ? S.tasks.find(x => x.id === b.id) : null;
+    if (!t) { t = { id: crypto.randomBytes(6).toString('hex'), created: Date.now(), done: false }; S.tasks.push(t); }
+    if (b.title !== undefined) t.title = String(b.title).slice(0, 200);
+    if (b.note !== undefined) t.note = String(b.note).slice(0, 1000);
+    if (b.due !== undefined) { const d = +b.due || 0; if (d !== t.due) t.notified = false; t.due = d; }
+    if (b.done !== undefined) t.done = !!b.done;
+    if (b.ref) t.ref = { acc: b.ref.acc, url: String(b.ref.url || ''), subject: String(b.ref.subject || '').slice(0, 200), from: String(b.ref.from || '').slice(0, 120) };
+    if (!t.title) t.title = 'Tâche';
+    S.tasks = S.tasks.filter(x => !x.done || x.id === t.id || Date.now() - (x.doneAt || x.created) < 30 * 864e5);
+    if (b.done === true) t.doneAt = Date.now();
+    save(); return { ok: true, task: t };
+  },
+  'POST /tasks/delete': async (q, b) => { S.tasks = (S.tasks || []).filter(x => x.id !== b.id); save(); return { ok: true }; },
+  'GET /snoozed': async () => ({ items: S.snoozed || [] }),
+  'POST /snooze': async (q, b) => snooze(b),
+  'POST /snooze/cancel': async (q, b) => { const it = (S.snoozed || []).find(x => x.id === b.id); if (!it) return { ok: true }; await unsnooze(it); S.snoozed = S.snoozed.filter(x => x.id !== it.id); save(); return { ok: true }; },
+  'POST /free/rule': async (q, b) => { const from = String(b.from || '').toLowerCase().trim(), folder = String(b.folder || '').trim(); if (!from || !folder) throw Object.assign(new Error('Règle incomplète'), { code: 400 }); S.rules = (S.rules || []).filter(r => r.from !== from).concat({ from, folder }); save(); return { ok: true }; },
+  'POST /ai/task': async (q, b) => aiCall('Tu transformes un mail en tâche à faire pour son destinataire (Samuel). Date du jour : ' + (b.today || new Date().toISOString().slice(0, 16)) + '. Réponds UNIQUEMENT en JSON {"title":"verbe à l’infinitif + objet, 8 mots max","due":"AAAA-MM-JJTHH:MM ou null"}. Si le mail fixe une échéance, mets la veille ou le jour même à 9:00 ; sinon null.', 'Objet : ' + (b.subject || '') + '\nDe : ' + (b.from || '') + '\n\n' + String(b.text || '').slice(0, 6000), 400),
+  'POST /ai/summary': async (q, b) => aiCall('Tu résumes un mail ou un échange de mails pour Samuel, en français, de façon factuelle (n’invente rien). Date du jour : ' + (b.today || '') + '. Réponds UNIQUEMENT en JSON {"resume":"2 à 3 phrases","points":["…"],"chronologie":[{"date":"JJ/MM","qui":"…","fait":"…"}],"engagements":[{"qui":"…","quoi":"…","quand":"… ou vide"}],"echeances":[{"quoi":"…","date":"AAAA-MM-JJ"}]}. Listes vides si rien. Chronologie seulement s’il y a plusieurs messages.', String(b.text || '').slice(0, 14000), 1800),
+  'POST /ai/reply': async (q, b) => aiCall('Tu rédiges des propositions de réponse pour Samuel à ce mail, en français, ton naturel et courtois, phrases courtes, sans formules creuses ni tirets cadratins. Signe « Samuel ». ' + (b.intent ? 'Consigne de Samuel : ' + String(b.intent).slice(0, 300) + '. Donne 2 variantes de longueur différente. ' : 'Donne 3 variantes : une qui accepte ou confirme, une qui décline ou reporte poliment, une qui demande une précision. ') + 'Réponds UNIQUEMENT en JSON {"variants":[{"label":"2 à 3 mots","body":"texte complet"}]}.', 'Objet : ' + (b.subject || '') + '\n\n' + String(b.text || '').slice(0, 8000), 1800),
+  'POST /ai/classify': async (q, b) => aiCall('Tu choisis le dossier le plus adapté pour ranger un mail parmi une liste fournie. Réponds UNIQUEMENT en JSON {"folder":"chemin exact recopié depuis la liste, ou vide si aucun ne convient","why":"8 mots max"}.', 'Dossiers :\n' + (b.folders || []).slice(0, 300).join('\n') + '\n\nMail — De : ' + (b.from || '') + '\nObjet : ' + (b.subject || '') + '\n' + String(b.text || '').slice(0, 2500), 300),
+  'POST /ai/smart': async (q, b) => aiCall('Tu aides à retrouver un mail à partir d’une description vague. Date du jour : ' + (b.today || '') + '. Propose 3 à 5 requêtes Gmail différentes et complémentaires (synonymes, expéditeurs probables avec from:, formulations voisines, période avec newer_than: ou after:/before:). Requêtes courtes. Réponds UNIQUEMENT en JSON {"queries":["…"],"resume":"ce que tu cherches, une phrase"}.', String(b.q || '').slice(0, 300), 600),
+  'POST /ai/rank': async (q, b) => aiCall('Tu classes des mails candidats selon leur pertinence pour la demande de Samuel. Garde seulement ceux qui correspondent vraiment, 10 au maximum, du plus au moins pertinent. Réponds UNIQUEMENT en JSON {"results":[{"i":numéro,"why":"pourquoi, 10 mots max"}]}.', 'Demande : ' + String(b.q || '').slice(0, 300) + '\n\nCandidats :\n' + (b.items || []).slice(0, 60).map(x => x.i + '. ' + x.date + ' · ' + x.from + ' · ' + x.subject + ' · ' + String(x.snippet || '').slice(0, 140)).join('\n'), 900),
   'POST /ai/folders': async (q, b) => aiFolders(Array.isArray(b.folders) ? b.folders : [], b.focus),
   'POST /free/folder-rename': async (q, b) => withImap(async client => {
     const from = String(b.from || ''), to = String(b.to || '');

@@ -344,3 +344,31 @@ body.selecting .item .mark{visibility:visible}
 #list .swipe-bg{pointer-events:none}
 .day-h{font-size:.72rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:12px 8px 5px;opacity:.85}
 .sec+.day-h{padding-top:2px}
+/* Lot 3.0 */
+.ai-tools{display:flex;gap:8px;margin:0 4px 10px}
+.ai-tools .btn{flex:1;height:40px;font-size:.85rem;gap:6px}
+.ai-tools svg,.ai-card svg{width:16px;height:16px;fill:var(--accent);stroke:none}
+.ai-card{margin:0 4px 12px;padding:12px 14px;border-radius:14px;background:var(--surface);border:1px solid var(--accent-fill);display:flex;flex-direction:column;gap:8px;font-size:.92rem;line-height:1.45}
+.ai-card h3{margin:0;font-size:.95rem;color:var(--accent)}.ai-card h4{margin:4px 0 0;font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.ai-card p,.ai-card ul,.ai-card ol{margin:0}.ai-card ul,.ai-card ol{padding-left:18px}
+.ai-card .ai-foot{font-size:.72rem;color:var(--muted)}
+.ai-due{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.ar-out{display:flex;flex-direction:column;gap:10px;max-height:52vh;overflow:auto}
+.ar-v{padding:10px 12px;border-radius:12px;background:var(--card);display:flex;flex-direction:column;gap:6px;font-size:.88rem;line-height:1.45}
+.ar-v .btn{height:38px}
+.qd{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.qd .btn{height:auto;min-height:44px;flex-direction:column;gap:0;font-size:.85rem;padding:6px}
+.qd small{color:var(--muted);font-size:.7rem;font-weight:500}
+.task{display:flex;align-items:flex-start;gap:12px;padding:10px 12px;border-bottom:1px solid var(--line)}
+.task:last-child{border-bottom:none}
+.tk-check{width:26px;height:26px;border-radius:13px;border:2px solid var(--accent-fill);background:none;color:var(--on-accent);font-weight:900;flex:none;margin-top:2px}
+.task.done .tk-check{background:var(--accent-fill)}
+.task.done b{text-decoration:line-through;color:var(--muted)}
+.tk-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;cursor:pointer}
+.tk-body b{font-size:.98rem}.tk-body small{font-size:.75rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tk-body small.late,.day-h.late{color:#ff7b72}
+.task .sec-btn{text-decoration:none;margin-top:2px}
+.sug{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:var(--surface);border:1px solid var(--accent-fill);margin-bottom:8px}
+.sug span{flex:1;display:flex;flex-direction:column;font-size:.9rem}.sug small{color:var(--muted);font-size:.74rem}
+.sug .btn{height:38px;width:auto;padding:0 12px;font-size:.82rem}
+.ai-links{display:flex;gap:14px;flex-wrap:wrap}
