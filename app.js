@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.5.3';
+const APP_VERSION = '3.5.4';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -568,11 +568,33 @@ async function updateBadge(fresh) {
 
 /* ---------- Sélection multiple ---------- */
 function bindListGestures(list) {
-  let timer = null, longDone = false, sx = 0, sy = 0, cur = null, lock = null, dx = 0, bg = null, swiped = false;
-  const reset = () => { if (cur) { cur.style.transition = 'transform .2s'; cur.style.transform = ''; const c = cur; setTimeout(() => { c.style.transition = ''; }, 220); } if (bg) { const g = bg; setTimeout(() => g.remove(), 200); } cur = null; bg = null; lock = null; dx = 0; };
+  let timer = null, longDone = false, sx = 0, sy = 0, cur = null, lock = null, dx = 0, bg = null, swiped = false, base = 0;
+  // Tiroir ouvert après un glissement à gauche : boutons Bloquer et Supprimer
+  let tray = null;
+  const TRAY = 160;
+  const full = () => Math.max(230, list.clientWidth * 0.6);
+  const closeTray = () => {
+    if (!tray) return;
+    const t = tray; tray = null;
+    t.a.style.transition = 'transform .2s'; t.a.style.transform = '';
+    setTimeout(() => { t.a.style.transition = ''; t.bg.remove(); }, 220);
+  };
+  const reset = () => { if (cur) { cur.style.transition = 'transform .2s'; cur.style.transform = ''; const c = cur; setTimeout(() => { c.style.transition = ''; }, 220); } if (bg) { const g = bg; setTimeout(() => g.remove(), 200); } cur = null; bg = null; lock = null; dx = 0; base = 0; };
+  const drawBg = it => {
+    const isFull = dx < -full();
+    bg.classList.toggle('left', dx < 0); bg.classList.toggle('on', Math.abs(dx) > 70); bg.classList.toggle('full', isFull);
+    bg.innerHTML = dx < 0
+      ? `<button type="button" class="tray-b block" data-tray="block">${ICON.block}<small>Bloquer</small></button><button type="button" class="tray-b del" data-tray="trash">${ICON.trash}<small>Supprimer</small></button>`
+      : `<span>${it && it.unread ? ICON.read + 'Lu' : ICON.unread + 'Non lu'}</span>`;
+  };
   list.addEventListener('touchstart', e => {
+    if (tray) {
+      if (e.target.closest('[data-tray]')) return;
+      const same = e.target.closest('a.item') === tray.a;
+      closeTray(); swiped = same; cur = null; return;
+    }
     const a = e.target.closest('a.item'); if (!a || e.touches[0].clientX < 24) return;
-    longDone = false; swiped = false; sx = e.touches[0].clientX; sy = e.touches[0].clientY; cur = a; lock = null; dx = 0;
+    longDone = false; swiped = false; sx = e.touches[0].clientX; sy = e.touches[0].clientY; cur = a; lock = null; dx = 0; base = 0;
     timer = setTimeout(() => { longDone = true; if (navigator.vibrate) navigator.vibrate(15); if (!state.sel) enterSelect(); toggleSel(a); }, 480);
   }, { passive: true });
   list.addEventListener('touchmove', e => {
@@ -581,39 +603,58 @@ function bindListGestures(list) {
     if (!lock && (Math.abs(mx) > 10 || Math.abs(my) > 10)) { clearTimeout(timer); timer = null; lock = Math.abs(mx) > Math.abs(my) * 1.3 && !state.sel ? 'h' : 'v'; }
     if (lock !== 'h') return;
     e.preventDefault();
-    dx = Math.max(-300, Math.min(160, mx));
+    dx = Math.max(-list.clientWidth, Math.min(160, base + mx));
     if (!bg) {
       bg = document.createElement('div'); bg.className = 'swipe-bg';
       bg.style.top = cur.offsetTop + 'px'; bg.style.height = cur.offsetHeight + 'px';
       list.insertBefore(bg, cur);
     }
-    const it = findItem(cur.dataset.id);
-    const far = dx < -200;
-    bg.classList.toggle('left', dx < 0); bg.classList.toggle('far', far); bg.classList.toggle('on', Math.abs(dx) > 90);
-    if (far && !bg.dataset.far && navigator.vibrate) navigator.vibrate(8);
-    bg.dataset.far = far ? '1' : '';
-    bg.innerHTML = dx < 0 ? (far ? `<span>${ICON.block}Bloquer l’expéditeur</span>` : `<span>${ICON.trash}Supprimer</span><small>Continue pour bloquer</small>`) : `<span>${it && it.unread ? ICON.read + 'Lu' : ICON.unread + 'Non lu'}</span>`;
+    const wasFull = bg.classList.contains('full');
+    drawBg(findItem(cur.dataset.id));
+    if (bg.classList.contains('full') && !wasFull && navigator.vibrate) navigator.vibrate(8);
     cur.style.transform = 'translateX(' + dx + 'px)';
   }, { passive: false });
   list.addEventListener('touchend', () => {
     clearTimeout(timer); timer = null;
     if (lock === 'h' && cur) {
       swiped = true;
-      if (Math.abs(dx) > 90) {
-        const a = cur, id = a.dataset.id, it = findItem(id), kind = dx < -200 ? 'block' : dx < 0 ? 'trash' : (it && it.unread ? 'read' : 'unread');
+      const a = cur, id = a.dataset.id, it = findItem(id);
+      if (dx < -full()) {
+        // Glissé jusqu'au bout : suppression seule, jamais de blocage
         if (navigator.vibrate) navigator.vibrate(10);
-        if (kind === 'block') { collapseRow(a); quickBlock(it); setTimeout(() => { if (bg) bg.remove(); bg = null; cur = null; lock = null; }, 220); return; }
-        if (kind === 'trash') collapseRow(a);
-        else reset();
-        swipeAct(id, kind);
+        collapseRow(a); swipeAct(id, 'trash');
         setTimeout(() => { if (bg) bg.remove(); bg = null; cur = null; lock = null; }, 220);
+        return;
+      }
+      if (dx < -60) {
+        // Tiroir ouvert : on attend un tap sur Supprimer ou Bloquer
+        a.style.transition = 'transform .2s'; a.style.transform = 'translateX(' + (-TRAY) + 'px)';
+        setTimeout(() => { a.style.transition = ''; }, 220);
+        const t = { a, bg, it };
+        bg.classList.add('tray'); bg.classList.remove('full');
+        bg.querySelectorAll('[data-tray]').forEach(b => b.onclick = ev => {
+          ev.preventDefault(); ev.stopPropagation();
+          tray = null; t.bg.remove();
+          if (navigator.vibrate) navigator.vibrate(10);
+          collapseRow(a);
+          if (b.dataset.tray === 'block') quickBlock(it); else swipeAct(id, 'trash');
+        });
+        tray = t; bg = null; cur = null; lock = null; dx = 0;
+        return;
+      }
+      if (dx > 90) {
+        if (navigator.vibrate) navigator.vibrate(10);
+        reset(); swipeAct(id, it && it.unread ? 'read' : 'unread');
         return;
       }
     }
     reset();
   });
+  list.addEventListener('scroll', closeTray, { passive: true });
+  window.addEventListener('scroll', closeTray, { passive: true });
   list.addEventListener('contextmenu', e => { if (e.target.closest('a.item')) e.preventDefault(); });
   list.addEventListener('click', e => {
+    if (e.target.closest('[data-tray]')) return;
     const a = e.target.closest('a.item'); if (!a) return;
     if (longDone || swiped) { e.preventDefault(); longDone = false; swiped = false; return; }
     if (state.sel) { e.preventDefault(); toggleSel(a); }
@@ -1413,7 +1454,7 @@ const GUIDE = [
     <p>En transférant un mail, ses pièces jointes suivent.</p>`],
   ['⛔', 'Bloquer et indésirables', `
     <p>Bloquer range automatiquement <b>tous les mails de la marque</b> (ex. toutes les adresses @aliexpress.com) dans « Indésirables », côté Gmail et Free : <b>pas de notification, pas de pastille</b>.</p>
-    <p>Pour bloquer : balayage long vers la gauche, bouton <b>Bloquer</b> dans un mail, ou sélection multiple.</p>
+    <p>Glisse un mail vers la gauche : les boutons <b>Bloquer</b> et <b>Supprimer</b> apparaissent. Glisser jusqu’au bout supprime seulement, sans bloquer.</p>
     <p>Réglages › <b>Voir les mails indésirables</b> : taille occupée et <b>Tout supprimer</b> (vers la corbeille).</p>
     <p>Réglages › <b>Voir les expéditeurs bloqués</b> : tri par date ou A → Z, <b>Débloquer</b>, et « Regrouper par marque ».</p>
     <div class="tip">Une adresse Gmail, Hotmail, Free… est bloquée seule, jamais tout le domaine.</div>`],
