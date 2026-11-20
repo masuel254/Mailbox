@@ -414,3 +414,5 @@ body.selecting .item .mark{display:flex}
 .swipe-bg.full .tray-b.block{width:0;overflow:hidden}
 .swipe-bg.full .tray-b.del{flex:1;align-items:flex-end;padding-right:28px}
 #list .swipe-bg.tray{pointer-events:auto}
+.fold.common .frow svg{width:22px;height:22px;flex:none;fill:none;stroke:currentColor;stroke-width:2;color:var(--muted)}
+.fold.common .cdots{display:flex;gap:4px;margin-left:auto}

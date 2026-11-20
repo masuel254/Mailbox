@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.5.4';
+const APP_VERSION = '3.5.5';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -2217,7 +2217,16 @@ async function renderLabels() {
     const unread = [...tree.children.values()].reduce((a, n) => a + (n.total || 0), 0);
     return `<details class="set fsec" data-sec="${acc}" ${openSecs[acc] ? 'open' : ''}><summary><span class="set-t">${dot(acc)} ${title}</span><span class="set-s">${items.length} dossier${items.length > 1 ? 's' : ''}${unread ? ' · ' + unread + ' non lu' + (unread > 1 ? 's' : '') : ''}</span><span class="chev" aria-hidden="true"></span></summary><div class="card fold">${[...tree.children.values()].sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(n => rowHTML(n, 0, acc)).join('')}</div></details>`;
   };
-  const boxes = ['STARRED', 'IMPORTANT', 'DRAFT', 'ALL', 'SPAM', 'TRASH'];
+  const boxes = ['STARRED', 'IMPORTANT', 'DRAFT', 'ALL', 'SPAM'];
+  // Indésirables et Corbeille : un seul accès commun Gmail + Free, sortis des listes de chaque boîte
+  const nfcl = x => String(x || '').normalize('NFC').toLowerCase();
+  const isBlk = x => nfcl(x.full) === nfcl(BLOCK_LABEL);
+  const common = () => {
+    const blk = g.find(isBlk) || f.find(isBlk);
+    const sub = freeOn() ? 'Gmail + Free' : 'Gmail';
+    return (blk ? `<a class="set-link" href="${blk.href}"><span class="set-t">🚫 Indésirables</span><span class="set-s">${sub}</span><span class="chev-r" aria-hidden="true"></span></a>` : '')
+      + `<a class="set-link" href="#/list/TRASH"><span class="set-t">🗑️ Corbeille</span><span class="set-s">${sub}</span><span class="chev-r" aria-hidden="true"></span></a>`;
+  };
   const draw = q => {
     const $l = $('#labs'); if (!$l) return;
     if (q) {
@@ -2227,8 +2236,9 @@ async function renderLabels() {
     } else {
       const fv = favs.map(k => byKey.get(k)).filter(Boolean);
       $l.innerHTML = (fv.length ? `<h2 class="sec"><span class="fav-t">★</span>Favoris</h2><div class="card fold">${fv.map(x => `<a class="frow" data-k="${esc(x.key)}" href="${x.href}">${FOLD_ICON}<span class="nm">${esc(x.full.split(x.delim || '/').join(' › '))}</span>${dot(x.acc)}${nb(x.n)}${star(x.key)}</a>`).join('')}</div>` : '<p class="fhint">Touche ☆ à côté d’un dossier pour l’épingler ici.</p>')
-        + section('Gmail', 'gmail', g) + section('Free', 'free', f)
-        + `<details class="set fsec" data-sec="boxes" ${openSecs.boxes ? 'open' : ''}><summary><span class="set-t">Boîtes</span><span class="set-s">Suivis, Spam, Corbeille…</span><span class="chev" aria-hidden="true"></span></summary><div class="card fold">${boxes.map(k => `<a class="frow" href="#/list/${k}">${FOLD_ICON}<span class="nm">${esc(SYSTEM[k].name)}</span></a>`).join('')}</div></details>`;
+        + section('Gmail', 'gmail', g.filter(x => !isBlk(x))) + section('Free', 'free', f.filter(x => !isBlk(x)))
+        + common()
+        + `<details class="set fsec" data-sec="boxes" ${openSecs.boxes ? 'open' : ''}><summary><span class="set-t">Boîtes</span><span class="set-s">Suivis, Brouillons, Spam Gmail…</span><span class="chev" aria-hidden="true"></span></summary><div class="card fold">${boxes.map(k => `<a class="frow" href="#/list/${k}">${FOLD_ICON}<span class="nm">${esc(SYSTEM[k].name)}</span></a>`).join('')}</div></details>`;
       $$('details.fsec', $l).forEach(d => d.addEventListener('toggle', () => { openSecs[d.dataset.sec] = d.open; LS.set('openSecs', openSecs); }));
     }
     $$('[data-fav]', $l).forEach(b => b.onclick = e => {
