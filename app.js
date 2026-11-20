@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.2.1';
+const APP_VERSION = '3.3.0';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -312,7 +312,8 @@ async function renderList(key, q) {
   const v = $('#view');
   const isSearch = key === 'SEARCH';
   const sys = SYSTEM[key];
-  let title = isSearch ? 'Recherche' : sys ? sys.name : 'Libellé';
+  const contactQ = isSearch && (String(q || '').match(/^from:(\S+) OR to:\1$/) || [])[1];
+  let title = contactQ ? 'Échanges' : isSearch ? 'Recherche' : sys ? sys.name : 'Libellé';
   if (String(key).startsWith('F:')) title = decodeURIComponent(key.slice(2)).split(/[\/.]/).pop();
   else if (!sys && !isSearch) { try { await getLabels(); const l = labelById(key); if (l) title = l.name; } catch (e) { if (e.message === 'auth') return; } }
   const plain = !!(sys && sys.plain);
@@ -341,6 +342,7 @@ async function renderList(key, q) {
       const pill = `<a class="unr-pill ${key === 'UNREAD' ? 'on' : ''}" href="#/list/${key === 'UNREAD' ? 'INBOX' : 'UNREAD'}" aria-pressed="${key === 'UNREAD'}">Non lus<span class="fcount" id="fcount"></span></a>`;
       return `<div class="tabrow">${accs || '<div class="accounts one"><button class="on" aria-selected="true">Réception</button></div>'}${pill}</div>`;
     })()}</div>
+    ${contactQ ? `<div class="ai-note"><b>👤 ${esc(contactQ)}</b><span>Tous vos mails, dans les deux sens, Gmail et Free.</span>${settings.ai && relayOn() ? `<button class="btn" id="hist-go" style="margin-top:4px">${ICON.spark}Retracer l’historique</button>` : ''}</div><div id="hist-out"></div>` : ''}
     ${isSearch && state.aiNote && state.aiNote.q === q ? `<div class="ai-note"><b>✦ ${esc(state.aiNote.resume || 'Recherche de l’assistant')}</b><span>« ${esc(state.aiNote.ask)} » → <code>${esc(q)}</code></span><span class="ai-links"><a href="#/smart/${encodeURIComponent(state.aiNote.ask)}">✦ Pas trouvé ? Recherche par le sens</a><a href="#/search/${encodeURIComponent(state.aiNote.ask)}" id="ai-raw">Mots exacts</a></span></div>` : ''}
     ${isFolderView(key) ? `<div class="banner"><span style="display:flex;flex-direction:column;gap:2px"><span>${title === BLOCK_LABEL ? 'Mails des expéditeurs bloqués' : 'Dossier « ' + esc(title) + ' »'}</span><b id="lab-size" style="color:var(--accent)">Calcul de la taille…</b></span><button class="btn danger" id="btn-empty">${ICON.trash}Tout supprimer</button></div>` : ''}
     <div id="subdirs"></div>
@@ -372,6 +374,7 @@ async function renderList(key, q) {
     state.aiNote = null; location.hash = '#/search/' + encodeURIComponent(val);
   };
   $('#btn-refresh').onclick = () => loadList(key, q, cacheKey, plain, true);
+  const hg = $('#hist-go'); if (hg) hg.onclick = () => contactHistory(contactQ, cacheKey, hg);
   $('#btn-select').onclick = () => state.sel ? exitSelect() : enterSelect();
   state.listCtx = { key, q, cacheKey, plain };
   $$('.accounts button[data-acc]').forEach(b => b.onclick = () => { settings.acc = b.dataset.acc; saveSettings(); renderList(key, q); });
@@ -992,6 +995,7 @@ async function renderThread(id) {
     <div class="top"><a class="back" href="#" id="back">${ICON.back}Retour</a></div>
     <h1 class="thread-title">${esc(subject)}</h1>
     <div class="thread-chips">${chips}</div>
+    ${(() => { const other = msgs.map(m => parseAddr(hdr(m, 'From'))).filter(a => a.email && !isMe(a.email)).pop() || splitAddrs(hdr(lastM, 'To')).map(parseAddr).find(a => a.email && !isMe(a.email)); return other ? contactLink(other.name, other.email.toLowerCase()) : ''; })()}
     ${unsubH ? '<div class="unsub-bar"><span>Mail de liste de diffusion</span><button class="btn" id="t-unsub">Se désabonner</button></div>' : ''}
     <div class="toolbar">
       <button id="t-archive">${ICON.archive}Archiver</button>
@@ -1047,6 +1051,7 @@ async function renderFree(folder, uid) {
     <div class="top"><a class="back" href="#" id="back">${ICON.back}Retour</a></div>
     <h1 class="thread-title">${esc(m.subject)}</h1>
     <div class="thread-chips"><span class="chip acc-free">Free</span><span class="chip">${esc(folder === 'INBOX' ? 'Réception' : folder)}</span></div>
+    ${(() => { if (m.from.email && !isMe(m.from.email)) return contactLink(m.from.name, m.from.email.toLowerCase()); const t = splitAddrs(m.to || '').map(parseAddr).find(a => a.email && !isMe(a.email)); return t ? contactLink(t.name, t.email.toLowerCase()) : ''; })()}
     ${m.unsub ? '<div class="unsub-bar"><span>Mail de liste de diffusion</span><button class="btn" id="t-unsub">Se désabonner</button></div>' : ''}
     <div class="toolbar">
       <button id="t-archive">${ICON.archive}Archiver</button>
@@ -1426,6 +1431,7 @@ const GUIDE = [
     <p><b>Annuler l’envoi</b> : après Envoyer, tu as 6 secondes pour toucher Annuler ; le message reste à l’écran.</p>`],
   ['✦', 'Assistant IA', `
     <p><b>Résumer</b> (en haut d’un mail) : résumé, points clés, suivi de l’échange (qui a dit quoi, quand), engagements et échéances. Chaque échéance a un bouton <b>+ Tâche</b>.</p>
+    <p><b>👤 Tous les échanges avec…</b> (sous le titre d’un mail) : toute ta correspondance avec cette personne, dans les deux sens, Gmail et Free. <b>Retracer l’historique</b> y fait relire les échanges par l’IA : résumé, chronologie, engagements en cours et échéances (avec + Tâche).</p>
     <p><b>Réponse IA</b> : 3 propositions (accepter, décliner, demander une précision) ou selon ta consigne (« accepter jeudi, proposer 10 h »). <b>Utiliser et modifier</b> ouvre la réponse pré-remplie.</p>
     <p><b>Classer</b> : une suggestion 💡 apparaît en haut (là où sont déjà les mails de cet expéditeur, sinon « Suggérer un dossier »). La case <b>Toujours ranger…</b> crée une règle automatique pour les prochains mails.</p>
     <p><b>Recherche</b> : écris une phrase dans la loupe (« la promo Devred de mon anniversaire », « mes plus gros mails »). Une longue phrase (« un gars est venu réparer mon portail il y a quelque temps, retrouve nos échanges ») part directement en recherche par le sens ; une phrase courte qui trouve moins de 3 mails y bascule toute seule sur la <b>recherche par le sens</b> : il déduit les expéditeurs probables, les synonymes et la période, examine jusqu’à 80 mails Gmail et Free, tous dossiers confondus, puis les classe en « Correspond le mieux » et « Peut-être aussi », avec la raison de chaque résultat. Si une personne ou une entreprise ressort, <b>Tous les échanges avec…</b> affiche toute votre correspondance.</p>
@@ -1770,6 +1776,12 @@ function deleteFolderSheet(x, all) {
   };
 }
 /* ---------- Outils de lecture : IA, tâches, plus tard ---------- */
+/* Lien « Tous les échanges avec … » : l'interlocuteur du mail (pas moi) */
+function contactLink(name, email) {
+  if (!email) return '';
+  const q = 'from:' + email + ' OR to:' + email;
+  return `<a class="contact-bar" href="#/search/${encodeURIComponent(q)}"><span>👤 Tous les échanges avec <b>${esc(name || email)}</b></span><span class="chev-r" aria-hidden="true"></span></a>`;
+}
 function aiBar() {
   return settings.ai ? `<div class="ai-tools"><button class="btn" id="ai-sum">${ICON.spark}Résumer</button><button class="btn" id="ai-rep">${ICON.spark}Réponse IA</button></div><div id="ai-out"></div>` : '';
 }
@@ -1793,6 +1805,35 @@ function bindReadTools() {
   $('#t-snooze').onclick = () => snoozeSheet(ctx);
   const sb = $('#ai-sum'); if (sb) sb.onclick = () => aiSummary(ctx, sb);
   const rb = $('#ai-rep'); if (rb) rb.onclick = () => aiReplySheet(ctx);
+}
+/* Historique des échanges avec une personne : l'IA retrace la chronologie à partir des mails */
+async function contactHistory(email, cacheKey, btn) {
+  const out = $('#hist-out'); if (!out) return;
+  if (out.innerHTML) { out.innerHTML = ''; return; }
+  const data = state.lists[cacheKey];
+  const items = data ? data.items.slice().sort((a, b) => a.date - b.date).slice(-40) : [];
+  if (!items.length) { toast('Attends que la liste soit chargée'); return; }
+  btn.disabled = true; out.innerHTML = '<div class="ai-card"><div class="loading">L’assistant relit vos échanges…</div></div>';
+  // texte complet des 10 échanges les plus récents, aperçu pour les autres
+  const full = await pool(items.slice(-10), 4, async it => {
+    try {
+      if (it.acc === 'free') { const m = await rapi('/free/message?' + new URLSearchParams({ folder: it.folder, uid: it.uid })); return (m.text || htmlText(m.html || '')).split('\n').filter(l => !/^\s*>/.test(l)).join('\n').slice(0, 1500); }
+      const t = await api('threads/' + it.id + '?format=full'); return (t.messages || []).map(m => `[${hdr(m, 'From')} · ${fmtDate(+m.internalDate, true)}] ` + plainOf(m).split('\n').filter(l => !/^\s*>/.test(l)).join('\n').slice(0, 900)).join('\n');
+    } catch (e) { return ''; }
+  });
+  const fullBy = new Map(items.slice(-10).map((it, i) => [it.id, full[i]]));
+  const text = items.map(it => `--- ${fmtDate(it.date, true)} · ${it.mine && it.count === 1 ? 'Samuel → ' + it.to : it.from} · ${it.subject}\n` + (fullBy.get(it.id) || it.snippet || '')).join('\n\n').slice(0, 13000);
+  try {
+    const r = await rapi('/ai/summary', { method: 'POST', body: { text: 'Historique des échanges entre Samuel et ' + email + ', du plus ancien au plus récent.\n\n' + text, today: today() } });
+    const li = a => (a || []).filter(Boolean);
+    out.innerHTML = `<div class="ai-card"><h3>✦ Historique avec ${esc(email)}</h3><p>${esc(r.resume || '')}</p>
+      ${li(r.chronologie).length ? `<h4>Chronologie</h4><ol class="tl">${li(r.chronologie).map(x => `<li><b>${esc(x.date || '')}</b> ${esc(x.qui || '')} : ${esc(x.fait || '')}</li>`).join('')}</ol>` : ''}
+      ${li(r.engagements).length ? `<h4>Engagements en cours</h4><ul>${li(r.engagements).map(x => `<li><b>${esc(x.qui || '')}</b> : ${esc(x.quoi || '')}${x.quand ? ' · ' + esc(x.quand) : ''}</li>`).join('')}</ul>` : ''}
+      ${li(r.echeances).length ? `<h4>Échéances</h4>${li(r.echeances).map((x, i) => `<div class="ai-due"><span>${esc(x.quoi || '')}${x.date ? ' · <b>' + esc(new Date(x.date + 'T12:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })) + '</b>' : ''}</span><button class="sec-btn" data-due="${i}">+ Tâche</button></div>`).join('')}` : ''}
+      <p class="ai-foot">Basé sur ${items.length} mail${items.length > 1 ? 's' : ''} affiché${items.length > 1 ? 's' : ''}${data && (data.next || data.freeMore) ? ' (touche « Afficher plus » en bas pour inclure les plus anciens, puis relance)' : ''}.</p></div>`;
+    $$('[data-due]', out).forEach(b => b.onclick = () => { const x = li(r.echeances)[+b.dataset.due]; taskSheet({ title: x.quoi, due: x.date ? new Date(x.date + 'T09:00').getTime() : 0, ref: { acc: 'gmail', url: location.hash, subject: 'Échanges avec ' + email, from: email } }, null); });
+  } catch (e) { out.innerHTML = ''; toast('Assistant : ' + e.message); }
+  btn.disabled = false;
 }
 async function aiSummary(ctx, btn) {
   const out = $('#ai-out'); if (!out) return;

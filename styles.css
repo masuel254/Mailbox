@@ -389,3 +389,7 @@ body.selecting .item .mark{display:flex}
 .sq-row{display:flex;flex-wrap:wrap;gap:6px}
 .sq-chip{border:1.5px solid var(--line2);background:var(--card);color:var(--text);border-radius:16px;padding:7px 11px;font-size:.85rem;cursor:pointer}
 .sq-chip.ai{border-color:var(--accent-fill);color:var(--accent)}
+.contact-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 4px 10px;padding:10px 14px;border-radius:12px;background:var(--surface);border:1px solid var(--line2);color:var(--text);text-decoration:none;font-size:.9rem}
+.contact-bar b{color:var(--accent)}
+.contact-bar .chev-r{width:9px;height:9px;border-right:2.5px solid var(--accent);border-bottom:2.5px solid var(--accent);transform:rotate(-45deg);flex:none}
+#hist-go svg{width:16px;height:16px;fill:var(--accent);stroke:none}
