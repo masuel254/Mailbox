@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.8.0';
+const APP_VERSION = '3.9.0';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -353,6 +353,7 @@ async function renderList(key, q) {
     ${isSearch && state.aiNote && state.aiNote.q === q ? `<div class="ai-note"><b>✦ ${esc(state.aiNote.resume || 'Recherche de l’assistant')}</b><span>« ${esc(state.aiNote.ask)} » → <code>${esc(q)}</code></span><span class="ai-links"><a href="#/smart/${encodeURIComponent(state.aiNote.ask)}">✦ Pas trouvé ? Recherche par le sens</a><a href="#/search/${encodeURIComponent(state.aiNote.ask)}" id="ai-raw">Mots exacts</a></span></div>` : ''}
     ${isFolderView(key) || key === 'TRASH' ? `<div class="banner"><span style="display:flex;flex-direction:column;gap:2px"><span>${key === 'TRASH' ? 'Corbeille' + (freeOn() ? ' Gmail + Free' : '') : title === BLOCK_LABEL ? 'Expéditeurs bloqués et spam' : 'Dossier « ' + esc(title) + ' »'}</span><b id="lab-size" style="color:var(--accent)">Calcul de la taille…</b></span><button class="btn danger" id="btn-empty">${ICON.trash}${key === 'TRASH' ? 'Vider' : 'Tout supprimer'}</button></div>` : ''}
     <div id="subdirs"></div>
+    ${isSearch && !contactQ ? '<div id="best"></div>' : ''}
     <div id="list"><div class="loading">Chargement…</div></div>`;
   // Sous-dossiers du dossier ouvert : un dossier « thème » ne contient souvent rien lui-même, ses mails sont dans ses sous-dossiers
   let kids = [];
@@ -370,6 +371,7 @@ async function renderList(key, q) {
   $('#searchbar').onsubmit = e => { e.preventDefault(); const val = $('#q').value.trim(); $('#q').blur(); if (val) runSearch(val); };
   $('#btn-refresh').onclick = () => loadList(key, q, cacheKey, plain, true);
   const hg = $('#hist-go'); if (hg) hg.onclick = () => contactHistory(contactQ, cacheKey, hg);
+  if (isSearch && !contactQ && q) bestMatches(q).catch(() => { const b = $('#best'); if (b) b.innerHTML = ''; });
   $('#btn-select').onclick = () => state.sel ? exitSelect() : enterSelect();
   state.listCtx = { key, q, cacheKey, plain };
   $$('.accounts button[data-acc]').forEach(b => b.onclick = () => { settings.acc = b.dataset.acc; saveSettings(); renderList(key, q); });
@@ -473,6 +475,7 @@ function summarize(t) {
     size: msgs.reduce((a, m) => a + (m.sizeEstimate || 0), 0),
     att: msgs.some(m => /multipart\/mixed/i.test((m.payload && m.payload.mimeType) || '')),
     mine: msgs.some(m => (m.labelIds || []).includes('SENT')),
+    promo: ['CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_FORUMS'].some(l => labels.has(l)),
     unread: msgs.some(m => (m.labelIds || []).includes('UNREAD')),
     starred: labels.has('STARRED'),
     spam: labels.has('SPAM'),
@@ -2116,6 +2119,9 @@ async function renderSmart(question) {
   const kw = [...new Set(qs.join(' ').toLowerCase().replace(/\b(from|to|subject|in|is|has|newer_than|older_than|after|before|label|category):\S*/g, ' ').replace(/[()"]/g, ' ').split(/\s+/).filter(w => w.length > 3 && w !== 'or' && w !== 'and'))];
   const hits = x => { const t = (x.subject + ' ' + x.snippet + ' ' + x.from).toLowerCase(); return kw.filter(w => t.includes(w)).length; };
   const all = [...cand.values()].sort((a, b) => (hits(b) - hits(a)) || (b.date - a.date)).slice(0, 50);
+  // On lit le corps des 30 premiers candidats : l'IA juge sur le passage qui parle vraiment du sujet, pas sur le début du mail
+  if (all.length) { step(all.length + ' mails candidats, lecture des plus prometteurs…'); try { await enrich(all, searchWords(kw.join(' ') + ' ' + question), 30); } catch (e) {} }
+  const txt = x => x.passage && x.passage.hits ? x.passage.excerpt : x.snippet;
   let deepDone = false;
   if (!all.length) {
     step('Rien ici, je regarde aussi dans la corbeille et le spam…');
@@ -2125,7 +2131,7 @@ async function renderSmart(question) {
   if (!all.length) { $('#list').innerHTML = '<div class="empty">Rien trouvé, même dans la corbeille et le spam. Essaie avec un autre mot ou un expéditeur.</div>'; return; }
   step(all.length + ' mails candidats, tri par pertinence…');
   let ranked = [], contact = null;
-  try { const rr = await rapi('/ai/rank', { method: 'POST', body: { q: question, indices: plan.indices || '', items: all.map((x, i) => ({ i, date: new Date(x.date).toLocaleDateString('fr-FR'), from: x.mine && x.count === 1 ? 'Samuel → ' + (x.to || '') : x.from, email: x.fromEmail || x.toEmail || '', n: x.count, mine: x.mine, subject: x.subject, snippet: x.snippet })) } }) ; contact = rr.contact && rr.contact.email && /@/.test(rr.contact.email) ? rr.contact : null; ranked = (rr.results || []).filter(r => all[r.i]); } catch (e) { ranked = null; step('Tri par l’IA indisponible (' + e.message + ')'); }
+  try { const rr = await rapi('/ai/rank', { method: 'POST', body: { q: question, indices: plan.indices || '', items: all.map((x, i) => ({ i, date: new Date(x.date).toLocaleDateString('fr-FR'), from: x.mine && x.count === 1 ? 'Samuel → ' + (x.to || '') : x.from, email: x.fromEmail || x.toEmail || '', n: x.count, mine: x.mine, subject: x.subject, snippet: txt(x), promo: !!(x.promo || PROMO_RE.test(x.fromEmail || '')) })) } }) ; contact = rr.contact && rr.contact.email && /@/.test(rr.contact.email) ? rr.contact : null; ranked = (rr.results || []).filter(r => all[r.i]); } catch (e) { ranked = null; step('Tri par l’IA indisponible (' + e.message + ')'); }
   if (ranked === null) {
     const loc = all.filter(x => hits(x) > 0);
     state.showAcc = freeOn(); state.dayMode = false;
@@ -2145,7 +2151,7 @@ async function renderSmart(question) {
     const dall = [...extra.values()].sort((a, b) => (hits(b) - hits(a)) || (b.date - a.date)).slice(0, 40);
     if (dall.length) {
       try {
-        const rr = await rapi('/ai/rank', { method: 'POST', body: { q: question, indices: plan.indices || '', items: dall.map((x, i) => ({ i, date: new Date(x.date).toLocaleDateString('fr-FR'), from: x.mine && x.count === 1 ? 'Samuel → ' + (x.to || '') : x.from, email: x.fromEmail || x.toEmail || '', n: x.count, mine: x.mine, subject: x.subject, snippet: x.snippet })) } });
+        const rr = await rapi('/ai/rank', { method: 'POST', body: { q: question, indices: plan.indices || '', items: dall.map((x, i) => ({ i, date: new Date(x.date).toLocaleDateString('fr-FR'), from: x.mine && x.count === 1 ? 'Samuel → ' + (x.to || '') : x.from, email: x.fromEmail || x.toEmail || '', n: x.count, mine: x.mine, subject: x.subject, snippet: x.snippet, promo: !!(x.promo || PROMO_RE.test(x.fromEmail || '')) })) } });
         const dk = r => Object.assign({}, dall[r.i], { snippet: where(dall[r.i]) + (r.why || ''), unread: false });
         const dr = (rr.results || []).filter(r => dall[r.i]);
         best = dr.filter(r => (r.score == null ? 7 : r.score) >= 7).map(dk);
@@ -3154,6 +3160,76 @@ async function agendaSuggestions() {
       eventSheet({ title: x.r.title || x.subject, start: s, end: e && e > s ? e : null, allDay: !!x.r.allDay, location: x.r.location || '', note: (x.r.note || '') + ' · ' + x.from, mailUrl: x.url, mailSubject: x.subject }, () => { const sc = LS.get('evScan', {}); if (sc[id]) sc[id].done = true; LS.set('evScan', sc); renderAgenda(); });
     };
   });
+}
+
+/* ---------- Pertinence : lire dans le corps des mails ----------
+   Gmail trouve les mails qui contiennent les mots, mais les trie par date et son extrait (snippet) ne montre que le début.
+   Ici on lit le texte des meilleurs candidats, on repère le passage où les mots apparaissent ensemble et on note chaque mail. */
+const STOPW = new Set(['le', 'la', 'les', 'de', 'des', 'du', 'un', 'une', 'et', 'ou', 'a', 'à', 'au', 'aux', 'en', 'pour', 'par', 'sur', 'mon', 'ma', 'mes', 'avec', 'dans', 'que', 'qui', 'd', 'l']);
+const searchWords = q => [...new Set(nrm(String(q).replace(/\b(from|to|subject|in|is|has|label|category|after|before|newer_than|older_than|larger|filename):\S*/gi, ' ').replace(/[()"]/g, ' ').replace(/\bOR\b/g, ' ')).split(/[^a-z0-9@.\-]+/).filter(w => w.length > 1 && !STOPW.has(w)))];
+const bodyCache = new Map();
+async function threadText(id) {
+  if (bodyCache.has(id)) return bodyCache.get(id);
+  const t = await api('threads/' + id + '?format=full').catch(() => null);
+  const txt = t ? (t.messages || []).map(m => hdr(m, 'Subject') + '\n' + plainOf(m).split('\n').filter(l => !/^\s*>/.test(l)).join('\n')).join('\n\n').replace(/\s+/g, ' ').slice(0, 20000) : '';
+  bodyCache.set(id, txt); if (bodyCache.size > 400) bodyCache.delete(bodyCache.keys().next().value);
+  return txt;
+}
+// Meilleur passage : la fenêtre de ~160 caractères qui contient le plus de mots différents
+function bestPassage(text, words) {
+  const low = nrm(text); if (!words.length || !low) return { hits: 0, near: false, excerpt: '' };
+  const pos = []; words.forEach((w, wi) => { let i = -1; let n = 0; while ((i = low.indexOf(w, i + 1)) !== -1 && n < 60) { if (!i || !/[a-z0-9]/.test(low[i - 1])) { pos.push([i, wi]); n++; } } });
+  if (!pos.length) return { hits: 0, near: false, excerpt: '' };
+  pos.sort((a, b) => a[0] - b[0]);
+  let best = { k: 0, at: pos[0][0] };
+  for (let i = 0; i < pos.length; i++) { const seen = new Set(); for (let j = i; j < pos.length && pos[j][0] - pos[i][0] < 70; j++) seen.add(pos[j][1]); if (seen.size > best.k) best = { k: seen.size, at: pos[i][0] }; }
+  const all = new Set(pos.map(p => p[1])).size;
+  const s = Math.max(0, best.at - 50), e = Math.min(text.length, best.at + 170);
+  return { hits: all, near: best.k, excerpt: (s ? '…' : '') + text.slice(s, e).trim() + (e < text.length ? '…' : '') };
+}
+const PROMO_RE = /no-?reply|newsletter|news@|marketing|promo|offre|mailing|info@|bonjour@|hello@|e\.?mail\./i;
+function relScore(it, words, passage) {
+  const subj = nrm(it.subject); let sc = 0;
+  words.forEach(w => { if (subj.includes(w)) sc += 3; });
+  sc += passage.hits * 1.5 + (passage.near >= Math.min(2, words.length) ? 4 : 0) + (passage.near === words.length && words.length > 1 ? 4 : 0);
+  if (words.length > 1 && nrm(passage.excerpt + ' ' + it.subject).includes(words.join(' '))) sc += 3;
+  if (it.mine || it.count > 1) sc += 2;
+  if (it.promo || PROMO_RE.test(it.fromEmail || '')) sc -= 7;
+  return sc;
+}
+async function enrich(items, words, max) {
+  const top = items.slice(0, max);
+  await pool(top, 5, async it => {
+    const text = it.acc === 'free' ? (it.subject + ' ' + (it.body || it.snippet)) : await threadText(it.id);
+    const p = bestPassage(text, words);
+    it.passage = p; it.rel = relScore(it, words, p);
+  });
+  return top;
+}
+// « Les plus pertinents » en tête d'une recherche par mots : mails personnels (hors pubs) lus en entier, triés par pertinence
+async function bestMatches(q) {
+  const box = $('#best'); if (!box) return;
+  const words = searchWords(q); if (!words.length || /\b(from|to|larger|filename):/i.test(q)) return;
+  box.innerHTML = '<div class="ai-note"><span>Lecture des mails pour trouver les plus pertinents…</span></div>';
+  const base = words.join(' ');
+  const cand = new Map();
+  const grab = async (gq, n) => {
+    const r = (await api('threads?' + new URLSearchParams({ q: gq, maxResults: n })).catch(() => null)) || {};
+    const ts = await pool(r.threads || [], 6, t => threadMeta(t).catch(() => null));
+    ts.filter(Boolean).forEach(t => { if (!cand.has(t.id)) cand.set(t.id, Object.assign(summarize(t), { acc: 'gmail' })); });
+  };
+  const jobs = [];
+  if (settings.clientId || relayGmailOn()) jobs.push(grab(base + ' -category:promotions -category:social -category:forums', 30), grab('in:sent ' + base, 20), grab('subject:(' + base + ')', 10));
+  if (freeOn()) jobs.push(rapi('/free/search?' + new URLSearchParams({ q: base, limit: '20' })).then(r => (r.items || []).forEach(x => { const it = freeItem(x); it.body = x.text || ''; cand.set(it.id, it); })).catch(() => {}));
+  await Promise.all(jobs);
+  if (!$('#best')) return;
+  const all = await enrich([...cand.values()].sort((a, b) => b.date - a.date), words, 55);
+  let best = all.filter(x => x.rel >= 6 && x.passage.hits >= Math.min(2, words.length)).sort((a, b) => b.rel - a.rel || b.date - a.date);
+  if (best.length) best = best.filter(x => x.rel >= best[0].rel * 0.6).slice(0, 6);
+  if (!$('#best')) return;
+  if (!best.length) { box.innerHTML = ''; return; }
+  state.showAcc = freeOn(); state.dayMode = false;
+  box.innerHTML = `<h2 class="sec">Les plus pertinents · ${best.length}</h2>` + best.map(i => itemHTML(Object.assign({}, i, { snippet: '« ' + i.passage.excerpt + ' »' }), '')).join('') + '<h2 class="sec">Tous les résultats, du plus récent au plus ancien</h2>';
 }
 
 /* ---------- Démarrage ---------- */
