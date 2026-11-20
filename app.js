@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.7.1';
+const APP_VERSION = '3.7.2';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -374,10 +374,21 @@ async function renderList(key, q) {
   // Ouverture instantanée : dernière liste connue gardée sur l'iPhone (réception, non lus, envoyés), actualisée aussitôt
   if (!cached && !isSearch) { const d = LS.get('list:' + cacheKey, null); if (d && d.items) { cached = Object.assign(d, { at: 0, stale: true }); state.lists[cacheKey] = cached; } }
   // Corbeille, spam et dossiers changent souvent (suppressions, vidage) : toujours relus à l'ouverture
-  if (cached) { drawList(cached, plain); if (Date.now() - cached.at > 60000 || key === 'TRASH' || key === 'SPAM' || isFolderView(key)) loadList(key, q, cacheKey, plain, true); }
+  // Toujours relue à l'ouverture (affichage immédiat de la dernière version, puis mise à jour) : peu coûteux grâce à threadMeta
+  if (cached) { drawList(cached, plain); loadList(key, q, cacheKey, plain, true); }
   else loadList(key, q, cacheKey, plain, true);
 }
 
+/* En-têtes des conversations gardés en mémoire : Gmail renvoie un « historyId » qui change à chaque modification
+   (lu, étoile, nouveau message…). Tant qu'il ne change pas, on ne redemande rien : relire une liste ne coûte qu'un appel. */
+const metaCache = new Map();
+async function threadMeta(t) {
+  const c = metaCache.get(t.id);
+  if (c && t.historyId && c.h === t.historyId) return c.v;
+  const v = await api('threads/' + t.id + '?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date');
+  if (v) { metaCache.set(t.id, { h: t.historyId || v.historyId, v }); if (metaCache.size > 3000) metaCache.delete(metaCache.keys().next().value); }
+  return v;
+}
 async function loadList(key, q, cacheKey, plain, reset) {
   const sys = SYSTEM[key];
   const acc = cacheKey.includes('|') ? cacheKey.split('|')[0] : 'gmail';
@@ -395,13 +406,13 @@ async function loadList(key, q, cacheKey, plain, reset) {
         if (sys && sys.spamTrash) p.set('includeSpamTrash', 'true');
         if (more && prev.next) p.set('pageToken', prev.next);
         const [r] = await Promise.all([api('threads?' + p.toString()), getLabels().catch(() => [])]);
-        const threads = await pool(r.threads || [], 12, t => api('threads/' + t.id + '?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date'));
+        const threads = await pool(r.threads || [], 12, t => threadMeta(t));
         gItems = threads.filter(Boolean).map(t => Object.assign(summarize(t), { acc: 'gmail' }));
         next = r.nextPageToken || null;
         // Indésirables commun : on y montre aussi le spam Gmail (sans le déplacer, pour ne pas dérégler le filtre de Gmail)
         if (isBlockLabel(key) && !more) {
           const rs = (await api('threads?' + new URLSearchParams({ labelIds: 'SPAM', includeSpamTrash: 'true', maxResults: 50 })).catch(() => null)) || {};
-          const st = await pool(rs.threads || [], 8, t => api('threads/' + t.id + '?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date').catch(() => null));
+          const st = await pool(rs.threads || [], 8, t => threadMeta(t).catch(() => null));
           const have = new Set(gItems.map(i => i.id)); gItems = gItems.concat(st.filter(t => t && !have.has(t.id)).map(t => Object.assign(summarize(t), { acc: 'gmail' })));
         }
       })());
@@ -491,6 +502,8 @@ const isGone = id => { const t = gone.get(id); if (!t) return false; if (t < Dat
 function drawList(data, plain) {
   const l = $('#list'); if (!l) return;
   if (gone.size && data.items.some(i => isGone(i.id))) data = Object.assign({}, data, { items: data.items.filter(i => !isGone(i.id)) });
+  // Suivis : un mail dont on vient de retirer l'étoile n'a plus rien à faire ici
+  if (state.listCtx && state.listCtx.key === 'STARRED' && data.items.some(i => !i.starred)) data = Object.assign({}, data, { items: data.items.filter(i => i.starred) });
   state.showAcc = freeOn(); state.dayMode = false;
   if (!data.items.length) { l.innerHTML = $('#subdirs') && $('#subdirs').innerHTML ? '<div class="empty">Aucun mail directement dans ce dossier : ouvre un sous-dossier ci-dessus.</div>' : '<div class="empty">Aucun message ici.</div>'; return; }
   // Recherche par taille (larger:) : du plus gros au plus petit, taille affichée
