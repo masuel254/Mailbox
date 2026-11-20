@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.4.4';
+const APP_VERSION = '3.5.0';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -2285,16 +2285,38 @@ function renderCompose(params) {
       <div class="row" id="row-bcc" hidden><label for="c-bcc">Cci</label><input id="c-bcc" type="text" inputmode="email"></div>
       <div class="row"><label for="c-subj">Objet</label><input id="c-subj" type="text" value="${esc(subject)}"></div>
       ${fwdAtts.length ? `<div class="row" style="flex-wrap:wrap;padding:8px 4px">${fwdAtts.map(a => `<span class="chip">${ICON.clip} ${esc(a.name)}</span>`).join(' ')}</div>` : ''}
+      <div class="row att-row"><button type="button" class="btn" id="c-att">${ICON.clip}Joindre une photo ou un fichier</button><input type="file" id="c-file" multiple hidden></div>
+      <div class="att-list" id="c-atts" hidden></div>
       <label for="c-body" class="sr">Message</label>
       <textarea id="c-body"></textarea>
     </form>`;
   const ta = $('#c-body');
+  const added = [];
   ta.value = body;
   const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.max(ta.scrollHeight, window.innerHeight * 0.45) + 'px'; };
   ta.addEventListener('input', grow); grow();
   setTimeout(() => { if (!to) $('#c-to').focus(); else { ta.focus(); ta.setSelectionRange(0, 0); } }, 50);
-  $('#back').onclick = e => { e.preventDefault(); if (ta.value.trim() && ta.value !== body && !confirm('Abandonner ce message ?')) return; goBack(); };
+  $('#back').onclick = e => { e.preventDefault(); if (((ta.value.trim() && ta.value !== body) || added.length) && !confirm('Abandonner ce message ?')) return; goBack(); };
   $('#c-more').onclick = () => { $('#row-cc').hidden = false; $('#row-bcc').hidden = false; $('#c-cc').focus(); };
+  // Pièces jointes ajoutées depuis l'iPhone (Photothèque, appareil photo, Fichiers)
+  const MAX_ATT = 20 * 1048576;
+  const drawAtts = () => {
+    const box = $('#c-atts');
+    box.hidden = !added.length;
+    box.innerHTML = added.map((a, i) => `<span class="att-chip">${ICON.clip}<span class="att-n">${esc(a.name)}</span><span class="att-s">${fmtMo(a.size)}</span><button type="button" data-rm="${i}" aria-label="Retirer ${esc(a.name)}">×</button></span>`).join('');
+    $$('[data-rm]', box).forEach(b => b.onclick = () => { added.splice(+b.dataset.rm, 1); drawAtts(); });
+  };
+  const readB64 = f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = () => rej(r.error); r.readAsDataURL(f); });
+  $('#c-att').onclick = () => $('#c-file').click();
+  $('#c-file').onchange = async e => {
+    const files = [...e.target.files]; e.target.value = '';
+    for (const f of files) {
+      const total = added.reduce((x, a) => x + a.size, 0) + fwdAtts.reduce((x, a) => x + (a.size || 0), 0);
+      if (total + f.size > MAX_ATT) { toast('Trop lourd : 20 Mo maximum de pièces jointes par mail'); break; }
+      try { added.push({ name: f.name || 'piece-jointe', mime: f.type || 'application/octet-stream', size: f.size, b64: await readB64(f) }); } catch (err) { toast('Lecture impossible : ' + (f.name || 'fichier')); }
+    }
+    drawAtts();
+  };
   $('#send').onclick = async () => {
     const o = { to: $('#c-to').value.trim(), cc: $('#c-cc').value.trim(), bcc: $('#c-bcc').value.trim(), subject: $('#c-subj').value, body: ta.value, inReplyTo, references };
     if (!o.to && !o.cc && !o.bcc) { toast('Ajoute un destinataire'); $('#c-to').focus(); return; }
@@ -2305,10 +2327,11 @@ function renderCompose(params) {
     const cancelled = await new Promise(res => { const t = setTimeout(() => res(false), 6200); toast('Envoi dans quelques secondes…', { label: 'Annuler', run: () => { clearTimeout(t); res(true); } }); });
     if (cancelled) { btn.disabled = false; btn.lastChild.textContent = 'Envoyer'; toast('Envoi annulé, ton message est toujours là'); return; }
     try {
-      if (fwdAtts.length) o.attachments = await Promise.all(fwdAtts.map(async a => ({ name: a.name, mime: a.mime, b64: await fetchAtt(a) })));
+      o.attachments = (fwdAtts.length ? await Promise.all(fwdAtts.map(async a => ({ name: a.name, mime: a.mime, b64: await fetchAtt(a) }))) : []).concat(added.map(a => ({ name: a.name, mime: a.mime, b64: a.b64 })));
+      if (!o.attachments.length) delete o.attachments;
       const viaFree = $('#c-from') && $('#c-from').value === 'free';
       if (viaFree) await rapi('/free/send', { method: 'POST', body: { to: o.to, cc: o.cc, bcc: o.bcc, subject: o.subject, text: o.body, inReplyTo: o.inReplyTo, references: o.references, attachments: o.attachments } });
-      else { const raw = buildRaw(o); await api('messages/send', { method: 'POST', body: threadId ? { raw, threadId } : { raw } }); }
+      else await gmailSend(o, threadId);
       Object.keys(state.lists).forEach(k => delete state.lists[k]);
       state.composeFrom = null;
       toast('Message envoyé');
@@ -2328,7 +2351,20 @@ function encAddrs(s) {
   }).join(', ');
 }
 const wrap76 = s => s.replace(/.{1,76}/g, '$&\r\n').replace(/\r\n$/, '');
-function buildRaw(o) {
+/* Gros mails (photos) : au-delà de ~5 Mo, Gmail exige l'envoi « upload » */
+async function gmailSend(o, threadId) {
+  const mime = buildMime(o);
+  if (mime.length < 4500000) { const raw = toUrlB64(btoa(mime)); return api('messages/send', { method: 'POST', body: threadId ? { raw, threadId } : { raw } }); }
+  const t = await accessToken();
+  if (!t) { auth.login(); throw new Error('auth'); }
+  const b = 'up_' + Math.random().toString(36).slice(2);
+  const body = '--' + b + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + JSON.stringify(threadId ? { threadId } : {}) + '\r\n--' + b + '\r\nContent-Type: message/rfc822\r\n\r\n' + mime + '\r\n--' + b + '--';
+  const r = await fetch('https://gmail.googleapis.com/upload/gmail/v1/users/me/messages/send?uploadType=multipart', { method: 'POST', headers: { Authorization: 'Bearer ' + t, 'Content-Type': 'multipart/related; boundary=' + b }, body });
+  if (!r.ok) { let m = 'Erreur ' + r.status; try { m = (await r.json()).error.message; } catch (e) {} throw new Error(m); }
+  return r.json().catch(() => null);
+}
+function buildRaw(o) { return toUrlB64(btoa(buildMime(o))); }
+function buildMime(o) {
   const h = [];
   if (o.to) h.push('To: ' + encAddrs(o.to));
   if (o.cc) h.push('Cc: ' + encAddrs(o.cc));
@@ -2348,7 +2384,7 @@ function buildRaw(o) {
   } else {
     msg = h.join('\r\n') + '\r\n' + textPart;
   }
-  return toUrlB64(btoa(msg));
+  return msg;
 }
 
 /* ---------- Réglages ---------- */

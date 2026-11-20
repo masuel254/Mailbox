@@ -393,3 +393,12 @@ body.selecting .item .mark{display:flex}
 .contact-bar b{color:var(--accent)}
 .contact-bar .chev-r{width:9px;height:9px;border-right:2.5px solid var(--accent);border-bottom:2.5px solid var(--accent);transform:rotate(-45deg);flex:none}
 #hist-go svg{width:16px;height:16px;fill:var(--accent);stroke:none}
+.att-row{padding:6px 0}
+.att-row .btn{height:40px;font-size:.92rem;gap:6px}
+.att-row .btn svg{width:18px;height:18px}
+.att-list{display:flex;flex-wrap:wrap;gap:8px;padding:8px 0 4px}
+.att-chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:6px 6px 6px 10px;border-radius:10px;background:var(--surface);border:1px solid var(--line2);font-size:.85rem}
+.att-chip svg{width:15px;height:15px;flex:none}
+.att-chip .att-n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px}
+.att-chip .att-s{color:var(--muted);font-size:.75rem}
+.att-chip button{border:none;background:var(--line2);color:var(--text);width:26px;height:26px;border-radius:50%;font-size:1rem;line-height:1}
