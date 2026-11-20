@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.6.2';
+const APP_VERSION = '3.6.3';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -368,12 +368,13 @@ async function renderList(key, q) {
   $('#btn-select').onclick = () => state.sel ? exitSelect() : enterSelect();
   state.listCtx = { key, q, cacheKey, plain };
   $$('.accounts button[data-acc]').forEach(b => b.onclick = () => { settings.acc = b.dataset.acc; saveSettings(); renderList(key, q); });
-  const be = $('#btn-empty'); if (be) { be.onclick = () => key === 'TRASH' ? emptyTrash() : emptyLabel(key, title); new Promise(r => setTimeout(r, 2500)).then(() => labelSize(key)).then(t => { const el = $('#lab-size'); if (!el) return; if (t === 'Vide' && kids.length) { el.textContent = 'Tes mails sont dans ses ' + kids.length + ' sous-dossier' + (kids.length > 1 ? 's' : '') + ', ci-dessous'; be.hidden = true; } else el.textContent = t; }); }
+  const be = $('#btn-empty'); if (be) { be.onclick = () => key === 'TRASH' ? emptyTrash() : emptyLabel(key, title); new Promise(r => setTimeout(r, 2500)).then(() => labelSize(key)).then(t => { const el = $('#lab-size'); if (!el) return; if (t === 'Vide' && kids.length) { el.textContent = 'Tes mails sont dans ses ' + kids.length + ' sous-dossier' + (kids.length > 1 ? 's' : '') + ', ci-dessous'; be.hidden = true; } else el.textContent = t; if (t === 'Vide' && $$('#list a.item').length) { delete state.lists[cacheKey]; loadList(key, q, cacheKey, plain, true); } }); }
   bindListGestures($('#list'));
   let cached = state.lists[cacheKey];
   // Ouverture instantanée : dernière liste connue gardée sur l'iPhone (réception, non lus, envoyés), actualisée aussitôt
   if (!cached && !isSearch) { const d = LS.get('list:' + cacheKey, null); if (d && d.items) { cached = Object.assign(d, { at: 0, stale: true }); state.lists[cacheKey] = cached; } }
-  if (cached) { drawList(cached, plain); if (Date.now() - cached.at > 60000) loadList(key, q, cacheKey, plain, true); }
+  // Corbeille, spam et dossiers changent souvent (suppressions, vidage) : toujours relus à l'ouverture
+  if (cached) { drawList(cached, plain); if (Date.now() - cached.at > 60000 || key === 'TRASH' || key === 'SPAM' || isFolderView(key)) loadList(key, q, cacheKey, plain, true); }
   else loadList(key, q, cacheKey, plain, true);
 }
 
