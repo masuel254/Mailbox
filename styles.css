@@ -336,7 +336,7 @@ a.frow.xfering .nm::after{content:' · transfert vers Gmail…';color:var(--acce
 .gges{display:flex;gap:6px}.gges span{flex:1;background:var(--card);border-radius:10px;padding:8px 4px;text-align:center;font-size:.78rem}
 /* Variante C : pas d'initiale, rond seulement pour les non lus (il redevient case à cocher en sélection) */
 .item:not(.u) .mark{display:none}
-body.selecting .item .mark{display:inline-block;visibility:visible}
+body.selecting .item .mark{display:flex}
 /* Mails lus : expéditeur en gras, gris clair (un ton sous les non lus) */
 .item:not(.u) .who{font-weight:750;color:#c4c9cf}
 :root[data-theme="light"] .item:not(.u) .who{color:#4a5058}
