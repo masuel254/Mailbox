@@ -481,6 +481,7 @@ async function freeFolderSize(folderKey) {
 let trashJob = null;
 const pause = ms => new Promise(r => setTimeout(r, ms));
 async function runEmptyTrash(job) {
+  log('vidage corbeille : début' + (S.gmail ? '' : ' (Gmail non relié au relais)'));
   if (S.gmail) {
     let tries = 0;
     while (true) {
@@ -492,6 +493,7 @@ async function runEmptyTrash(job) {
         job.gmail += ids.length; tries = 0;
         await pause(400);
       } catch (e) {
+        log('vidage corbeille Gmail :', e.message);
         if (/insufficient|scope|PERMISSION/i.test(e.message)) { job.error = 'scope'; break; }
         if (/ 429| 403|rate|quota|5\d\d/i.test(e.message) && tries < 12) { tries++; await pause(3000 * tries); continue; }
         job.error = e.message; break;

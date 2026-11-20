@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.6.3';
+const APP_VERSION = '3.6.4';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -966,6 +966,8 @@ async function labelSize(labelId) {
   try {
     const [g, f] = await Promise.all([gmail.catch(() => null), free]);
     if (!g && !f) return 'Taille indisponible';
+    // Gmail n'a pas répondu : ne surtout pas afficher « Vide » sur la seule foi de Free
+    if (!g) return 'Taille Gmail indisponible pour l’instant' + (f && f.count ? ' · Free ' + f.count + ' mail' + (f.count > 1 ? 's' : '') : '');
     const count = (g ? g.count : 0) + (f ? f.count : 0), bytes = (g ? g.bytes : 0) + (f ? f.bytes : 0);
     if (!count) return 'Vide';
     const parts = freeOn() && f ? ' (Gmail ' + (g ? g.count : '?') + ' · Free ' + f.count + ')' : '';
@@ -1027,15 +1029,18 @@ function emptyTrash() {
     closeSheet();
     Object.keys(state.lists).forEach(k => delete state.lists[k]);
     try { localStorage.removeItem('ml-size-TRASH'); } catch (e) {}
+    route(); // d'abord recharger la liste : route() referme les fenêtres, le bilan s'ouvre après
     const total = (job.gmail || 0) + (job.free || 0);
+    // Bilan détaillé, qui reste affiché : on sait exactement ce qui a été fait ou non
+    const bilan = `Gmail : <b>${job.gmail || 0}</b> effacé${job.gmail > 1 ? 's' : ''}${freeOn() ? ` · Free : <b>${job.free || 0}</b>` : ''}`;
     if (job.error === 'scope') {
       openSheet(`<span class="grip"></span><h2>Autorisation Gmail à ajouter</h2>
-        <p style="margin:0;color:var(--muted);font-size:.85rem;line-height:1.5">${freeOn() ? 'La corbeille Free est vidée. ' : ''}Pour effacer définitivement la corbeille Gmail, Google demande une autorisation de plus. Appuie sur Autoriser, choisis ton compte et accepte : tu reviens ici ensuite, puis relance « Vider ».</p>
+        <p style="margin:0;color:var(--muted);font-size:.85rem;line-height:1.5">${bilan}.<br>Google refuse l’effacement définitif : ton serveur n’a pas encore cette autorisation. Appuie sur Autoriser, choisis ton compte, accepte tout (si Google affiche « application non vérifiée » : Paramètres avancés puis Continuer). De retour ici, relance « Vider ».</p>
         <button class="btn primary" id="tr-auth">Autoriser</button><button class="btn" data-close>Plus tard</button>`);
       $('#tr-auth').onclick = () => { location.href = relayGoogleStart(); };
-    } else if (job.error) toast(total + ' effacés, puis arrêt : ' + job.error + '. Relance « Vider » pour finir.');
-    else toast(total ? total + ' mail' + (total > 1 ? 's' : '') + ' effacé' + (total > 1 ? 's' : '') + ' définitivement' : 'La corbeille était déjà vide');
-    route();
+    } else if (job.error) {
+      openSheet(`<span class="grip"></span><h2>Vidage interrompu</h2><p style="margin:0;color:var(--muted);font-size:.85rem;line-height:1.5">${bilan}.<br>Arrêt : <code>${esc(job.error)}</code></p><button class="btn primary" data-close>OK</button>`);
+    } else toast(total ? total + ' mail' + (total > 1 ? 's' : '') + ' effacé' + (total > 1 ? 's' : '') + ' définitivement' : 'La corbeille était déjà vide');
   };
 }
 
