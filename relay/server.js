@@ -29,7 +29,7 @@ const C = {
   imap: { host: process.env.FREE_IMAP_HOST || 'imap.free.fr', port: +(process.env.FREE_IMAP_PORT || 993), secure: process.env.FREE_IMAP_SECURE !== 'false' },
   smtp: { host: process.env.FREE_SMTP_HOST || 'smtp.free.fr', port: +(process.env.FREE_SMTP_PORT || 465), secure: process.env.FREE_SMTP_SECURE !== 'false', tls: { rejectUnauthorized: process.env.FREE_TLS_STRICT !== 'false' } }
 };
-const SCOPE = 'https://mail.google.com/ https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
+const SCOPE = 'https://mail.google.com/ https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic https://www.googleapis.com/auth/contacts https://www.googleapis.com/auth/calendar';
 const BLOCK_LABEL = 'Indésirables';
 const appOrigin = new URL(C.appUrl).origin;
 const log = (...a) => console.log(new Date().toISOString(), ...a);
@@ -965,6 +965,13 @@ const routes = {
     if (Date.now() - S.contacts.at > 7 * 864e5) buildContacts();
     return { items: findContacts(String(q.get('q') || '').slice(0, 200)) };
   },
+  // Correspondants les plus fréquents (carnet bâti à partir des mails), pour l'onglet Contacts
+  'GET /contacts/top': async q => {
+    if (!S.contacts || !S.contacts.at) { buildContacts(); return { building: true, items: [] }; }
+    const n = Math.min(+q.get('n') || 400, 1000);
+    return { items: Object.entries(S.contacts.list).map(([email, c]) => ({ email, name: c.n || '', count: c.c, last: c.t })).sort((a, b) => b.count - a.count).slice(0, n) };
+  },
+  'POST /ai/event': async (q, b) => aiCall('Tu repères un rendez-vous, une réunion, un appel ou un événement daté proposé ou confirmé dans un mail adressé à Samuel. Date du jour : ' + (b.today || '') + '. Réponds UNIQUEMENT en JSON {"found":true|false,"title":"titre court, 6 mots max","start":"AAAA-MM-JJTHH:MM","end":"AAAA-MM-JJTHH:MM ou null","allDay":true|false,"location":"lieu ou visio ou vide","note":"une phrase de contexte"}. Si aucune date ou heure précise n’est proposée, found=false. Si seule la date est connue, allDay=true. Durée par défaut 1 h.', 'Objet : ' + (b.subject || '') + '\nDe : ' + (b.from || '') + '\n\n' + String(b.text || '').slice(0, 6000), 400),
   'GET /tasks': async () => ({ tasks: S.tasks || [] }),
   'POST /tasks': async (q, b) => {
     S.tasks = S.tasks || [];

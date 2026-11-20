@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.7.3';
+const APP_VERSION = '3.8.0';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -40,6 +40,8 @@ function toast(msg, action) {
 const undoToast = (msg, undo) => toast(msg, { label: 'Annuler', run: async () => { try { await undo(); gone.clear(); toast('Action annulée'); } catch (e) { toast('Annulation impossible : ' + e.message); } Object.keys(state.lists).forEach(k => delete state.lists[k]); route(); badgeNow(0); } });
 const ICON = {
   folder: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+  gear: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4"/></svg>',
+  cal: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
   clock: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
   todo: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8 12l3 3 5-6"/></svg>',
   spark: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg>',
@@ -274,7 +276,7 @@ function route() {
   exitSelect(true);
   document.body.classList.toggle('no-tabbar', view === 'thread' || view === 'compose' || view === 'free');
   const lk = parts[1] === 'UNREAD' ? 'INBOX' : (parts[1] || 'INBOX');
-  $$('#tabbar a').forEach(a => a.classList.toggle('on', a.dataset.tab === (view === 'list' ? (['INBOX', 'SENT'].includes(lk) ? lk : 'labels') : view === 'waiting' ? 'labels' : view === 'guide' ? 'settings' : view === 'tasks' ? 'labels' : view)));
+  $$('#tabbar a').forEach(a => a.classList.toggle('on', a.dataset.tab === (view === 'list' ? (lk === 'INBOX' ? 'INBOX' : 'labels') : ['waiting', 'tasks'].includes(view) ? 'labels' : ['guide', 'settings'].includes(view) ? 'INBOX' : view)));
   $('#view').scrollTop = 0;
   if (!settings.clientId && !relayGmailOn() && view !== 'settings') return renderWelcome();
   if (view === 'thread') return renderThread(decodeURIComponent(parts[1]));
@@ -284,6 +286,8 @@ function route() {
   if (view === 'waiting') return renderWaiting();
   if (view === 'guide') return renderGuide();
   if (view === 'tasks') return renderTasks();
+  if (view === 'contacts') return renderContacts();
+  if (view === 'agenda') return renderAgenda();
   if (view === 'smart') return renderSmart(decodeURIComponent(parts.slice(1).join('/')));
   if (view === 'settings') return renderSettings();
   if (view === 'search') return renderList('SEARCH', decodeURIComponent(parts.slice(1).join('/')));
@@ -332,6 +336,7 @@ async function renderList(key, q) {
       <button class="icon-btn" id="btn-select" aria-label="Sélectionner plusieurs mails">${ICON.check}</button>
       <button class="icon-btn" id="btn-search" aria-label="Rechercher">${ICON.search}</button>
       <button class="icon-btn" id="btn-refresh" aria-label="Actualiser">${ICON.refresh}</button>
+      ${['INBOX', 'UNREAD'].includes(key) ? `<a class="icon-btn" href="#/settings" aria-label="Réglages">${ICON.gear}</a>` : ''}
     </div>
     <form class="searchbar" id="searchbar" ${isSearch ? '' : 'hidden'}><input type="search" id="q" placeholder="Un mot ou une phrase" value="${esc(q || '')}" enterkeyhint="search" autocomplete="off"></form>
 
@@ -1146,6 +1151,7 @@ async function renderThread(id) {
       <button id="t-star" aria-pressed="${starred}">${starred ? ICON.starOn : ICON.star}${starred ? 'Suivi' : 'Suivre'}</button>
       <button id="t-todo">${ICON.todo}À faire</button>
       <button id="t-snooze">${ICON.clock}Plus tard</button>
+      <button id="t-cal">${ICON.cal}Agenda</button>
     </div>
     ${aiBar()}
     <div id="msgs"></div>
@@ -1201,6 +1207,7 @@ async function renderFree(folder, uid) {
       <button id="t-unread">${ICON.unread}Non lu</button>
       <button id="t-todo">${ICON.todo}À faire</button>
       <button id="t-snooze">${ICON.clock}Plus tard</button>
+      <button id="t-cal">${ICON.cal}Agenda</button>
     </div>
     ${aiBar()}
     <div id="msgs"><article class="msg"><div class="msg-head" style="cursor:default">
@@ -1528,7 +1535,7 @@ function buildTree(items, sep) {
 const GUIDE = [
   ['👋', 'Prise en main', `
     <p>MailBox réunit <b>Gmail</b> (pastille bleue) et <b>Free</b> (pastille rose) dans une seule appli, plus lisible que Gmail.</p>
-    <p>En bas : <b>Reçus</b>, <b>Envoyés</b>, <b>Écrire</b>, <b>Dossiers</b>, <b>Réglages</b>. Le chiffre sur Reçus et sur l'icône de l'iPhone est le nombre de mails non lus.</p>
+    <p>En bas : <b>Reçus</b>, <b>Agenda</b>, <b>Écrire</b>, <b>Contacts</b>, <b>Dossiers</b>. Les <b>Envoyés</b> sont dans Dossiers, les <b>Réglages</b> derrière la roue dentée en haut de Reçus. Le chiffre sur Reçus et sur l'icône de l'iPhone est le nombre de mails non lus.</p>
     <p>Un mail <b>non lu</b> a un cadre jaune et un rond jaune plein. Les mails sont groupés par jour (Aujourd’hui, Hier, Mardi 17 novembre…), avec l’heure à droite. Un mail <b>lu</b> est simplement en gris. L'étiquette <b>Gmail</b> ou <b>Free</b> en bas à droite indique la boîte.</p>
     <div class="tip">Les mots de passe ne sont jamais dans l'appli ni sur GitHub : Gmail passe par Google, Free par ton serveur, chiffré.</div>`],
   ['👆', 'Les gestes', `
@@ -1946,6 +1953,7 @@ function bindReadTools() {
   const ctx = readCtx(); if (!ctx) return;
   $('#t-todo').onclick = () => taskSheet({ ref: { acc: ctx.acc, url: ctx.url, subject: ctx.subject, from: ctx.from } }, ctx);
   $('#t-snooze').onclick = () => snoozeSheet(ctx);
+  const cb = $('#t-cal'); if (cb) cb.onclick = () => eventFromMail(ctx, cb);
   const sb = $('#ai-sum'); if (sb) sb.onclick = () => aiSummary(ctx, sb);
   const rb = $('#ai-rep'); if (rb) rb.onclick = () => aiReplySheet(ctx);
 }
@@ -2293,6 +2301,7 @@ async function renderLabels() {
     <div class="searchbar"><input type="search" id="fq" placeholder="Chercher un dossier" autocomplete="off" enterkeyhint="search"></div></div>
     <div id="xfer-bar" hidden></div>
     <a class="set-link" href="#/tasks"><span class="set-t">✅ Tâches</span><span class="set-s" id="tk-count">À faire et rappels</span><span class="chev-r" aria-hidden="true"></span></a>
+    <a class="set-link" href="#/list/SENT"><span class="set-t">📤 Envoyés</span><span class="set-s">Gmail + Free</span><span class="chev-r" aria-hidden="true"></span></a>
     <a class="set-link" href="#/waiting"><span class="set-t">⏳ En attente de réponse</span><span class="set-s">Suivi Gmail + Free</span><span class="chev-r" aria-hidden="true"></span></a>
     <div id="labs"><div class="loading">Chargement…</div></div>`;
   $('#btn-refresh').onclick = () => { state.folders = null; LS.del('foldersCache'); renderLabels(); };
@@ -2611,7 +2620,7 @@ function renderSettings() {
   }
   const connected = !!LS.get('token', null) || relayGmailOn();
   $('#view').innerHTML = `
-    <div class="top"><h1>Réglages</h1></div>
+    <a class="back back-sm" href="#/list/INBOX">${ICON.back}Reçus</a><div class="top"><h1>Réglages</h1></div>
     <a class="set-link" href="#/guide"><span class="set-t">📖 Guide d'utilisation</span><span class="set-s">Gestes, dossiers, IA…</span><span class="chev-r" aria-hidden="true"></span></a>
     <a class="set-link" id="s-junk" href="#/labels"><span class="set-t">Voir les mails indésirables</span><span class="set-s">${freeOn() ? 'Gmail + Free' : 'Gmail'}</span><span class="chev-r" aria-hidden="true"></span></a>
     <details class="set" data-set="blocked"><summary><span class="set-t">Voir les expéditeurs bloqués</span><span class="set-s" id="s-blk-n"></span><span class="chev" aria-hidden="true"></span></summary>
@@ -2818,6 +2827,333 @@ async function checkUpdate() {
   b.innerHTML = `<span>Nouvelle version ${esc(v.version)} disponible</span><button class="btn primary" type="button">Mettre à jour</button>`;
   b.querySelector('button').onclick = forceUpdate;
   document.body.appendChild(b);
+}
+
+/* ---------- Google Contacts et Agenda ---------- */
+async function gx(url, opt = {}) {
+  const t = await accessToken();
+  if (!t) { auth.login(); throw new Error('auth'); }
+  const r = await fetch(url, { method: opt.method || 'GET', headers: Object.assign({ Authorization: 'Bearer ' + t }, opt.body ? { 'Content-Type': 'application/json' } : {}), body: opt.body ? JSON.stringify(opt.body) : undefined });
+  if (r.status === 401) { LS.del('rtoken'); throw new Error('Session Google renouvelée, réessaie'); }
+  if (!r.ok) {
+    let j = {}; try { j = await r.json(); } catch (e) {}
+    const m = (j.error && j.error.message) || ('Erreur ' + r.status), raw = JSON.stringify(j.error || {}) + m;
+    const e = new Error(m);
+    if (/SERVICE_DISABLED|accessNotConfigured|has not been used|is disabled/i.test(raw)) e.kind = 'api';
+    else if (r.status === 403 && /scope|insufficient|PERMISSION_DENIED/i.test(raw)) e.kind = 'scope';
+    else if (r.status === 429 || /rate|quota/i.test(raw)) e.kind = 'rate';
+    throw e;
+  }
+  return r.status === 204 ? null : r.json().catch(() => null);
+}
+// Explique quoi faire quand Google refuse (autorisation à donner, API à activer)
+function googleHelp(e, what) {
+  if (!relayGmailOn()) return `<div class="empty">${esc(what)} passe par ton serveur relais relié à Gmail (Réglages).</div>`;
+  if (e.kind === 'scope') return `<div class="ai-note"><b>Autorisation Google à ajouter</b><span>Pour afficher tes ${esc(what.toLowerCase())}, Google demande une autorisation de plus (une seule fois, elle couvre Contacts et Agenda). Si Google affiche « application non vérifiée » : Paramètres avancés puis Accéder.</span><button class="btn primary" id="g-auth" style="margin-top:6px">Autoriser</button></div>`;
+  if (e.kind === 'api') {
+    const api = /people/i.test(e.message) || what === 'Contacts' ? ['People API', 'people.googleapis.com'] : ['Google Calendar API', 'calendar-json.googleapis.com'];
+    return `<div class="ai-note"><b>Service Google à activer (une fois)</b><span>Dans ton projet Google Cloud (celui de MailBox), active <b>${api[0]}</b> : ouvre le lien, vérifie que c’est bien ton projet en haut, touche <b>Activer</b>, attends une minute puis reviens ici.</span><a class="btn primary" style="margin-top:6px" href="https://console.cloud.google.com/apis/library/${api[1]}" target="_blank" rel="noopener">Ouvrir Google Cloud</a></div>`;
+  }
+  if (e.kind === 'rate') return '<div class="empty">Google demande de ralentir, réessaie dans une minute.</div>';
+  return `<div class="empty">${esc(e.message)}</div>`;
+}
+const bindHelp = () => { const b = $('#g-auth'); if (b) b.onclick = () => { location.href = relayGoogleStart(); }; };
+const AV_COLORS = ['#8fb6ff', '#f2b84b', '#9be3b4', '#c9b6ff', '#ffb3a1', '#e48ad1', '#7fd6d6', '#d9c27a'];
+const avColor = s => AV_COLORS[[...String(s)].reduce((a, c) => a + c.charCodeAt(0), 0) % AV_COLORS.length];
+const nrm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+/* Contacts : contacts Google enregistrés + correspondants trouvés dans les mails */
+async function loadContacts(force) {
+  const c = LS.get('gcontacts', null);
+  if (c && !force && Date.now() - c.at < 10 * 60000) return c.list;
+  const people = []; let page = null;
+  do {
+    const p = new URLSearchParams({ personFields: 'names,emailAddresses,phoneNumbers,organizations', pageSize: 1000, sortOrder: 'FIRST_NAME_ASCENDING' });
+    if (page) p.set('pageToken', page);
+    const r = (await gx('https://people.googleapis.com/v1/people/me/connections?' + p)) || {};
+    (r.connections || []).forEach(x => people.push({
+      rn: x.resourceName, name: ((x.names || [])[0] || {}).displayName || '', emails: (x.emailAddresses || []).map(e => (e.value || '').toLowerCase()).filter(Boolean),
+      phones: (x.phoneNumbers || []).map(e => e.value).filter(Boolean), org: ((x.organizations || [])[0] || {}).name || ''
+    }));
+    page = r.nextPageToken;
+  } while (page && people.length < 5000);
+  let top = [];
+  if (relayOn()) { try { top = (await rapi('/contacts/top?n=600')).items || []; } catch (e) {} }
+  const byMail = new Map();
+  people.forEach(p => p.emails.forEach(e => byMail.set(e, p)));
+  top.forEach(t => {
+    const p = byMail.get(t.email);
+    if (p) { p.count = (p.count || 0) + t.count; p.last = Math.max(p.last || 0, t.last || 0); }
+    else people.push({ rn: null, name: t.name || '', emails: [t.email], phones: [], org: '', count: t.count, last: t.last });
+  });
+  people.forEach(p => { if (!p.name) p.name = p.org || p.emails[0] || '(sans nom)'; p.key = p.rn || p.emails[0]; });
+  LS.set('gcontacts', { at: Date.now(), list: people });
+  return people;
+}
+const WEBMAIL_RE = /@(gmail|googlemail|yahoo|hotmail|outlook|live|msn|icloud|me|free|orange|wanadoo|sfr|neuf|laposte|bbox|aol|gmx|proton|protonmail)\./i;
+const isCompany = p => !!p.org || (p.emails.length && !WEBMAIL_RE.test(p.emails[0]) && (!/\s/.test(p.name.trim()) || /^(contact|info|infos|bonjour|hello|service|support|commercial|devis|sav|accueil|admin|compta|factur|reservation|booking|team|equipe)/i.test(p.emails[0])));
+async function renderContacts() {
+  const v = $('#view');
+  const tab = LS.get('ctab', 'all');
+  v.innerHTML = `<div class="sticky-head"><div class="top"><h1>Contacts</h1><button class="icon-btn" id="ct-new" aria-label="Nouveau contact">${ICON.plus}</button><button class="icon-btn" id="ct-ref" aria-label="Actualiser">${ICON.refresh}</button></div>
+    <div class="searchbar"><input type="search" id="ct-q" placeholder="Chercher un nom, une société, un mail" autocomplete="off" enterkeyhint="search"></div>
+    <div class="seg" id="ct-seg">${[['all', 'Tous'], ['freq', 'Fréquents'], ['fav', 'Favoris'], ['co', 'Entreprises']].map(([k, n]) => `<button data-t="${k}" class="${tab === k ? 'on' : ''}">${n}</button>`).join('')}</div></div>
+    <div id="ct-list"><div class="loading">Chargement…</div></div>`;
+  let list = [];
+  const favs = () => new Set(LS.get('favContacts', []));
+  const row = p => `<button class="ct-row" data-k="${esc(p.key)}"><span class="av" style="background:${avColor(p.name)}">${esc(initials(p.name))}</span><span class="ct-b"><b>${esc(p.name)}</b><small>${esc(p.org && p.org !== p.name ? p.org + ' · ' : '')}${esc(p.emails[0] || p.phones[0] || '')}</small></span>${p.count ? `<span class="ct-n">${p.count} mail${p.count > 1 ? 's' : ''}</span>` : ''}${favs().has(p.key) ? '<span class="star">★</span>' : ''}</button>`;
+  const draw = () => {
+    const q = nrm($('#ct-q').value.trim()), t = LS.get('ctab', 'all'), fv = favs();
+    let l = list;
+    if (q) l = l.filter(p => nrm(p.name + ' ' + p.org + ' ' + p.emails.join(' ') + ' ' + p.phones.join(' ').replace(/\s/g, '')).includes(q.replace(/^0/, '')) || nrm(p.name + ' ' + p.org + ' ' + p.emails.join(' ')).includes(q));
+    const box = $('#ct-list'); if (!box) return;
+    if (t === 'freq') l = l.filter(p => p.count >= 2).sort((a, b) => b.count - a.count).slice(0, 100);
+    else if (t === 'fav') l = l.filter(p => fv.has(p.key));
+    else if (t === 'co') l = l.filter(isCompany);
+    if (!l.length) { box.innerHTML = `<div class="empty">${t === 'fav' && !q ? 'Aucun favori. Ouvre un contact et touche ⭐ Favori.' : 'Aucun contact ne correspond.'}</div>`; return; }
+    if (t === 'freq') { box.innerHTML = '<div class="card fold">' + l.map(row).join('') + '</div>'; }
+    else {
+      l = l.slice().sort((a, b) => nrm(a.name).localeCompare(nrm(b.name), 'fr'));
+      const groups = new Map();
+      l.forEach(p => { const k = (nrm(p.name)[0] || '#').toUpperCase(); const g = /[A-Z]/.test(k) ? k : '#'; (groups.get(g) || groups.set(g, []).get(g)).push(p); });
+      const fvl = t === 'all' && !q ? l.filter(p => fv.has(p.key)) : [];
+      box.innerHTML = (fvl.length ? `<div class="day-h">Favoris</div><div class="card fold">${fvl.map(row).join('')}</div>` : '')
+        + [...groups.entries()].map(([g, ps]) => `<div class="day-h">${g}</div><div class="card fold">${ps.slice(0, 400).map(row).join('')}</div>`).join('');
+    }
+    $$('.ct-row', box).forEach(b => b.onclick = () => { const p = list.find(x => x.key === b.dataset.k); if (p) contactSheet(p, () => { list = (LS.get('gcontacts', {}).list) || list; draw(); }); });
+  };
+  $('#ct-q').oninput = draw;
+  $$('#ct-seg button').forEach(b => b.onclick = () => { LS.set('ctab', b.dataset.t); $$('#ct-seg button').forEach(x => x.classList.toggle('on', x === b)); draw(); });
+  const load = async force => {
+    try { list = await loadContacts(force); draw(); }
+    catch (e) { if (e.message === 'auth') return; const c = LS.get('gcontacts', null); if (c && c.list) { list = c.list; draw(); toast(e.message); } else { $('#ct-list').innerHTML = googleHelp(e, 'Contacts'); bindHelp(); } }
+  };
+  $('#ct-ref').onclick = () => { $('#ct-list').innerHTML = '<div class="loading">Chargement…</div>'; load(true); };
+  $('#ct-new').onclick = () => contactEdit({ rn: null, name: '', emails: [], phones: [], org: '' }, () => load(true));
+  const cached = LS.get('gcontacts', null);
+  if (cached && cached.list) { list = cached.list; draw(); }
+  load(false);
+}
+function contactSheet(p, onChange) {
+  const fv = new Set(LS.get('favContacts', []));
+  const e0 = p.emails[0], ph = p.phones[0];
+  openSheet(`<span class="grip"></span>
+    <div style="display:flex;gap:12px;align-items:center"><span class="av big" style="background:${avColor(p.name)}">${esc(initials(p.name))}</span><div style="min-width:0"><h2 style="margin:0">${esc(p.name)}</h2>${p.org && p.org !== p.name ? `<div class="fhint" style="margin:0">${esc(p.org)}</div>` : ''}</div></div>
+    <div class="ct-info">${p.emails.map(e => `<div>✉️ ${esc(e)}</div>`).join('')}${p.phones.map(t => `<div>📞 ${esc(t)}</div>`).join('')}
+    ${p.count ? `<div class="fhint" style="margin:4px 0 0">${p.count} mail${p.count > 1 ? 's' : ''} échangé${p.count > 1 ? 's' : ''}${p.last ? ' · dernier le ' + new Date(p.last).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : ''}</div>` : ''}
+    ${!p.rn ? '<div class="fhint" style="margin:4px 0 0">Correspondant trouvé dans tes mails, pas encore enregistré dans tes contacts.</div>' : ''}</div>
+    <div class="ct-acts">
+      ${e0 ? '<button class="btn" id="cs-mail">✉️ Écrire</button>' : ''}
+      ${ph ? `<a class="btn" href="tel:${esc(ph.replace(/[^\d+]/g, ''))}">📞 Appeler</a>` : ''}
+      ${e0 ? '<button class="btn" id="cs-hist">🗂 Échanges</button>' : ''}
+      <button class="btn" id="cs-rdv">📅 RDV</button>
+      <button class="btn" id="cs-edit">${p.rn ? '✏️ Modifier' : '➕ Enregistrer'}</button>
+      <button class="btn" id="cs-fav">${fv.has(p.key) ? '★ Favori' : '☆ Favori'}</button>
+    </div><button class="btn" data-close>Fermer</button>`);
+  const m = $('#cs-mail'); if (m) m.onclick = () => { closeSheet(); openComposeTo(p.name && p.name !== e0 ? `"${p.name}" <${e0}>` : e0, ''); };
+  const h = $('#cs-hist'); if (h) h.onclick = () => { closeSheet(); location.hash = '#/search/' + encodeURIComponent(p.emails.map(e => 'from:' + e + ' OR to:' + e).join(' OR ')); };
+  $('#cs-rdv').onclick = () => { closeSheet(); location.hash = '#/agenda?new=1&title=' + encodeURIComponent('RDV ' + p.name) + '&with=' + encodeURIComponent(p.name); };
+  $('#cs-edit').onclick = () => contactEdit(p, onChange);
+  $('#cs-fav').onclick = () => { const f = new Set(LS.get('favContacts', [])); f.has(p.key) ? f.delete(p.key) : f.add(p.key); LS.set('favContacts', [...f]); toast(f.has(p.key) ? 'Ajouté aux favoris' : 'Retiré des favoris'); closeSheet(); if (onChange) onChange(); };
+}
+function contactEdit(p, onChange) {
+  openSheet(`<span class="grip"></span><h2>${p.rn ? 'Modifier le contact' : 'Nouveau contact'}</h2>
+    <label class="f">Nom<input id="ce-name" autocomplete="off" value="${esc(p.rn || p.name !== p.emails[0] ? p.name : '')}"></label>
+    <label class="f">Société<input id="ce-org" autocomplete="off" value="${esc(p.org || '')}"></label>
+    <label class="f">Mail<input id="ce-mail" type="email" inputmode="email" autocomplete="off" value="${esc(p.emails[0] || '')}"></label>
+    <label class="f">Téléphone<input id="ce-tel" type="tel" inputmode="tel" autocomplete="off" value="${esc(p.phones[0] || '')}"></label>
+    <p class="fhint" style="margin:0">Enregistré dans tes contacts Google : il apparaît aussi dans Contacts sur l’iPhone si ton compte Google y est synchronisé.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="ce-ok">Enregistrer</button></div>`);
+  $('#ce-ok').onclick = async () => {
+    const name = $('#ce-name').value.trim(), org = $('#ce-org').value.trim(), mail = $('#ce-mail').value.trim().toLowerCase(), tel = $('#ce-tel').value.trim();
+    if (!name && !org && !mail) { toast('Indique au moins un nom ou un mail'); return; }
+    const sp = name.split(/\s+/);
+    const body = {
+      names: name ? [{ givenName: sp[0], familyName: sp.slice(1).join(' ') }] : [],
+      organizations: org ? [{ name: org }] : [],
+      emailAddresses: [mail].concat(p.emails.slice(1)).filter(Boolean).map(value => ({ value })),
+      phoneNumbers: [tel].concat(p.phones.slice(1)).filter(Boolean).map(value => ({ value }))
+    };
+    const b = $('#ce-ok'); b.disabled = true; b.textContent = 'Enregistrement…';
+    try {
+      if (p.rn) {
+        const cur = await gx('https://people.googleapis.com/v1/' + p.rn + '?personFields=metadata');
+        await gx('https://people.googleapis.com/v1/' + p.rn + ':updateContact?updatePersonFields=names,organizations,emailAddresses,phoneNumbers', { method: 'PATCH', body: Object.assign({ etag: cur.etag }, body) });
+      } else await gx('https://people.googleapis.com/v1/people:createContact', { method: 'POST', body });
+      LS.del('gcontacts'); closeSheet(); toast('Contact enregistré');
+      if (onChange) onChange();
+    } catch (e) { b.disabled = false; b.textContent = 'Enregistrer'; if (e.message === 'auth') return; if (e.kind) { closeSheet(); openSheet('<span class="grip"></span>' + googleHelp(e, 'Contacts') + '<button class="btn" data-close>Fermer</button>'); bindHelp(); } else toast('Échec : ' + e.message); }
+  };
+}
+
+/* Agenda : Google Agenda (calendrier principal) + tâches MailBox avec rappel */
+const dayKey = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+const startOfDay = d => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const monday = d => { const x = startOfDay(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
+const hhmm = d => d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+const EV_COLORS = { 1: '#a4bdfc', 2: '#7ae7bf', 3: '#dbadff', 4: '#ff887c', 5: '#fbd75b', 6: '#ffb878', 7: '#46d6db', 8: '#e1e1e1', 9: '#5484ed', 10: '#51b749', 11: '#dc2127' };
+function evTimes(e) {
+  if (e.start && e.start.date) { const s = new Date(e.start.date + 'T00:00'); return { s, e: new Date((e.end && e.end.date ? e.end.date : e.start.date) + 'T00:00'), allDay: true }; }
+  return { s: new Date(e.start.dateTime), e: new Date((e.end || e.start).dateTime), allDay: false };
+}
+async function renderAgenda() {
+  const v = $('#view');
+  const hq = new URLSearchParams(location.hash.split('?')[1] || '');
+  const mode = LS.get('agMode', 'week');
+  state.agDay = state.agDay || startOfDay(new Date());
+  v.innerHTML = `<div class="sticky-head"><div class="top"><h1>Agenda</h1><button class="icon-btn" id="ag-new" aria-label="Nouvel événement">${ICON.plus}</button><button class="icon-btn" id="ag-ref" aria-label="Actualiser">${ICON.refresh}</button></div>
+    <div class="seg" id="ag-seg">${[['week', 'Semaine'], ['month', 'Mois'], ['list', 'Liste']].map(([k, n]) => `<button data-m="${k}" class="${mode === k ? 'on' : ''}">${n}</button>`).join('')}</div>
+    <div id="ag-nav"></div></div><div id="ag-sug"></div><div id="ag-list"><div class="loading">Chargement…</div></div>`;
+  $$('#ag-seg button').forEach(b => b.onclick = () => { LS.set('agMode', b.dataset.m); renderAgenda(); });
+  $('#ag-new').onclick = () => eventSheet({ start: defaultStart(state.agDay) }, () => renderAgenda());
+  $('#ag-ref').onclick = () => { state.agCache = null; renderAgenda(); };
+  if (hq.get('new')) { history.replaceState(null, '', '#/agenda'); eventSheet({ title: hq.get('title') || '', note: hq.get('with') ? 'Avec ' + hq.get('with') : '', start: defaultStart(state.agDay) }, () => renderAgenda()); }
+  const d0 = state.agDay;
+  const range = mode === 'week' ? [monday(d0), addDays(monday(d0), 7)]
+    : mode === 'month' ? (() => { const f = new Date(d0.getFullYear(), d0.getMonth(), 1); const s = monday(f); return [s, addDays(s, 42)]; })()
+    : [startOfDay(new Date()), addDays(startOfDay(new Date()), 60)];
+  const ck = mode + range[0].getTime();
+  let evs = [], tasks = [];
+  try {
+    if (state.agCache && state.agCache.k === ck && Date.now() - state.agCache.at < 60000) evs = state.agCache.evs;
+    else {
+      const p = new URLSearchParams({ timeMin: range[0].toISOString(), timeMax: range[1].toISOString(), singleEvents: 'true', orderBy: 'startTime', maxResults: 250 });
+      evs = ((await gx('https://www.googleapis.com/calendar/v3/calendars/primary/events?' + p)) || {}).items || [];
+      state.agCache = { k: ck, at: Date.now(), evs };
+    }
+  } catch (e) { if (e.message === 'auth') return; $('#ag-list').innerHTML = googleHelp(e, 'Agenda'); bindHelp(); return; }
+  if (relayOn()) { try { tasks = ((await rapi('/tasks')).tasks || []).filter(t => !t.done && t.due && t.due >= range[0].getTime() && t.due < range[1].getTime()); } catch (e) {} }
+  const items = evs.filter(e => e.status !== 'cancelled').map(e => Object.assign({ kind: 'ev', ev: e }, evTimes(e)))
+    .concat(tasks.map(t => ({ kind: 'task', t, s: new Date(t.due), e: new Date(t.due), allDay: false })))
+    .sort((a, b) => (b.allDay - a.allDay) || (a.s - b.s));
+  const byDay = new Map();
+  items.forEach(it => {
+    // un événement sur plusieurs jours apparaît chaque jour
+    let d = startOfDay(it.s); const end = it.allDay ? it.e : addDays(startOfDay(it.e), 1);
+    do { (byDay.get(dayKey(d)) || byDay.set(dayKey(d), []).get(dayKey(d))).push(it); d = addDays(d, 1); } while (d < end && d < range[1]);
+  });
+  const nav = $('#ag-nav'), tk = dayKey(new Date());
+  if (mode === 'week') {
+    const m = monday(d0);
+    nav.innerHTML = `<div class="ag-head"><button class="icon-btn" id="ag-prev" aria-label="Semaine précédente">‹</button><b>${esc(m.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }))} – ${esc(addDays(m, 6).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }))}</b><button class="icon-btn" id="ag-next" aria-label="Semaine suivante">›</button></div>
+      <div class="week">${[...Array(7)].map((_, i) => { const d = addDays(m, i), k = dayKey(d); return `<button class="wd ${k === dayKey(d0) ? 'on' : ''} ${k === tk ? 'today' : ''}" data-d="${k}">${esc(d.toLocaleDateString('fr-FR', { weekday: 'short' }).replace('.', ''))}<b>${d.getDate()}</b>${byDay.has(k) ? '<i></i>' : '<i class="no"></i>'}</button>`; }).join('')}</div>`;
+    $('#ag-prev').onclick = () => { state.agDay = addDays(d0, -7); renderAgenda(); };
+    $('#ag-next').onclick = () => { state.agDay = addDays(d0, 7); renderAgenda(); };
+  } else if (mode === 'month') {
+    const f = new Date(d0.getFullYear(), d0.getMonth(), 1), s = monday(f);
+    nav.innerHTML = `<div class="ag-head"><button class="icon-btn" id="ag-prev" aria-label="Mois précédent">‹</button><b>${esc(f.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }))}</b><button class="icon-btn" id="ag-next" aria-label="Mois suivant">›</button></div>
+      <div class="month">${['L', 'M', 'M', 'J', 'V', 'S', 'D'].map(x => `<span class="mh">${x}</span>`).join('')}${[...Array(42)].map((_, i) => { const d = addDays(s, i), k = dayKey(d); return `<button class="md ${d.getMonth() !== f.getMonth() ? 'out' : ''} ${k === dayKey(d0) ? 'on' : ''} ${k === tk ? 'today' : ''}" data-d="${k}">${d.getDate()}${byDay.has(k) ? '<i></i>' : ''}</button>`; }).join('')}</div>`;
+    $('#ag-prev').onclick = () => { state.agDay = new Date(d0.getFullYear(), d0.getMonth() - 1, 1); renderAgenda(); };
+    $('#ag-next').onclick = () => { state.agDay = new Date(d0.getFullYear(), d0.getMonth() + 1, 1); renderAgenda(); };
+  } else nav.innerHTML = '';
+  $$('[data-d]', nav).forEach(b => b.onclick = () => { state.agDay = new Date(b.dataset.d + 'T00:00'); renderAgenda(); });
+  // Liste : le jour choisi puis la suite de la semaine (semaine), le jour choisi (mois), 60 jours (liste)
+  const days = mode === 'week' ? [...Array(7)].map((_, i) => addDays(monday(d0), i)).filter(d => d >= startOfDay(d0))
+    : mode === 'month' ? [startOfDay(d0)]
+    : [...Array(60)].map((_, i) => addDays(startOfDay(new Date()), i)).filter(d => byDay.has(dayKey(d)));
+  const evRow = it => {
+    if (it.kind === 'task') return `<button class="ev" style="--c:#9be3b4" data-task="${esc(it.t.id)}"><span class="t">${hhmm(it.s)}</span><span class="ev-b"><b>${esc(it.t.title)}</b><small>Tâche MailBox${it.t.ref && it.t.ref.from ? ' · mail de ' + esc(it.t.ref.from) : ''}</small></span></button>`;
+    const e = it.ev;
+    return `<button class="ev" style="--c:${EV_COLORS[e.colorId] || '#8fb6ff'}" data-ev="${esc(e.id)}"><span class="t">${it.allDay ? 'Journée' : hhmm(it.s) + '<br>' + hhmm(it.e)}</span><span class="ev-b"><b>${esc(e.summary || '(sans titre)')}</b>${e.location || e.description ? `<small>${e.location ? '📍 ' + esc(e.location) : ''}${e.location && e.description ? ' · ' : ''}${e.description ? esc(String(e.description).replace(/<[^>]+>/g, ' ').slice(0, 80)) : ''}</small>` : ''}</span></button>`;
+  };
+  const box = $('#ag-list');
+  box.innerHTML = days.map(d => { const its = byDay.get(dayKey(d)) || []; return `<div class="day-h">${esc(d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }))}${dayKey(d) === tk ? ' · aujourd’hui' : ''}</div>` + (its.length ? its.map(evRow).join('') : '<p class="fhint" style="margin:2px 6px 8px">Rien de prévu</p>'); }).join('')
+    || '<div class="empty">Rien de prévu sur les 60 prochains jours.</div>';
+  $$('[data-ev]', box).forEach(b => b.onclick = () => { const e = evs.find(x => x.id === b.dataset.ev); if (e) eventSheet(e, () => { state.agCache = null; renderAgenda(); }); });
+  $$('[data-task]', box).forEach(b => b.onclick = () => { location.hash = '#/tasks'; });
+  agendaSuggestions();
+}
+const defaultStart = d => { const x = new Date(d); const n = new Date(); if (dayKey(x) === dayKey(n)) { x.setHours(n.getHours() + 1, 0, 0, 0); } else x.setHours(9, 0, 0, 0); return x; };
+const toInputDate = d => dayKey(d), toInputTime = d => String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+// ev : événement Google existant, ou brouillon { title, start (Date), end, allDay, location, note }
+function eventSheet(ev, onDone) {
+  const isNew = !ev.id;
+  let s, e, allDay;
+  if (isNew) { s = ev.start || defaultStart(new Date()); e = ev.end || new Date(s.getTime() + 3600000); allDay = !!ev.allDay; }
+  else { const t = evTimes(ev); s = t.s; e = t.allDay ? addDays(t.e, -1) : t.e; allDay = t.allDay; }
+  openSheet(`<span class="grip"></span><h2>${isNew ? 'Nouvel événement' : 'Événement'}</h2>
+    <label class="f">Titre<input id="ev-title" autocomplete="off" value="${esc(isNew ? ev.title || '' : ev.summary || '')}" placeholder="ex. Point avec Claire"></label>
+    <label class="switch">Journée entière<input type="checkbox" id="ev-all" ${allDay ? 'checked' : ''}></label>
+    <div class="ev-grid"><label class="f">Date<input type="date" id="ev-d" value="${toInputDate(s)}"></label><label class="f ev-tm">Début<input type="time" id="ev-s" value="${toInputTime(s)}"></label><label class="f ev-tm">Fin<input type="time" id="ev-e" value="${toInputTime(e)}"></label></div>
+    <label class="f">Lieu<input id="ev-loc" autocomplete="off" value="${esc(isNew ? ev.location || '' : ev.location || '')}" placeholder="Adresse ou visio"></label>
+    <label class="f">Note<input id="ev-note" autocomplete="off" value="${esc(isNew ? ev.note || '' : String(ev.description || '').replace(/<[^>]+>/g, ' '))}"></label>
+    ${ev.mailUrl ? `<p class="fhint" style="margin:0">Lié au mail « ${esc(ev.mailSubject || '')} »</p>` : ''}
+    <div style="display:grid;grid-template-columns:${isNew ? '1fr 1fr' : '1fr 1fr 1fr'};gap:10px">${isNew ? '<button class="btn" data-close>Annuler</button>' : '<button class="btn danger" id="ev-del">Supprimer</button><button class="btn" data-close>Fermer</button>'}<button class="btn primary" id="ev-ok">Enregistrer</button></div>`);
+  const syncAll = () => $$('.ev-tm').forEach(x => { x.style.display = $('#ev-all').checked ? 'none' : ''; });
+  $('#ev-all').onchange = syncAll; syncAll();
+  $('#ev-s').onchange = () => { const [h, m] = $('#ev-s').value.split(':').map(Number); const dur = e - s; const ns = new Date(s); ns.setHours(h, m); const ne = new Date(ns.getTime() + (dur > 0 ? dur : 3600000)); $('#ev-e').value = toInputTime(ne); };
+  $('#ev-ok').onclick = async () => {
+    const title = $('#ev-title').value.trim(); if (!title) { toast('Donne un titre'); return; }
+    const d = $('#ev-d').value, all = $('#ev-all').checked;
+    let start, end;
+    if (all) { start = { date: d }; end = { date: dayKey(addDays(new Date(d + 'T00:00'), 1)) }; }
+    else {
+      const sd = new Date(d + 'T' + ($('#ev-s').value || '09:00')); let ed = new Date(d + 'T' + ($('#ev-e').value || $('#ev-s').value || '10:00'));
+      if (ed <= sd) ed = new Date(sd.getTime() + 3600000);
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      start = { dateTime: sd.toISOString(), timeZone: tz }; end = { dateTime: ed.toISOString(), timeZone: tz };
+    }
+    let note = $('#ev-note').value.trim();
+    if (ev.mailUrl) note = (note ? note + '\n' : '') + 'Mail : ' + location.origin + location.pathname + ev.mailUrl;
+    const body = { summary: title, location: $('#ev-loc').value.trim(), description: note, start, end };
+    const b = $('#ev-ok'); b.disabled = true; b.textContent = 'Enregistrement…';
+    try {
+      if (isNew) await gx('https://www.googleapis.com/calendar/v3/calendars/primary/events', { method: 'POST', body });
+      else await gx('https://www.googleapis.com/calendar/v3/calendars/primary/events/' + encodeURIComponent(ev.id), { method: 'PATCH', body });
+      state.agCache = null; closeSheet();
+      toast('Ajouté à ton agenda · ' + new Date(all ? d + 'T00:00' : start.dateTime).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }));
+      if (onDone) onDone();
+    } catch (er) { b.disabled = false; b.textContent = 'Enregistrer'; if (er.message === 'auth') return; if (er.kind) { closeSheet(); openSheet('<span class="grip"></span>' + googleHelp(er, 'Agenda') + '<button class="btn" data-close>Fermer</button>'); bindHelp(); } else toast('Échec : ' + er.message); }
+  };
+  const del = $('#ev-del'); if (del) del.onclick = async () => {
+    if (!confirm('Supprimer « ' + (ev.summary || 'cet événement') + ' » de ton agenda ?')) return;
+    try { await gx('https://www.googleapis.com/calendar/v3/calendars/primary/events/' + encodeURIComponent(ev.id), { method: 'DELETE' }); state.agCache = null; closeSheet(); toast('Événement supprimé'); if (onDone) onDone(); }
+    catch (er) { if (er.message !== 'auth') toast('Échec : ' + er.message); }
+  };
+}
+// Depuis un mail : l'IA repère le rendez-vous et pré-remplit l'événement
+async function eventFromMail(ctx, btn) {
+  const draft = { title: ctx.subject || '', mailUrl: ctx.url, mailSubject: ctx.subject, note: ctx.from ? 'Avec ' + ctx.from : '' };
+  if (settings.ai && relayOn()) {
+    const old = btn.lastChild.textContent; btn.lastChild.textContent = 'Analyse…';
+    try {
+      const r = await rapi('/ai/event', { method: 'POST', body: { subject: ctx.subject, from: ctx.from, text: ctx.text, today: today() } });
+      if (r.found && r.start) {
+        const s = new Date(r.start); if (!isNaN(s)) { draft.start = s; draft.allDay = !!r.allDay; if (r.end) { const e = new Date(r.end); if (!isNaN(e) && e > s) draft.end = e; } }
+        if (r.title) draft.title = r.title; if (r.location) draft.location = r.location; if (r.note) draft.note = r.note + (ctx.from ? ' · ' + ctx.from : '');
+      } else toast('Pas de date trouvée dans ce mail : complète l’événement');
+    } catch (e) { toast('IA indisponible : complète l’événement'); }
+    btn.lastChild.textContent = old;
+  }
+  eventSheet(draft, null);
+}
+// « Trouvé dans tes mails » : rendez-vous proposés dans les mails récents de la réception
+async function agendaSuggestions() {
+  const box = $('#ag-sug'); if (!box || !settings.ai || !relayOn()) return;
+  const scan = LS.get('evScan', {});
+  const lists = Object.entries(state.lists).filter(([k]) => /(^|\|)INBOX$/.test(k)).map(([, d]) => d.items);
+  const cached = LS.get('list:' + (freeOn() ? 'all|' : '') + 'INBOX', null);
+  const items = [].concat(...lists, cached && cached.items ? cached.items : []);
+  const seen = new Set(), RE = /\b(rdv|rendez|réunion|reunion|point |visio|déjeuner|dejeuner|dîner|diner|meeting|rencontre|disponibilit|créneau|creneau|invitation|\d{1,2} ?h ?\d{0,2})\b/i;
+  const cand = items.filter(i => i && !seen.has(i.id) && seen.add(i.id) && Date.now() - i.date < 10 * 864e5 && RE.test(i.subject + ' ' + i.snippet) && !i.mine);
+  for (const i of cand.filter(i => !(i.id in scan)).slice(0, 3)) {
+    try { const r = await rapi('/ai/event', { method: 'POST', body: { subject: i.subject, from: i.from, text: i.snippet, today: today() } }); scan[i.id] = r.found && r.start ? { r, subject: i.subject, from: i.from, url: i.acc === 'free' ? '#/free/' + encodeURIComponent(i.folder) + '/' + i.uid : '#/thread/' + encodeURIComponent(i.id) } : 0; }
+    catch (e) { break; }
+  }
+  const keys = Object.keys(scan); if (keys.length > 300) keys.slice(0, keys.length - 300).forEach(k => delete scan[k]);
+  LS.set('evScan', scan);
+  const sug = Object.entries(scan).filter(([, x]) => x && !x.done && new Date(x.r.start) > Date.now() - 3600000).slice(0, 2);
+  if (!$('#ag-sug')) return;
+  box.innerHTML = sug.map(([id, x]) => `<div class="sugg" data-s="${esc(id)}"><div class="sugg-h">✦ Trouvé dans tes mails</div><b>${esc(x.r.title || x.subject)} · ${esc(new Date(x.r.start).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }))}${x.r.allDay ? '' : ' à ' + esc(hhmm(new Date(x.r.start)))}</b><small>${esc(x.from)} · « ${esc(x.subject)} »</small><div><button class="btn primary" data-add>Ajouter à l’agenda</button><button class="btn" data-ign>Ignorer</button></div></div>`).join('');
+  $$('.sugg', box).forEach(c => {
+    const id = c.dataset.s, x = scan[id];
+    $('[data-ign]', c).onclick = () => { const sc = LS.get('evScan', {}); if (sc[id]) sc[id].done = true; LS.set('evScan', sc); c.remove(); };
+    $('[data-add]', c).onclick = () => {
+      const s = new Date(x.r.start), e = x.r.end ? new Date(x.r.end) : null;
+      eventSheet({ title: x.r.title || x.subject, start: s, end: e && e > s ? e : null, allDay: !!x.r.allDay, location: x.r.location || '', note: (x.r.note || '') + ' · ' + x.from, mailUrl: x.url, mailSubject: x.subject }, () => { const sc = LS.get('evScan', {}); if (sc[id]) sc[id].done = true; LS.set('evScan', sc); renderAgenda(); });
+    };
+  });
 }
 
 /* ---------- Démarrage ---------- */
