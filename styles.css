@@ -319,7 +319,7 @@ details.set .ftog[aria-expanded="true"] .chev{transform:rotate(45deg)}
 .trow.flash{animation:tflash 1.6s ease}
 @keyframes tflash{0%,40%{background:color-mix(in srgb,var(--accent-fill) 35%,transparent)}100%{background:transparent}}
 #subdirs .card.fold{margin-bottom:12px}#subdirs .chev-r{width:9px;height:9px;border-right:2.5px solid var(--accent);border-bottom:2.5px solid var(--accent);transform:rotate(-45deg);margin:0 10px 0 4px;flex:none}
-.xfer{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:10px}
+.xfer{display:flex;flex-direction:column;gap:10px}
 .xfer-bar{position:relative;overflow:hidden;margin:0 0 10px;padding:10px 14px;border-radius:12px;background:var(--surface);border:1px solid var(--accent-fill);display:flex;flex-direction:column;gap:3px;font-size:.82rem;color:var(--muted)}
 .xfer-bar b{color:var(--text);font-size:.9rem}
 .xfer-bar i{position:absolute;left:0;bottom:0;height:3px;background:var(--accent-fill);transition:width .5s}

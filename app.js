@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.11.0';
+const APP_VERSION = '2.11.1';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -1561,17 +1561,21 @@ function moveFolderSheet(x, all) {
   const paths = new Set();
   all.filter(y => y.acc === x.acc).forEach(y => { const ps = y.full.split(y.delim || '/'); for (let i = 1; i <= ps.length; i++) paths.add(ps.slice(0, i).join(sep)); });
   const targets = [...paths].filter(p => p !== x.full && !p.startsWith(x.full + sep) && p !== BLOCK_LABEL).sort((a, b) => a.localeCompare(b, 'fr')).map(full => ({ full }));
+  const canXfer = x.acc === 'free' && relayOn() && relayGmailOn();
   openSheet(`<span class="grip"></span><h2>Déplacer « ${esc(leaf)} »</h2>
+    ${canXfer ? `<div class="accounts" role="tablist" style="margin:0"><button class="on" data-mvt="free"><span class="acc-l"><span class="dot" style="background:var(--free)"></span>Dans Free</span></button><button data-mvt="gmail"><span class="acc-l"><span class="dot" style="background:var(--gmail)"></span>Vers Gmail</span></button></div>` : ''}
+    <div class="mv-free" style="display:flex;flex-direction:column;gap:10px">
     <p style="margin:0;color:var(--muted);font-size:.85rem"><span class="dot tdot" style="background:var(--${x.acc})"></span>Ses mails et sous-dossiers suivent. Si un dossier du même nom existe déjà à l’arrivée, les deux sont fusionnés.</p>
     <label class="f">Ranger dans<select id="mv-parent"><option value="">— Premier niveau —</option>${targets.map(y => `<option value="${esc(y.full)}" ${y.full === curParent ? 'selected' : ''}>${esc(y.full.split(sep).join(' › '))}</option>`).join('')}</select></label>
     <label class="f">Nom<input id="mv-name" value="${esc(leaf)}" autocomplete="off"></label>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="mv-ok">Déplacer</button></div>
-    ${x.acc === 'free' && relayOn() && relayGmailOn() ? `<div class="xfer"><h3 class="tidy-h"><span class="dot tdot" style="background:var(--free)"></span>→<span class="dot tdot" style="background:var(--gmail)"></span>Ou transférer vers Gmail</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="mv-ok">Déplacer</button></div></div>
+    ${canXfer ? `<div class="xfer" hidden>
       <p style="margin:0;color:var(--muted);font-size:.8rem;line-height:1.45">Les mails de ce dossier${all.some(y => y.acc === 'free' && y.full.startsWith(x.full + sep)) ? ' et de ses sous-dossiers' : ''} sont copiés dans Gmail, avec leurs dates, pièces jointes et état lu/non lu. Ça se fait sur ton serveur : tu peux fermer l'appli.</p>
       <label class="f">Dossier Gmail d'arrivée<select id="xf-parent"><option value="">— Premier niveau —</option>${[...new Set(all.filter(y => y.acc === 'gmail').flatMap(y => { const ps = y.full.split('/'); return ps.map((_, i) => ps.slice(0, i + 1).join('/')); }))].filter(p => p !== BLOCK_LABEL).sort((a, c) => a.localeCompare(c, 'fr')).map(p => `<option value="${esc(p)}" ${p.toLowerCase() === curParent.split(sep).join('/').toLowerCase() ? 'selected' : ''}>${esc(p.split('/').join(' › '))}</option>`).join('')}</select></label>
       <label class="f">Nom dans Gmail<input id="xf-name" value="${esc(leaf)}" autocomplete="off"></label>
       <label class="switch">Ensuite, mettre les mails Free à la corbeille et supprimer le dossier Free<input type="checkbox" id="xf-del" checked></label>
-      <button class="btn primary" id="xf-ok">Transférer vers Gmail</button></div>` : ''}`);
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="xf-ok">Transférer</button></div></div>` : ''}`);
+  $$('[data-mvt]').forEach(b => b.onclick = () => { const gm = b.dataset.mvt === 'gmail'; $$('[data-mvt]').forEach(y => y.classList.toggle('on', y === b)); $('.mv-free').style.display = gm ? 'none' : 'flex'; $('.xfer').hidden = !gm; });
   const xf = $('#xf-ok'); if (xf) xf.onclick = async () => {
     const name = $('#xf-name').value.trim().replace(/[\/]/g, '-'); if (!name) { toast('Donne un nom'); return; }
     const parent = $('#xf-parent').value, label = parent ? parent + '/' + name : name;
