@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '4.6.0';
+const APP_VERSION = '4.6.1';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -3177,10 +3177,10 @@ async function renderAgenda() {
     : mode === 'month' ? [startOfDay(d0)]
     : [...Array(60)].map((_, i) => addDays(startOfDay(new Date()), i)).filter(d => byDay.has(dayKey(d)));
   const evRow = it => {
-    if (it.kind === 'tt') { const x = it.x; return `<button class="ev" style="--c:${esc(x.color || '#4caf8f')}" data-tt="${esc(x.id)}"><span class="t">${it.allDay ? 'Journée' : hhmm(it.s) + (it.e > it.s ? '<br>' + hhmm(it.e) : '')}</span><span class="ev-b"><b>${esc(x.title)}</b><small><span class="tt-tag">TimeTree</span> ${esc(x.cal)}${x.location ? ' · ' + locChip(x.location) : ''}</small></span></button>`; }
+    if (it.kind === 'tt') { const x = it.x; return `<button class="ev" style="--c:${esc(x.color || '#4caf8f')}" data-tt="${esc(x.id)}"><span class="t">${it.allDay ? 'Journée' : hhmm(it.s) + (it.e > it.s ? '<br>' + hhmm(it.e) : '')}</span><span class="ev-b"><b>${esc(x.title)}</b><small><span class="tt-tag">TimeTree</span> ${esc(x.cal)}${x.location || mapLinkIn(x.note) ? ' · ' + locChip(x.location || mapLinkIn(x.note)) : ''}</small></span></button>`; }
     if (it.kind === 'task') return `<button class="ev" style="--c:#9be3b4" data-task="${esc(it.t.id)}"><span class="t">${hhmm(it.s)}</span><span class="ev-b"><b>${esc(it.t.title)}</b><small>Tâche MailBox${it.t.ref && it.t.ref.from ? ' · mail de ' + esc(it.t.ref.from) : ''}</small></span></button>`;
     const e = it.ev;
-    return `<button class="ev" style="--c:${EV_COLORS[e.colorId] || '#8fb6ff'}" data-ev="${esc(e.id)}"><span class="t">${it.allDay ? 'Journée' : hhmm(it.s) + '<br>' + hhmm(it.e)}</span><span class="ev-b"><b>${esc(e.summary || '(sans titre)')}</b>${e.location || e.description ? `<small>${e.location ? locChip(e.location) : ''}${e.location && e.description ? ' · ' : ''}${e.description ? esc(String(e.description).replace(/<[^>]+>/g, ' ').slice(0, 80)) : ''}</small>` : ''}</span></button>`;
+    return `<button class="ev" style="--c:${EV_COLORS[e.colorId] || '#8fb6ff'}" data-ev="${esc(e.id)}"><span class="t">${it.allDay ? 'Journée' : hhmm(it.s) + '<br>' + hhmm(it.e)}</span><span class="ev-b"><b>${esc(e.summary || '(sans titre)')}</b>${e.location || e.description ? `<small>${e.location ? locChip(e.location) : ''}${e.location && e.description ? ' · ' : ''}${!e.location && mapLinkIn(e.description) ? locChip(mapLinkIn(e.description)) + ' · ' : ''}${e.description ? esc(String(e.description).replace(/<[^>]+>/g, ' ').replace(/https?:\/\/\S+/g, '').slice(0, 80)) : ''}</small>` : ''}</span></button>`;
   };
   const box = $('#ag-list');
   box.innerHTML = days.map(d => { const its = byDay.get(dayKey(d)) || []; return `<div class="day-h">${esc(d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }))}${dayKey(d) === tk ? ' · aujourd’hui' : ''}</div>` + (its.length ? its.map(evRow).join('') : '<p class="fhint" style="margin:2px 6px 8px">Rien de prévu</p>'); }).join('')
@@ -3191,8 +3191,8 @@ async function renderAgenda() {
   $$('[data-tt]', box).forEach(b => b.onclick = () => {
     const it = items.find(i => i.kind === 'tt' && i.x.id === b.dataset.tt); if (!it) return; const x = it.x;
     openSheet(`<span class="grip"></span><h2>${esc(x.title)}</h2><p class="fhint" style="margin:0"><span class="tt-tag">TimeTree</span> ${esc(x.cal)}</p>
-      <div class="ct-info"><div>📅 ${esc(it.s.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }))}${it.allDay ? ' · journée entière' : ' · ' + hhmm(it.s) + (it.e > it.s ? ' – ' + hhmm(it.e) : '')}</div>${x.location ? `<div>${locChip(x.location)}</div>` : ''}${x.note ? `<div>📝 ${esc(x.note)}</div>` : ''}</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn primary" id="tt-edit">✏️ Modifier</button><button class="btn" id="tt-copy">Copier dans Google</button></div>
+      <div class="ct-info"><div>📅 ${esc(it.s.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }))}${it.allDay ? ' · journée entière' : ' · ' + hhmm(it.s) + (it.e > it.s ? ' – ' + hhmm(it.e) : '')}</div>${x.location ? `<div>${locChip(x.location)}</div>` : ''}${x.note ? `<div>📝 ${noteLinks(x.note)}</div>` : ''}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn primary" id="tt-edit">✏️ Modifier</button><button class="btn" id="tt-copy">Copier vers Google</button></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn danger" id="tt-del">🗑 Supprimer</button><button class="btn" data-close>Fermer</button></div>`);
     $('#tt-del').onclick = async () => {
       if (!confirm('Supprimer « ' + x.title + ' » de TimeTree (' + x.cal + ') ?' + (x.recurring ? '\n\nC’est un événement qui se répète : TOUTES les occurrences seront supprimées.' : '') + '\n\nIl disparaîtra aussi pour les autres membres du calendrier.')) return;
@@ -3317,6 +3317,11 @@ function bindAgendaSwipe(box, evs, items) {
 const isMapUrl = l => /^https?:\/\/\S+$/i.test(String(l || '').trim());
 const mapUrl = l => isMapUrl(l) ? String(l).trim() : 'https://maps.apple.com/?q=' + encodeURIComponent(l);
 const locChip = l => `<span class="loc-chip" data-map="${esc(l)}">📍 ${isMapUrl(l) ? 'Itinéraire' : esc(l)}</span>`;
+// lien Maps glissé dans une note : on le retrouve pour en faire un bouton « Itinéraire »
+const MAP_HOST_RE = /^https?:\/\/(maps\.app\.goo\.gl|goo\.gl\/maps|(www\.)?google\.[a-z.]+\/maps|maps\.google\.[a-z.]+|maps\.apple\.com|(www\.)?waze\.com)/i;
+const mapLinkIn = t => (String(t || '').match(/https?:\/\/[^\s<>"']+/gi) || []).find(u => MAP_HOST_RE.test(u)) || '';
+// texte de note avec liens cliquables (les liens Maps ouvrent Plans / Google Maps)
+const noteLinks = t => esc(t).replace(/https?:\/\/[^\s<>"']+/gi, u => { const raw = u.replace(/&amp;/g, '&'); return MAP_HOST_RE.test(raw) ? `<span class="loc-chip" data-map="${u}">📍 Itinéraire</span>` : `<a href="${u}" target="_blank" rel="noopener" class="linkish">${u.length > 40 ? u.slice(0, 38) + '…' : u}</a>`; });
 document.addEventListener('click', e => { const m = e.target.closest && e.target.closest('[data-map]'); if (!m) return; e.preventDefault(); e.stopPropagation(); openMap(m.dataset.map); }, true);
 function openMap(l) { const a = document.createElement('a'); a.href = mapUrl(l); a.target = '_blank'; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove(); }
 const defaultStart = d => { const x = new Date(d); const n = new Date(); if (dayKey(x) === dayKey(n)) { x.setHours(n.getHours() + 1, 0, 0, 0); } else x.setHours(9, 0, 0, 0); return x; };
