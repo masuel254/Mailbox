@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '4.2.1';
+const APP_VERSION = '4.2.2';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -3150,7 +3150,8 @@ async function renderAgenda() {
 }
 /* Glisser un événement vers la gauche : bouton Supprimer (Google Agenda ou TimeTree) */
 function bindAgendaSwipe(box, evs, items) {
-  let sx = 0, sy = 0, cur = null, lock = null, dx = 0, open = null;
+  let sx = 0, sy = 0, cur = null, lock = null, dx = 0, open = null, bgNow = null;
+  const mkBg = el => { const bg = document.createElement('button'); bg.type = 'button'; bg.className = 'ev-del'; bg.innerHTML = ICON.trash + '<small>Supprimer</small>'; bg.style.top = el.offsetTop + 'px'; bg.style.height = el.offsetHeight + 'px'; el.parentNode.insertBefore(bg, el); return bg; };
   const close = () => { if (!open) return; const o = open; open = null; o.el.style.transition = 'transform .2s'; o.el.style.transform = ''; setTimeout(() => { o.el.style.transition = ''; o.bg.remove(); }, 220); };
   const del = async (el) => {
     let ok = false;
@@ -3179,22 +3180,25 @@ function bindAgendaSwipe(box, evs, items) {
     if (lock !== 'h') return;
     e.preventDefault();
     dx = Math.min(0, Math.max(-box.clientWidth, mx));
+    // le bouton rouge apparaît dès que l'on glisse, et s'élargit au-delà du seuil de suppression directe
+    if (!bgNow) bgNow = mkBg(cur);
+    bgNow.style.width = Math.max(92, -dx) + 'px';
+    bgNow.classList.toggle('full', dx < -box.clientWidth * 0.6);
     cur.style.transform = 'translateX(' + dx + 'px)';
   }, { passive: false });
   box.addEventListener('touchend', () => {
     if (!cur || lock !== 'h') { cur = null; return; }
     const el = cur; cur = null; box.dataset.skip = '1';
+    const bg = bgNow || mkBg(el); bgNow = null;
     if (dx < -box.clientWidth * 0.6) { el.style.transition = 'transform .2s'; el.style.transform = 'translateX(-100%)'; del(el); return; }
     if (dx < -50) {
-      const bg = document.createElement('button'); bg.type = 'button'; bg.className = 'ev-del'; bg.innerHTML = ICON.trash + '<small>Supprimer</small>';
-      bg.style.top = el.offsetTop + 'px'; bg.style.height = el.offsetHeight + 'px';
-      el.parentNode.insertBefore(bg, el);
+      bg.style.transition = 'width .2s'; bg.style.width = '92px';
       el.style.transition = 'transform .2s'; el.style.transform = 'translateX(-92px)'; setTimeout(() => { el.style.transition = ''; }, 220);
       bg.onclick = ev => { ev.stopPropagation(); bg.disabled = true; del(el); };
       open = { el, bg };
       return;
     }
-    el.style.transition = 'transform .2s'; el.style.transform = ''; setTimeout(() => { el.style.transition = ''; }, 220);
+    el.style.transition = 'transform .2s'; el.style.transform = ''; setTimeout(() => { el.style.transition = ''; bg.remove(); }, 220);
   });
   // un glissement ne doit pas ouvrir la fiche de l'événement
   box.addEventListener('click', e => { if (box.dataset.skip) { delete box.dataset.skip; if (!e.target.closest('.ev-del')) { e.stopPropagation(); e.preventDefault(); } } }, true);
