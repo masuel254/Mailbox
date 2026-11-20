@@ -536,6 +536,7 @@ async function pollGmail() {
       const m = await gapi('messages/' + id + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject');
       const h = n => ((m.payload.headers || []).find(x => x.name.toLowerCase() === n.toLowerCase()) || {}).value || '';
       const fm = h('From').match(/^\s*"?([^"<]*?)"?\s*<([^>]+)>/);
+      if (S.contacts && S.contacts.list) addContact(h('From'), Date.now());
       out.push({ acc: 'gmail', from: fm ? (fm[1] || fm[2]) : h('From'), subject: h('Subject') || '(sans objet)', url: C.appUrl + '#/thread/' + m.threadId });
     } catch (e) {}
   }
@@ -597,6 +598,73 @@ function scheduleBadgeSync() {
   }, wait);
 }
 function poll() { if (!pollP) pollP = pollOnce().finally(() => { pollP = null; }); return pollP; }
+/* ---------- Carnet des correspondants (pour « tous les échanges avec … ») ---------- */
+const norm = t => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+function addContact(raw, ts) {
+  const m = String(raw || '').match(/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/) || [null, '', raw];
+  const email = String(m[2] || '').trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return;
+  const me = [S.gmail && S.gmail.email, S.free && S.free.user].filter(Boolean).map(x => x.toLowerCase());
+  if (me.includes(email) || /no-?reply|ne-?pas-?repondre|mailer-daemon|notification/i.test(email)) return;
+  const c = S.contacts.list[email] || (S.contacts.list[email] = { n: '', c: 0, t: 0 });
+  if (m[1] && m[1].trim() && !c.n) c.n = m[1].trim().slice(0, 80);
+  c.c++; c.t = Math.max(c.t, ts || 0);
+}
+let contactsBusy = false;
+async function buildContacts() {
+  if (contactsBusy) return; contactsBusy = true;
+  S.contacts = { list: {}, at: 0 };
+  try {
+    if (S.gmail) {
+      for (const [q, hs] of [['in:sent', ['To', 'Cc']], ['-in:sent -category:promotions -category:social', ['From']]]) {
+        let ids = [], page = null;
+        do { const r = (await gapi('messages?' + new URLSearchParams(Object.assign({ q, maxResults: 500 }, page ? { pageToken: page } : {})))) || {}; ids.push(...(r.messages || []).map(m => m.id)); page = r.nextPageToken; } while (page && ids.length < 1500);
+        for (let i = 0; i < ids.length; i += 10) {
+          await Promise.all(ids.slice(i, i + 10).map(id => gapi('messages/' + id + '?format=metadata' + hs.map(h => '&metadataHeaders=' + h).join('')).then(m => {
+            (m.payload.headers || []).forEach(h => String(h.value).split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).forEach(a => addContact(a, +m.internalDate)));
+          }).catch(() => {})));
+        }
+      }
+    }
+    if (S.free) await withImap(async client => {
+      const f = await folders(client);
+      for (const folder of (f.all || []).filter(x => !(x.flags && x.flags.has('\\Noselect')) && ![f.trash, f.junk, BLOCK_LABEL].includes(x.path)).map(x => x.path).slice(0, 40)) {
+        let lock; try { lock = await client.getMailboxLock(folder); } catch (e) { continue; }
+        try {
+          const n = client.mailbox.exists || 0; if (!n) continue;
+          for await (const m of client.fetch(Math.max(1, n - 1500) + ':*', { envelope: true, internalDate: true })) {
+            const e = m.envelope || {}, ts = +new Date(m.internalDate || e.date);
+            (folder === f.sent ? (e.to || []).concat(e.cc || []) : (e.from || [])).forEach(a => addContact((a.name ? '"' + a.name + '" ' : '') + '<' + a.address + '>', ts));
+          }
+        } finally { lock.release(); }
+      }
+    });
+    S.contacts.at = Date.now(); save();
+    log('carnet des correspondants : ' + Object.keys(S.contacts.list).length + ' adresses');
+  } catch (e) { log('carnet', e.message); }
+  finally { contactsBusy = false; }
+}
+function findContacts(q) {
+  const STOP = new Set(['les', 'des', 'du', 'de', 'la', 'le', 'un', 'une', 'avec', 'mes', 'nos', 'mon', 'ma', 'tous', 'toutes', 'echanges', 'echange', 'mails', 'mail', 'retrouve', 'retrouver', 'moi', 'et', 'en', 'au', 'aux', 'pour', 'chez', 'entre', 'societe', 'entreprise', 'monsieur', 'madame']);
+  const words = norm(q).replace(/[^a-z0-9@.\- ]/g, ' ').split(/\s+/).filter(Boolean);
+  const out = [];
+  for (const [email, c] of Object.entries((S.contacts && S.contacts.list) || {})) {
+    const hay = norm(email + ' ' + c.n).replace(/[^a-z0-9]/g, '');
+    const toks = norm(email + ' ' + c.n).split(/[^a-z0-9]+/);
+    let best = 0;
+    // fenêtres de 1 à 4 mots consécutifs collés : « aciers du littoral » → « aciersdulittoral »
+    for (let i = 0; i < words.length; i++) for (let k = 1; k <= 4 && i + k <= words.length; k++) {
+      const win = words.slice(i, i + k);
+      if (k === 1 && STOP.has(win[0])) continue;
+      const glued = win.join('').replace(/[^a-z0-9]/g, ''), core = win.filter(w => !STOP.has(w)).join('').replace(/[^a-z0-9]/g, '');
+      for (const g of [glued, core]) if (g.length >= 5 && hay.includes(g)) best = Math.max(best, g.length);
+      if (k === 1 && win[0].length >= 3 && toks.includes(win[0])) best = Math.max(best, win[0].length + 3);
+    }
+    if (best) out.push({ email, name: c.n, count: c.c, last: c.t, score: best });
+  }
+  return out.sort((a, b) => (b.score - a.score) || (b.count - a.count)).slice(0, 8);
+}
+
 /* ---------- Tâches (rappels) et mails mis de côté ---------- */
 const SNOOZE = 'Mis de côté';
 async function gLabelId(name) {
@@ -713,7 +781,7 @@ const routes = {
       if (e.authenticationFailed || /auth/i.test(e.responseText || '')) throw Object.assign(new Error('Connexion Free refusée : vérifie l’adresse et le mot de passe'), { code: 401 });
       throw Object.assign(new Error('Serveur Free injoignable : ' + (e.code || e.message)), { code: 502 });
     }
-    S.free = { user, pass: enc(b.password), name: (b.name || '').trim() }; S.seen.freeInit = false; S.seen.sweepSig = ''; save();
+    S.free = { user, pass: enc(b.password), name: (b.name || '').trim() }; S.seen.freeInit = false; S.seen.sweepSig = ''; save(); setTimeout(buildContacts, 3000);
     poll().catch(() => {}); startIdle().catch(() => {});
     return { ok: true, email: user };
   },
@@ -799,6 +867,11 @@ const routes = {
     return { ok: true };
   },
   'GET /transfer/status': async () => { const t = S.transfer; return t ? { path: t.path, label: t.label, total: t.total, done: t.done, failed: t.failed, state: t.state, error: t.error || '', deleteSource: t.deleteSource } : { state: 'none' }; },
+  'GET /contacts': async q => {
+    if (!S.contacts || !S.contacts.at) { buildContacts(); return { building: true, items: [] }; }
+    if (Date.now() - S.contacts.at > 7 * 864e5) buildContacts();
+    return { items: findContacts(String(q.get('q') || '').slice(0, 200)) };
+  },
   'GET /tasks': async () => ({ tasks: S.tasks || [] }),
   'POST /tasks': async (q, b) => {
     S.tasks = S.tasks || [];
@@ -915,6 +988,7 @@ server.listen(C.port, () => {
   setTimeout(() => poll().catch(() => {}), 3000);
   setInterval(() => poll().catch(() => {}), C.pollMs);
   setTimeout(() => startIdle().catch(() => {}), 5000);
+  setTimeout(() => { if (!S.contacts || !S.contacts.at || Date.now() - S.contacts.at > 7 * 864e5) buildContacts(); }, 20000);
   // reprise d'un transfert interrompu par un redémarrage
   if (S.transfer && S.transfer.state === 'running') { S.transfer.total = S.transfer.deleteSource ? S.transfer.done : 0; setTimeout(() => runTransfer(S.transfer), 8000); }
 });

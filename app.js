@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.3.1';
+const APP_VERSION = '3.4.0';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -364,6 +364,22 @@ async function renderList(key, q) {
     e.preventDefault(); const val = $('#q').value.trim(); $('#q').blur(); if (!val) return;
 
     const words = val.split(/\s+/).length;
+    // « échanges avec X » : on cherche d'abord X dans le carnet des correspondants
+    if (relayOn() && !/\w:\S/.test(val) && (words >= 3 || /\b(avec|échanges?|mails? de)\b/i.test(val))) {
+      try {
+        const r = await rapi('/contacts?' + new URLSearchParams({ q: val }));
+        const it = r.items || [];
+        if (it.length && (/\b(avec|échanges?|correspondance|mails? de|de la part)\b/i.test(val) || it[0].score >= 8)) {
+          const go = c => { state.aiNote = null; location.hash = '#/search/' + encodeURIComponent('from:' + c.email + ' OR to:' + c.email); };
+          const top = it.filter(c => c.score === it[0].score);
+          if (top.length === 1) { go(top[0]); return; }
+          openSheet(`<span class="grip"></span><h2>De qui parles-tu ?</h2>${top.slice(0, 6).map((c, i) => `<button class="frow" style="width:100%;background:none;border:none;border-bottom:1px solid var(--line);text-align:left" data-c="${i}"><span class="nm"><b>${esc(c.name || c.email)}</b><br><small style="color:var(--muted)">${esc(c.email)} · ${c.count} mail${c.count > 1 ? 's' : ''}</small></span></button>`).join('')}<button class="btn" data-close>Aucun, chercher autrement</button>`);
+          $$('[data-c]').forEach(b => b.onclick = () => { closeSheet(); go(top[+b.dataset.c]); });
+          return;
+        }
+        if (r.building) toast('Je prépare le carnet de tes correspondants (quelques minutes). Recherche par le sens en attendant.');
+      } catch (er) {}
+    }
     const natural = settings.ai && relayOn() && !/\w:\S/.test(val) && words >= 3;
     if (natural && words >= 5) { state.aiNote = { ask: val }; location.hash = '#/smart/' + encodeURIComponent(val); return; }
     if (natural) {
@@ -1431,6 +1447,7 @@ const GUIDE = [
     <p><b>Annuler l’envoi</b> : après Envoyer, tu as 6 secondes pour toucher Annuler ; le message reste à l’écran.</p>`],
   ['✦', 'Assistant IA', `
     <p><b>Résumer</b> (en haut d’un mail) : résumé, points clés, suivi de l’échange (qui a dit quoi, quand), engagements et échéances. Chaque échéance a un bouton <b>+ Tâche</b>.</p>
+    <p>Tu peux aussi écrire dans la loupe « tous les échanges avec les Aciers du Littoral » : l’appli retrouve l’adresse dans le carnet de tes correspondants (construit sur ton serveur à partir de tes mails) et ouvre directement vos échanges.</p>
     <p><b>👤 Tous les échanges avec…</b> (sous le titre d’un mail) : toute ta correspondance avec cette personne, dans les deux sens, Gmail et Free. <b>Retracer l’historique</b> y fait relire les échanges par l’IA : résumé, chronologie, engagements en cours et échéances (avec + Tâche).</p>
     <p><b>Réponse IA</b> : 3 propositions (accepter, décliner, demander une précision) ou selon ta consigne (« accepter jeudi, proposer 10 h »). <b>Utiliser et modifier</b> ouvre la réponse pré-remplie.</p>
     <p><b>Classer</b> : une suggestion 💡 apparaît en haut (là où sont déjà les mails de cet expéditeur, sinon « Suggérer un dossier »). La case <b>Toujours ranger…</b> crée une règle automatique pour les prochains mails.</p>
