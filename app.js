@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.4.0';
+const APP_VERSION = '3.4.1';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -268,6 +268,8 @@ function route() {
   const h = location.hash || '#/list/INBOX';
   const parts = h.slice(2).split('?')[0].split('/');
   const view = parts[0];
+  state.prevHash = state.curHash; state.curHash = h;
+  if (['list', 'search', 'smart', 'waiting', 'tasks'].includes(view)) { state.lastList = h; try { sessionStorage.setItem('mb-last', h); } catch (e) {} }
   closeSheet();
   exitSelect(true);
   document.body.classList.toggle('no-tabbar', view === 'thread' || view === 'compose' || view === 'free');
@@ -360,35 +362,7 @@ async function renderList(key, q) {
     if (kids.length) $('#subdirs').innerHTML = `<h2 class="sec">Sous-dossiers · ${kids.length}</h2><div class="card fold">${kids.sort((a, c) => a.full.localeCompare(c.full, 'fr')).map(x => `<a class="frow" href="${x.href}">${FOLD_ICON}<span class="nm">${esc(x.full.split(x.delim || '/').pop())}</span>${x.n ? `<span class="fnb">${x.n}</span>` : ''}<span class="chev-r" aria-hidden="true"></span></a>`).join('')}</div>`;
   }
   $('#btn-search').onclick = () => { const s = $('#searchbar'); s.hidden = !s.hidden; if (!s.hidden) $('#q').focus(); };
-  $('#searchbar').onsubmit = async e => {
-    e.preventDefault(); const val = $('#q').value.trim(); $('#q').blur(); if (!val) return;
-
-    const words = val.split(/\s+/).length;
-    // « échanges avec X » : on cherche d'abord X dans le carnet des correspondants
-    if (relayOn() && !/\w:\S/.test(val) && (words >= 3 || /\b(avec|échanges?|mails? de)\b/i.test(val))) {
-      try {
-        const r = await rapi('/contacts?' + new URLSearchParams({ q: val }));
-        const it = r.items || [];
-        if (it.length && (/\b(avec|échanges?|correspondance|mails? de|de la part)\b/i.test(val) || it[0].score >= 8)) {
-          const go = c => { state.aiNote = null; location.hash = '#/search/' + encodeURIComponent('from:' + c.email + ' OR to:' + c.email); };
-          const top = it.filter(c => c.score === it[0].score);
-          if (top.length === 1) { go(top[0]); return; }
-          openSheet(`<span class="grip"></span><h2>De qui parles-tu ?</h2>${top.slice(0, 6).map((c, i) => `<button class="frow" style="width:100%;background:none;border:none;border-bottom:1px solid var(--line);text-align:left" data-c="${i}"><span class="nm"><b>${esc(c.name || c.email)}</b><br><small style="color:var(--muted)">${esc(c.email)} · ${c.count} mail${c.count > 1 ? 's' : ''}</small></span></button>`).join('')}<button class="btn" data-close>Aucun, chercher autrement</button>`);
-          $$('[data-c]').forEach(b => b.onclick = () => { closeSheet(); go(top[+b.dataset.c]); });
-          return;
-        }
-        if (r.building) toast('Je prépare le carnet de tes correspondants (quelques minutes). Recherche par le sens en attendant.');
-      } catch (er) {}
-    }
-    const natural = settings.ai && relayOn() && !/\w:\S/.test(val) && words >= 3;
-    if (natural && words >= 5) { state.aiNote = { ask: val }; location.hash = '#/smart/' + encodeURIComponent(val); return; }
-    if (natural) {
-      toast('L’assistant cherche…');
-      try { const r = await rapi('/ai/search', { method: 'POST', body: { q: val, today: new Date().toISOString().slice(0, 10) } }); state.aiNote = { ask: val, q: r.q, resume: r.resume }; location.hash = '#/search/' + encodeURIComponent(r.q); return; }
-      catch (er) { toast('Assistant : ' + er.message + ' · recherche simple'); }
-    }
-    state.aiNote = null; location.hash = '#/search/' + encodeURIComponent(val);
-  };
+  $('#searchbar').onsubmit = e => { e.preventDefault(); const val = $('#q').value.trim(); $('#q').blur(); if (val) runSearch(val); };
   $('#btn-refresh').onclick = () => loadList(key, q, cacheKey, plain, true);
   const hg = $('#hist-go'); if (hg) hg.onclick = () => contactHistory(contactQ, cacheKey, hg);
   $('#btn-select').onclick = () => state.sel ? exitSelect() : enterSelect();
@@ -1141,8 +1115,10 @@ async function threadAction(id, body, msg, leave) {
   } catch (e) { if (e.message !== 'auth') toast(e.message); }
 }
 function goBack() {
-  if (history.length > 1 && state.cameFromApp) history.back();
-  else location.hash = '#/list/INBOX';
+  // Retour à la liste d'où vient le mail (réception, dossier, résultats de recherche)
+  const last = state.lastList || sessionStorage.getItem('mb-last') || '#/list/INBOX';
+  if (history.length > 1 && state.cameFromApp && state.prevHash === last) history.back();
+  else location.hash = last;
 }
 window.addEventListener('hashchange', () => { state.cameFromApp = true; });
 
@@ -1915,20 +1891,51 @@ function snoozeSheet(ctx) {
   $$('[data-q]').forEach(b => b.onclick = () => go(q[+b.dataset.q][1].getTime()));
   $('#sn-ok').onclick = () => go(new Date($('#sn-at').value).getTime());
 }
+/* ---------- Recherche : un seul point d'entrée (loupe de la liste et champ de la recherche par le sens) ---------- */
+async function runSearch(val) {
+
+  const words = val.split(/\s+/).length;
+  // « échanges avec X » : on cherche d'abord X dans le carnet des correspondants
+  if (relayOn() && !/\w:\S/.test(val) && (words >= 3 || /\b(avec|échanges?|mails? de)\b/i.test(val))) {
+    try {
+      const r = await rapi('/contacts?' + new URLSearchParams({ q: val }));
+      const it = r.items || [];
+      if (it.length && (/\b(avec|échanges?|correspondance|mails? de|de la part)\b/i.test(val) || it[0].score >= 8)) {
+        const go = c => { state.aiNote = null; location.hash = '#/search/' + encodeURIComponent('from:' + c.email + ' OR to:' + c.email); };
+        const top = it.filter(c => c.score === it[0].score);
+        if (top.length === 1) { go(top[0]); return; }
+        openSheet(`<span class="grip"></span><h2>De qui parles-tu ?</h2>${top.slice(0, 6).map((c, i) => `<button class="frow" style="width:100%;background:none;border:none;border-bottom:1px solid var(--line);text-align:left" data-c="${i}"><span class="nm"><b>${esc(c.name || c.email)}</b><br><small style="color:var(--muted)">${esc(c.email)} · ${c.count} mail${c.count > 1 ? 's' : ''}</small></span></button>`).join('')}<button class="btn" data-close>Aucun, chercher autrement</button>`);
+        $$('[data-c]').forEach(b => b.onclick = () => { closeSheet(); go(top[+b.dataset.c]); });
+        return;
+      }
+      if (r.building) toast('Je prépare le carnet de tes correspondants (quelques minutes). Recherche par le sens en attendant.');
+    } catch (er) {}
+  }
+  const natural = settings.ai && relayOn() && !/\w:\S/.test(val) && words >= 3;
+  if (natural && words >= 5) { state.aiNote = { ask: val }; location.hash = '#/smart/' + encodeURIComponent(val); return; }
+  if (natural) {
+    toast('L’assistant cherche…');
+    try { const r = await rapi('/ai/search', { method: 'POST', body: { q: val, today: new Date().toISOString().slice(0, 10) } }); state.aiNote = { ask: val, q: r.q, resume: r.resume }; location.hash = '#/search/' + encodeURIComponent(r.q); return; }
+    catch (er) { toast('Assistant : ' + er.message + ' · recherche simple'); }
+  }
+  state.aiNote = null; location.hash = '#/search/' + encodeURIComponent(val);
+}
 /* ---------- Recherche par le sens : plusieurs pistes, puis l'IA trie les candidats ---------- */
-const smartCache = {};
+const smartCache = (() => { try { return JSON.parse(sessionStorage.getItem('mb-smart') || '{}'); } catch (e) { return {}; } })();
+const keepSmart = () => { try { const k = Object.keys(smartCache).sort((a, b) => smartCache[b].at - smartCache[a].at).slice(0, 5); sessionStorage.setItem('mb-smart', JSON.stringify(Object.fromEntries(k.map(x => [x, smartCache[x]])))); } catch (e) {} };
 async function renderSmart(question) {
   const v = $('#view');
   v.innerHTML = `<div class="sticky-head"><a class="back back-sm" href="#/list/INBOX">${ICON.back}Réception</a><div class="top"><h1>Recherche</h1></div>
     <form class="searchbar" id="sm-form"><input type="search" id="sm-q" value="${esc(question)}" enterkeyhint="search" autocomplete="off"></form></div>
     <div class="ai-note"><b>✦ Recherche par le sens</b><span id="sm-step">L’assistant explore plusieurs pistes…</span></div><div id="list"><div class="loading">Recherche…</div></div>`;
-  $('#sm-form').onsubmit = e => { e.preventDefault(); const v2 = $('#sm-q').value.trim(); $('#sm-q').blur(); if (!v2) return; if (v2 === question) { delete smartCache[question]; renderSmart(question); } else location.hash = '#/smart/' + encodeURIComponent(v2); };
+  $('#sm-form').onsubmit = e => { e.preventDefault(); const v2 = $('#sm-q').value.trim(); $('#sm-q').blur(); if (!v2) return; if (v2 === question) { delete smartCache[question]; renderSmart(question); } else runSearch(v2); };
   const step = t => { const e = $('#sm-step'); if (e) e.textContent = t; };
   // Résultat déjà calculé (retour depuis un mail) : affichage immédiat, sans relancer l'IA
+  // position de défilement mémorisée au moment où un mail est ouvert
+  $('#list').addEventListener('click', () => { if (smartCache[question]) { smartCache[question].y = scrollY; keepSmart(); } }, true);
   const c = smartCache[question];
   if (c && Date.now() - c.at < 30 * 60000) { step(c.step); state.showAcc = freeOn(); state.dayMode = false; $('#list').innerHTML = c.html; setTimeout(() => scrollTo(0, c.y || 0), 30); return; }
-  const save = () => { smartCache[question] = { at: Date.now(), step: ($('#sm-step') || {}).textContent || '', html: ($('#list') || {}).innerHTML || '' }; };
-  window.addEventListener('hashchange', function keepY() { if (smartCache[question]) smartCache[question].y = scrollY; window.removeEventListener('hashchange', keepY); });
+  const save = () => { smartCache[question] = { at: Date.now(), step: ($('#sm-step') || {}).textContent || '', html: ($('#list') || {}).innerHTML || '' }; keepSmart(); };
   let plan;
   try { plan = await rapi('/ai/smart', { method: 'POST', body: { q: question, today: today() } }); } catch (e) { $('#list').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   const qs = (plan.queries || []).filter(Boolean).slice(0, 6);

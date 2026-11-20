@@ -650,6 +650,7 @@ function findContacts(q) {
   const out = [];
   for (const [email, c] of Object.entries((S.contacts && S.contacts.list) || {})) {
     const hay = norm(email + ' ' + c.n).replace(/[^a-z0-9]/g, '');
+    const hayS = hay.replace(/s/g, '');
     const toks = norm(email + ' ' + c.n).split(/[^a-z0-9]+/);
     let best = 0;
     // fenêtres de 1 à 4 mots consécutifs collés : « aciers du littoral » → « aciersdulittoral »
@@ -657,7 +658,12 @@ function findContacts(q) {
       const win = words.slice(i, i + k);
       if (k === 1 && STOP.has(win[0])) continue;
       const glued = win.join('').replace(/[^a-z0-9]/g, ''), core = win.filter(w => !STOP.has(w)).join('').replace(/[^a-z0-9]/g, '');
-      for (const g of [glued, core]) if (g.length >= 5 && hay.includes(g)) best = Math.max(best, g.length);
+      for (const g of [glued, core]) {
+        if (g.length >= 5 && hay.includes(g)) best = Math.max(best, g.length);
+        // singulier/pluriel : « acier du littoral » doit trouver « lesaciersdulittoral »
+        const gs = g.replace(/s/g, '');
+        if (gs.length >= 6 && hayS.includes(gs)) best = Math.max(best, gs.length - 1);
+      }
       if (k === 1 && win[0].length >= 3 && toks.includes(win[0])) best = Math.max(best, win[0].length + 3);
     }
     if (best) out.push({ email, name: c.n, count: c.c, last: c.t, score: best });
