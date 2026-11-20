@@ -466,6 +466,11 @@ async function freeMove(folderKey, uids, toKey) {
       if (toKey === 'BLOCKED' || toKey === 'JUNK') await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true });
       const r = await client.messageMove(uids, dest, { uid: true });
       const map = r && r.uidMap ? r.uidMap : null;
+      // contrôle : les mails ont-ils vraiment quitté le dossier d'origine ?
+      let left = [];
+      try { left = (await client.search({ uid: uids.join(',') }, { uid: true })) || []; } catch (e) {}
+      log('Free : déplacement ' + folder + ' → ' + dest + ' de ' + uids.length + ' mail(s)' + (left.length ? ', ENCORE PRÉSENTS : ' + left.join(',') : ', ok'));
+      if (left.length) throw Object.assign(new Error('Free n’a pas déplacé le mail (encore dans ' + folder + ')'), { code: 502 });
       return { ok: true, dest, from: folder, uids: map ? uids.map(u => map.get(u)).filter(Boolean) : [] };
     } finally { lock.release(); }
   });
@@ -1033,6 +1038,7 @@ const routes = {
       try {
         const uids = (await client.search({ from: t }, { uid: true })) || [];
         if (uids.length) { await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true }); await client.messageMove(uids, await blockPath(client), { uid: true }); }
+        log('Free : blocage de ' + t + ', ' + uids.length + ' mail(s) rangé(s) dans Indésirables');
         return { ok: true, moved: uids.length };
       } finally { lock.release(); }
     });
