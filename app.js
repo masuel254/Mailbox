@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '4.2.0';
+const APP_VERSION = '4.2.1';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -3145,7 +3145,60 @@ async function renderAgenda() {
   });
   if (gErr) box.insertAdjacentHTML('afterbegin', googleHelp(gErr, 'Agenda')), bindHelp();
   if (ttInfo && ttInfo.error) box.insertAdjacentHTML('afterbegin', `<p class="fhint">TimeTree : ${esc(ttInfo.error)}${ttInfo.at ? ' · données du ' + esc(new Date(ttInfo.at).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })) : ''}</p>`);
+  bindAgendaSwipe(box, evs, items);
   agendaSuggestions();
+}
+/* Glisser un événement vers la gauche : bouton Supprimer (Google Agenda ou TimeTree) */
+function bindAgendaSwipe(box, evs, items) {
+  let sx = 0, sy = 0, cur = null, lock = null, dx = 0, open = null;
+  const close = () => { if (!open) return; const o = open; open = null; o.el.style.transition = 'transform .2s'; o.el.style.transform = ''; setTimeout(() => { o.el.style.transition = ''; o.bg.remove(); }, 220); };
+  const del = async (el) => {
+    let ok = false;
+    if (el.dataset.ev) {
+      const e = evs.find(x => x.id === el.dataset.ev); if (!e) return;
+      try { await gx('https://www.googleapis.com/calendar/v3/calendars/primary/events/' + encodeURIComponent(e.id), { method: 'DELETE' }); ok = true; toast('« ' + (e.summary || 'Événement') + ' » supprimé'); }
+      catch (er) { if (er.message !== 'auth') toast('Échec : ' + er.message); }
+    } else if (el.dataset.tt) {
+      const it = items.find(i => i.kind === 'tt' && i.x.id === el.dataset.tt); if (!it) return; const x = it.x;
+      if (x.recurring && !confirm('« ' + x.title + ' » se répète : TOUTES les occurrences seront supprimées de TimeTree, pour tous les membres. Continuer ?')) { close(); return; }
+      try { await rapi('/timetree/delete', { method: 'POST', body: { cal: x.calId, uuid: x.uuid } }); ok = true; toast('« ' + x.title + ' » supprimé de TimeTree'); }
+      catch (er) { toast(er.message); }
+    }
+    if (ok) { state.agCache = null; renderAgenda(); } else close();
+  };
+  box.addEventListener('touchstart', e => {
+    const el = e.target.closest('button.ev'); 
+    if (open && !e.target.closest('.ev-del')) { const same = el === open.el; close(); if (same) { cur = null; box.dataset.skip = '1'; return; } }
+    if (!el || (!el.dataset.ev && !el.dataset.tt)) { cur = null; return; }
+    cur = el; sx = e.touches[0].clientX; sy = e.touches[0].clientY; lock = null; dx = 0;
+  }, { passive: true });
+  box.addEventListener('touchmove', e => {
+    if (!cur) return;
+    const mx = e.touches[0].clientX - sx, my = e.touches[0].clientY - sy;
+    if (!lock && (Math.abs(mx) > 10 || Math.abs(my) > 10)) lock = Math.abs(mx) > Math.abs(my) * 1.3 ? 'h' : 'v';
+    if (lock !== 'h') return;
+    e.preventDefault();
+    dx = Math.min(0, Math.max(-box.clientWidth, mx));
+    cur.style.transform = 'translateX(' + dx + 'px)';
+  }, { passive: false });
+  box.addEventListener('touchend', () => {
+    if (!cur || lock !== 'h') { cur = null; return; }
+    const el = cur; cur = null; box.dataset.skip = '1';
+    if (dx < -box.clientWidth * 0.6) { el.style.transition = 'transform .2s'; el.style.transform = 'translateX(-100%)'; del(el); return; }
+    if (dx < -50) {
+      const bg = document.createElement('button'); bg.type = 'button'; bg.className = 'ev-del'; bg.innerHTML = ICON.trash + '<small>Supprimer</small>';
+      bg.style.top = el.offsetTop + 'px'; bg.style.height = el.offsetHeight + 'px';
+      el.parentNode.insertBefore(bg, el);
+      el.style.transition = 'transform .2s'; el.style.transform = 'translateX(-92px)'; setTimeout(() => { el.style.transition = ''; }, 220);
+      bg.onclick = ev => { ev.stopPropagation(); bg.disabled = true; del(el); };
+      open = { el, bg };
+      return;
+    }
+    el.style.transition = 'transform .2s'; el.style.transform = ''; setTimeout(() => { el.style.transition = ''; }, 220);
+  });
+  // un glissement ne doit pas ouvrir la fiche de l'événement
+  box.addEventListener('click', e => { if (box.dataset.skip) { delete box.dataset.skip; if (!e.target.closest('.ev-del')) { e.stopPropagation(); e.preventDefault(); } } }, true);
+  window.addEventListener('scroll', close, { passive: true, once: true });
 }
 const defaultStart = d => { const x = new Date(d); const n = new Date(); if (dayKey(x) === dayKey(n)) { x.setHours(n.getHours() + 1, 0, 0, 0); } else x.setHours(9, 0, 0, 0); return x; };
 const toInputDate = d => dayKey(d), toInputTime = d => String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');

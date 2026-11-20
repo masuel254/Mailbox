@@ -463,3 +463,8 @@ body.selecting .item .mark{display:flex}
 .f-multi input{height:48px;border-radius:11px;border:1px solid var(--line2);background:var(--bg);color:var(--text);padding:0 12px;font-size:1rem;outline:none;width:100%;box-sizing:border-box}
 .f-multi input:focus{border-color:var(--accent)}
 .tt-tag{display:inline-block;font-size:.66rem;font-weight:800;padding:1px 6px;border-radius:5px;background:#4caf8f;color:#0d1f17;margin-right:2px;vertical-align:1px}
+#ag-list{position:relative}
+#ag-list .ev{position:relative;z-index:1;touch-action:pan-y}
+.ev-del{position:absolute;right:0;width:92px;border:none;border-radius:14px;background:#d9534f;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-weight:750;z-index:0}
+.ev-del svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2}
+.ev-del small{font-size:.72rem}
