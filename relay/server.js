@@ -390,6 +390,7 @@ async function aiSearch(question, today) {
     'Réponds UNIQUEMENT par un objet JSON {"q": "...", "resume": "..."}. ' +
     '"q" utilise la syntaxe Gmail : from:, to:, subject:, mots-clés, OR, newer_than:7d/3m/1y, after:AAAA/MM/JJ, before:AAAA/MM/JJ, has:attachment, is:unread. ' +
     'Pour une demande sur la taille ou la place prise (gros mails, plus lourds, pièces jointes volumineuses), utilise larger:5M (ou larger:10M pour « très gros », larger:2M pour « assez gros ») sans autre mot-clé sauf précision ; l’appli triera alors du plus gros au plus petit. ' +
+    'RÈGLES IMPORTANTES : n’ajoute JAMAIS de limite de date (newer_than, after, before) si la demande ne parle pas d’une période ; n’utilise JAMAIS subject: sauf si la demande parle explicitement de l’objet ; des mots-clés simples sans opérateur cherchent dans tout le mail (objet ET corps), c’est ce qu’il faut par défaut ; n’utilise OR qu’entre synonymes d’un même mot, entre parenthèses, ex. devis (porte OR portail). ' +
     'Garde 1 à 4 mots-clés distinctifs, sans mots vides ; pour une marque, utilise from:marque (sans .com) ; n\'invente pas d\'adresse. ' +
     '"resume" décrit la recherche en une courte phrase en français, par exemple « Mails de Devred des 3 derniers mois contenant anniversaire ».';
   const call = async (model, extra) => {
