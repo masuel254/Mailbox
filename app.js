@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.6.6';
+const APP_VERSION = '3.6.7';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -2298,11 +2298,35 @@ async function renderLabels() {
   // Indésirables et Corbeille : un seul accès commun Gmail + Free, sortis des listes de chaque boîte
   const nfcl = x => String(x || '').normalize('NFC').toLowerCase();
   const isBlk = x => nfcl(x.full) === nfcl(BLOCK_LABEL);
+  // Nombre de mails affiché en petit sur Indésirables et Corbeille (compté une fois par visite de la page)
+  const cnt = { blk: null, trash: null };
+  const fmtN = n => n == null ? '' : n ? ' · ' + n.toLocaleString('fr-FR') + ' mail' + (n > 1 ? 's' : '') : ' · vide';
+  const fillCounts = () => {
+    const a = $('#cnt-blk'), t = $('#cnt-trash');
+    const sub = freeOn() ? 'Gmail + Free' : 'Gmail';
+    if (a) a.textContent = sub + fmtN(cnt.blk);
+    if (t) t.textContent = sub + fmtN(cnt.trash);
+  };
+  const loadCounts = async () => {
+    const gb = g.find(isBlk);
+    const [gt, ft, gbn, fbn] = await Promise.all([
+      api('labels/TRASH?fields=messagesTotal').then(x => (x && x.messagesTotal) || 0).catch(() => null),
+      freeOn() ? rapi('/free/size?folder=TRASH').then(x => x.count || 0).catch(() => null) : Promise.resolve(0),
+      gb ? api('labels/' + encodeURIComponent(gb.id) + '?fields=messagesTotal').then(x => (x && x.messagesTotal) || 0).catch(() => null) : Promise.resolve(0),
+      freeOn() ? rapi('/free/size?folder=BLOCKED').then(x => x.count || 0).catch(() => null) : Promise.resolve(0)
+    ]);
+    cnt.blk = gbn == null || fbn == null ? null : gbn + fbn;
+    cnt.trash = gt == null || ft == null ? null : gt + ft;
+    fillCounts();
+  };
+  // 1er comptage rapide, 2e une fois les dossiers relus (nombre exact de mails par dossier)
+  setTimeout(() => loadCounts().catch(() => {}), 600);
+  setTimeout(() => { if ($('#cnt-trash')) loadCounts().catch(() => {}); }, 6000);
   const common = () => {
     const blk = g.find(isBlk) || f.find(isBlk);
     const sub = freeOn() ? 'Gmail + Free' : 'Gmail';
-    return (blk ? `<a class="set-link" href="${blk.href}"><span class="set-t">🚫 Indésirables</span><span class="set-s">${sub}</span><span class="chev-r" aria-hidden="true"></span></a>` : '')
-      + `<a class="set-link" href="#/list/TRASH"><span class="set-t">🗑️ Corbeille</span><span class="set-s">${sub}</span><span class="chev-r" aria-hidden="true"></span></a>`;
+    return (blk ? `<a class="set-link" href="${blk.href}"><span class="set-t">🚫 Indésirables</span><span class="set-s" id="cnt-blk">${sub + fmtN(cnt.blk)}</span><span class="chev-r" aria-hidden="true"></span></a>` : '')
+      + `<a class="set-link" href="#/list/TRASH"><span class="set-t">🗑️ Corbeille</span><span class="set-s" id="cnt-trash">${sub + fmtN(cnt.trash)}</span><span class="chev-r" aria-hidden="true"></span></a>`;
   };
   const draw = q => {
     const $l = $('#labs'); if (!$l) return;
