@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.9.7';
+const APP_VERSION = '3.9.8';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -878,13 +878,16 @@ async function quickBlock(item) {
   const t = blockTarget(item.fromEmail);
   const names = LS.get('blockedNames', {}); names[t] = t.includes('@') ? (item.fromName || t) : brandOf(t); LS.set('blockedNames', names);
   const dates = LS.get('blockedDates', {}); dates[t] = Date.now(); LS.set('blockedDates', dates);
+  // Free d'abord, indépendamment de Gmail : un Gmail qui freine ne doit pas empêcher le blocage côté Free
+  let moved = 0, freeErr = null;
+  if (freeOn()) { try { moved += (await rapi('/free/block', { method: 'POST', body: { target: t } })).moved || 0; } catch (e) { freeErr = e; } }
   try {
     const lab = await blockLabelId();
     const froms = (((await api('settings/filters')) || {}).filter || []).map(f => (f.criteria && f.criteria.from || '').toLowerCase());
     let filterId = null;
     if (!isCovered(t, froms)) filterId = (await api('settings/filters', { method: 'POST', body: { criteria: { from: t }, action: { addLabelIds: [lab], removeLabelIds: ['INBOX', 'UNREAD'] } } })).id;
-    let moved = await moveExisting(t, lab);
-    if (freeOn()) { try { moved += (await rapi('/free/block', { method: 'POST', body: { target: t } })).moved || 0; } catch (e) {} }
+    moved += await moveExisting(t, lab);
+    if (freeErr) toast('Free : ' + freeErr.message);
     const hit = e => e && (e.toLowerCase() === t || blockTarget(e) === t);
     $$('#list a.item').forEach(a => { const i = findItem(a.dataset.id); if (i && hit(i.fromEmail)) collapseRow(a); });
     Object.values(state.lists).forEach(d => { d.items = d.items.filter(i => !hit(i.fromEmail)); });
@@ -900,7 +903,12 @@ async function quickBlock(item) {
         page = r.nextPageToken;
       } while (page);
     });
-  } catch (e) { if (e.message === 'scope') needScope(); else if (e.message !== 'auth') toast('Échec : ' + e.message); reDraw(); }
+  } catch (e) {
+    if (e.message === 'scope') return needScope();
+    if (e.message === 'auth') return;
+    if (moved && !freeErr) { gone.clear(); route(); toast('Bloqué côté Free · Gmail : ' + e.message + ', réessaie plus tard'); }
+    else { toast('Échec : ' + (freeErr ? 'Free : ' + freeErr.message + ' · ' : '') + e.message); reDraw(); }
+  }
 }
 function blockSheet(ids, extra) {
   if (!auth.hasSettingsScope()) return needScope();

@@ -565,16 +565,20 @@ async function freeSend(o) {
 
 /* ---------- Blocage : règles Gmail « Indésirables », appliquées aussi à Free ---------- */
 let blockedCache = { at: 0, list: [] };
+/* Liste des expéditeurs bloqués gardée sur le serveur : elle survit aux redémarrages et aux pauses de Gmail */
 async function blockedTargets() {
-  if (!S.gmail) return [];
-  if (Date.now() - blockedCache.at < 10 * 60000) return blockedCache.list;
+  const local = S.blocked || [];
+  const merge = l => [...new Set(local.concat(l || []))];
+  if (!S.gmail || gPaused()) return merge(blockedCache.list);
+  if (Date.now() - blockedCache.at < 10 * 60000) return merge(blockedCache.list);
   try {
     const labels = ((await gapi('labels')) || {}).labels || [];
     const l = labels.find(x => x.name === BLOCK_LABEL);
     const fs_ = l ? (((await gapi('settings/filters')) || {}).filter || []).filter(f => f.action && (f.action.addLabelIds || []).includes(l.id) && f.criteria && f.criteria.from) : [];
     blockedCache = { at: Date.now(), list: fs_.map(f => f.criteria.from.toLowerCase()) };
+    S.blocked = [...new Set((S.blocked || []).concat(blockedCache.list))]; save();
   } catch (e) { log('règles Gmail illisibles', e.message); }
-  return blockedCache.list;
+  return merge(blockedCache.list);
 }
 const isBlocked = (email, targets) => targets.some(t => email === t || (!t.includes('@') && (email.endsWith('@' + t) || email.endsWith('.' + t))));
 
@@ -1033,6 +1037,7 @@ const routes = {
   'POST /free/block': async (q, b) => {
     const t = (b.target || '').toLowerCase(); if (!t) throw Object.assign(new Error('cible manquante'), { code: 400 });
     blockedCache.at = 0;
+    if (!(S.blocked || []).includes(t)) { S.blocked = (S.blocked || []).concat(t); save(); }
     return withImap(async client => {
       const lock = await client.getMailboxLock('INBOX');
       try {
