@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.6.1';
+const APP_VERSION = '3.6.2';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -2031,21 +2031,29 @@ async function renderSmart(question) {
   if (state.aiNote && state.aiNote.ask === question && state.aiNote.q && !qs.includes(state.aiNote.q)) qs.unshift(state.aiNote.q);
   step('Pistes : ' + qs.join(' · '));
   const cand = new Map();
-  await Promise.all(qs.map(async q => {
+  // deep = seconde passe : corbeille et spam (Gmail et Free), seulement si rien de sûr n'a été trouvé
+  const gather = (deep, into) => Promise.all(qs.map(async q => {
     const jobs = [];
     if (settings.clientId || relayGmailOn()) jobs.push((async () => {
-      const r = (await api('threads?' + new URLSearchParams({ q, maxResults: 12 }))) || {};
+      const r = (await api('threads?' + new URLSearchParams(deep ? { q: '(' + q + ') (in:trash OR in:spam)', maxResults: 12, includeSpamTrash: 'true' } : { q, maxResults: 12 }))) || {};
       const ts = await pool(r.threads || [], 6, t => api('threads/' + t.id + '?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date').catch(() => null));
-      ts.filter(Boolean).forEach(t => { const it = summarize(t); it.acc = 'gmail'; cand.set(it.id, it); });
+      ts.filter(Boolean).forEach(t => { const it = summarize(t); it.acc = 'gmail'; if (deep) it.where = (t.messages || []).some(m => (m.labelIds || []).includes('SPAM')) ? 'Spam' : 'Corbeille'; if (!cand.has(it.id)) into.set(it.id, it); });
     })().catch(() => {}));
-    if (freeOn()) jobs.push(rapi('/free/search?' + new URLSearchParams({ q, limit: '12' })).then(r => (r.items || []).forEach(x => { const it = freeItem(x); cand.set(it.id, it); })).catch(() => {}));
+    if (freeOn()) jobs.push(rapi('/free/search?' + new URLSearchParams(deep ? { q, limit: '12', deep: '1' } : { q, limit: '12' })).then(r => (r.items || []).forEach(x => { const it = freeItem(x); if (deep) it.where = /junk|spam|ind/i.test(x.folder) ? 'Spam' : 'Corbeille'; if (!cand.has(it.id)) into.set(it.id, it); })).catch(() => {}));
     await Promise.all(jobs);
   }));
+  await gather(false, cand);
   // pré-tri local : on garde d'abord les mails qui contiennent les mots des pistes
   const kw = [...new Set(qs.join(' ').toLowerCase().replace(/\b(from|to|subject|in|is|has|newer_than|older_than|after|before|label|category):\S*/g, ' ').replace(/[()"]/g, ' ').split(/\s+/).filter(w => w.length > 3 && w !== 'or' && w !== 'and'))];
   const hits = x => { const t = (x.subject + ' ' + x.snippet + ' ' + x.from).toLowerCase(); return kw.filter(w => t.includes(w)).length; };
   const all = [...cand.values()].sort((a, b) => (hits(b) - hits(a)) || (b.date - a.date)).slice(0, 50);
-  if (!all.length) { $('#list').innerHTML = '<div class="empty">Rien trouvé, même en élargissant. Essaie avec un autre mot ou un expéditeur.</div>'; return; }
+  let deepDone = false;
+  if (!all.length) {
+    step('Rien ici, je regarde aussi dans la corbeille et le spam…');
+    const extra = new Map(); await gather(true, extra); deepDone = true;
+    all.push(...[...extra.values()].sort((a, b) => (hits(b) - hits(a)) || (b.date - a.date)).slice(0, 40));
+  }
+  if (!all.length) { $('#list').innerHTML = '<div class="empty">Rien trouvé, même dans la corbeille et le spam. Essaie avec un autre mot ou un expéditeur.</div>'; return; }
   step(all.length + ' mails candidats, tri par pertinence…');
   let ranked = [], contact = null;
   try { const rr = await rapi('/ai/rank', { method: 'POST', body: { q: question, indices: plan.indices || '', items: all.map((x, i) => ({ i, date: new Date(x.date).toLocaleDateString('fr-FR'), from: x.mine && x.count === 1 ? 'Samuel → ' + (x.to || '') : x.from, email: x.fromEmail || x.toEmail || '', n: x.count, mine: x.mine, subject: x.subject, snippet: x.snippet })) } }) ; contact = rr.contact && rr.contact.email && /@/.test(rr.contact.email) ? rr.contact : null; ranked = (rr.results || []).filter(r => all[r.i]); } catch (e) { ranked = null; step('Tri par l’IA indisponible (' + e.message + ')'); }
@@ -2055,9 +2063,30 @@ async function renderSmart(question) {
     $('#list').innerHTML = loc.length ? `<h2 class="sec">Contiennent les mots recherchés · ${loc.length}</h2>` + loc.map(i => itemHTML(Object.assign({}, i, { unread: false }), '')).join('') : '<div class="empty">Rien de pertinent trouvé. Réessaie dans une minute ou ajoute un détail (nom, ville, mois).</div>';
     save(); return;
   }
-  const mk = r => Object.assign({}, all[r.i], { snippet: '✦ ' + (r.why || ''), unread: false });
-  const best = ranked.filter(r => (r.score == null ? 7 : r.score) >= 7).map(mk), maybe = ranked.filter(r => r.score != null && r.score < 7).map(mk);
-  step(ranked.length ? (best.length + maybe.length) + ' résultat' + (best.length + maybe.length > 1 ? 's' : '') + ' sur ' + all.length + ' mails examinés' : all.length + ' mails examinés, aucun ne correspond vraiment');
+  const where = x => x.where === 'Spam' ? '⚠️ Trouvé dans le spam · ' : x.where ? '🗑️ Trouvé dans la corbeille · ' : '✦ ';
+  const mk = r => Object.assign({}, all[r.i], { snippet: where(all[r.i]) + (r.why || ''), unread: false });
+  let best = ranked.filter(r => (r.score == null ? 7 : r.score) >= 7).map(mk), maybe = ranked.filter(r => r.score != null && r.score < 7).map(mk);
+  let deepNote = '';
+  if (deepDone) deepNote = ' (corbeille et spam compris)';
+  if (!best.length && !deepDone) {
+    // Rien de sûr : on regarde aussi dans la corbeille et le spam
+    step('Rien de sûr ici, je regarde aussi dans la corbeille et le spam…');
+    const extra = new Map();
+    await gather(true, extra);
+    const dall = [...extra.values()].sort((a, b) => (hits(b) - hits(a)) || (b.date - a.date)).slice(0, 40);
+    if (dall.length) {
+      try {
+        const rr = await rapi('/ai/rank', { method: 'POST', body: { q: question, indices: plan.indices || '', items: dall.map((x, i) => ({ i, date: new Date(x.date).toLocaleDateString('fr-FR'), from: x.mine && x.count === 1 ? 'Samuel → ' + (x.to || '') : x.from, email: x.fromEmail || x.toEmail || '', n: x.count, mine: x.mine, subject: x.subject, snippet: x.snippet })) } });
+        const dk = r => Object.assign({}, dall[r.i], { snippet: where(dall[r.i]) + (r.why || ''), unread: false });
+        const dr = (rr.results || []).filter(r => dall[r.i]);
+        best = dr.filter(r => (r.score == null ? 7 : r.score) >= 7).map(dk);
+        maybe = maybe.concat(dr.filter(r => r.score != null && r.score < 7).map(dk));
+        ranked = ranked.concat(dr);
+        deepNote = ' (corbeille et spam compris)';
+      } catch (e) {}
+    }
+  }
+  step((ranked.length ? (best.length + maybe.length) + ' résultat' + (best.length + maybe.length > 1 ? 's' : '') + ' sur ' + all.length + ' mails examinés' : all.length + ' mails examinés, aucun ne correspond vraiment') + deepNote);
   state.showAcc = freeOn(); state.dayMode = false;
   $('#list').innerHTML = (contact ? `<a class="set-link contact-link" href="#/search/${encodeURIComponent('from:' + contact.email + ' OR to:' + contact.email)}"><span class="set-t">👤 Tous les échanges avec ${esc(contact.name || contact.email)}</span><span class="set-s">${esc(contact.email)}</span><span class="chev-r" aria-hidden="true"></span></a>` : '') + (ranked.length
     ? (best.length ? `<h2 class="sec">Correspond le mieux · ${best.length}</h2>` + best.map(i => itemHTML(i, '')).join('') : '')

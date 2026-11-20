@@ -255,7 +255,7 @@ async function freeList(folderKey, unread, before, limit) {
     } finally { lock.release(); }
   });
 }
-async function freeSearch(q, limit) {
+async function freeSearch(q, limit, deep) {
   const crit = {}; const words = []; const alts = []; let anyOf = false;
   for (const tok of (q.match(/\S+:"[^"]*"|\S+:\S+|"[^"]*"|\S+/g) || [])) {
     const m = tok.match(/^(from|de|to|subject|objet|newer_than|after|before|older_than|larger|size):(.+)$/i);
@@ -281,7 +281,13 @@ async function freeSearch(q, limit) {
     const items = [], seen = new Set();
     const skip = new Set([f.trash, f.junk, f.drafts, 'Mis de côté'].filter(Boolean));
     const extra = (f.all || []).filter(m => !(m.flags && m.flags.has('\\Noselect')) && !skip.has(m.path) && !['INBOX', f.sent, f.archive, BLOCK_LABEL].includes(m.path) && !/^(contacts|chats|calendar|notes|emailed contacts|deleted messages)$/i.test(m.path)).map(m => m.path);
-    for (const folder of ['INBOX', f.sent, f.archive, BLOCK_LABEL].filter(Boolean).concat(extra).slice(0, 40)) {
+    const list = await client.list();
+    const blk = (list.find(m => nfc(m.path) === nfc(BLOCK_LABEL)) || {}).path || BLOCK_LABEL;
+    // deep : seconde passe dans la corbeille et le spam seulement (mails supprimés ou jugés indésirables)
+    const order = deep
+      ? [...new Set([f.trash, ...list.filter(m => /^deleted messages$/i.test(m.path)).map(m => m.path), f.junk, ...junkPaths(list)].filter(p => p && list.some(m => m.path === p)))]
+      : ['INBOX', f.sent, f.archive, blk].filter(Boolean).concat(extra.filter(p => nfc(p) !== nfc(BLOCK_LABEL))).slice(0, 40);
+    for (const folder of order) {
       let lock; try { lock = await client.getMailboxLock(folder); } catch (e) { continue; }
       try {
         let uids = [];
@@ -872,7 +878,7 @@ const routes = {
     return f;
   }),
   'GET /free/list': async q => freeList(q.get('folder') || 'INBOX', q.get('unread') === '1', +q.get('before') || 0, Math.min(+q.get('limit') || 25, 50)),
-  'GET /free/search': async q => freeSearch((q.get('q') || '').slice(0, 200), Math.min(+q.get('limit') || 30, 50)),
+  'GET /free/search': async q => freeSearch((q.get('q') || '').slice(0, 200), Math.min(+q.get('limit') || 30, 50), q.get('deep') === '1'),
   'GET /free/message': async q => freeMessage(q.get('folder') || 'INBOX', +q.get('uid')),
   'GET /free/attachment': async q => freeAttachment(q.get('folder') || 'INBOX', +q.get('uid'), +q.get('idx')),
   'POST /free/flags': async (q, b) => freeFlags(b.folder || 'INBOX', b.uids || [], b.seen, b.flagged),
