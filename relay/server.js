@@ -199,6 +199,7 @@ async function resolveFolder(client, key) {
   throw Object.assign(new Error('Dossier inconnu'), { code: 400 });
 }
 const snip = t => (t || '').replace(/(^|\s)[^\s{}][^{}]{0,300}\{[^{}]*\}/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+const hasAtt = n => !!n && ((n.disposition === 'attachment') || (n.disposition === 'inline' && !/^text\//.test(n.type || '') && n.parameters && n.dispositionParameters && n.dispositionParameters.filename) || (n.childNodes || []).some(hasAtt));
 function headerText(src, name) {
   const head = src.toString('utf8', 0, Math.min(src.length, 65536)).split(/\r?\n\r?\n/)[0].replace(/\r?\n[ \t]+/g, ' ');
   const m = head.match(new RegExp('^' + name + ':[ \\t]*(.*)$', 'im'));
@@ -218,10 +219,10 @@ async function freeList(folderKey, unread, before, limit) {
       uids = uids.slice(0, limit);
       const items = [];
       if (uids.length) {
-        for await (const m of client.fetch(uids, { envelope: true, flags: true, internalDate: true, source: { start: 0, maxLength: 6000 } }, { uid: true })) {
+        for await (const m of client.fetch(uids, { envelope: true, flags: true, internalDate: true, bodyStructure: true, source: { start: 0, maxLength: 6000 } }, { uid: true })) {
           let snippet = '';
           try { const p = await simpleParser(m.source); snippet = snip(p.text); } catch (e) {}
-          items.push({ uid: m.uid, folder, subject: m.envelope.subject || '(sans objet)', from: addr(m.envelope.from), to: (m.envelope.to || []).map(x => x.name || x.address).join(', '), date: +new Date(m.internalDate || m.envelope.date), seen: m.flags.has('\\Seen'), flagged: m.flags.has('\\Flagged'), snippet });
+          items.push({ uid: m.uid, folder, subject: m.envelope.subject || '(sans objet)', from: addr(m.envelope.from), to: (m.envelope.to || []).map(x => x.name || x.address).join(', '), date: +new Date(m.internalDate || m.envelope.date), seen: m.flags.has('\\Seen'), flagged: m.flags.has('\\Flagged'), snippet, att: hasAtt(m.bodyStructure) });
         }
       }
       items.sort((a, b) => b.date - a.date);

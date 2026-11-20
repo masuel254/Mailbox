@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.0.0';
+const APP_VERSION = '3.0.1';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -261,7 +261,7 @@ const freeFolderOf = key => FREE_FOLDERS[key] || (String(key).startsWith('F:') ?
 const curAcc = () => freeOn() ? (settings.acc || 'all') : 'gmail';
 function parseFreeId(id) { const p = id.split(':'); return { uid: +p[1], folder: p.slice(2).join(':') }; }
 function freeItem(x) {
-  return { id: 'f:' + x.uid + ':' + x.folder, acc: 'free', folder: x.folder, uid: x.uid, subject: fixMojibake(x.subject), from: x.from.name || x.from.email, fromEmail: (x.from.email || '').toLowerCase(), fromName: x.from.name || '', to: x.to || '', sentByMe: false, snippet: cleanSnippet(x.snippet), date: x.date, count: 1, size: x.size || 0, unread: !x.seen, starred: !!x.flagged, labels: [] };
+  return { id: 'f:' + x.uid + ':' + x.folder, acc: 'free', folder: x.folder, uid: x.uid, subject: fixMojibake(x.subject), from: x.from.name || x.from.email, fromEmail: (x.from.email || '').toLowerCase(), fromName: x.from.name || '', to: x.to || '', sentByMe: false, snippet: cleanSnippet(x.snippet), date: x.date, count: 1, size: x.size || 0, att: !!x.att, unread: !x.seen, starred: !!x.flagged, labels: [] };
 }
 function route() {
   auth.handleRedirect();
@@ -449,6 +449,7 @@ function summarize(t) {
     date: +last.internalDate || Date.now(),
     count: msgs.length,
     size: msgs.reduce((a, m) => a + (m.sizeEstimate || 0), 0),
+    att: msgs.some(m => /multipart\/mixed/i.test((m.payload && m.payload.mimeType) || '')),
     unread: msgs.some(m => (m.labelIds || []).includes('UNREAD')),
     starred: labels.has('STARRED'),
     labels: [...labels].filter(id => /^Label_/.test(id))
@@ -469,7 +470,7 @@ function itemHTML(it, cls, sentView) {
     <span class="body">
       <span class="row1"><span class="who">${esc(who)}${it.count > 1 ? ` <span class="count">(${it.count})</span>` : ''}</span>${it.starred ? '<span class="star" aria-label="Suivi">★</span>' : ''}<span class="when">${esc(state.dayMode ? new Date(it.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : fmtDate(it.date))}</span></span>
       <span class="subj">${it.unread ? '<span class="sr">Non lu : </span>' : ''}${esc(it.subject)}</span>
-      <span class="row3"><span class="snip">${esc(it.snippet)}</span><span class="chips">${sizeChip}${accChip}${chips}</span></span>
+      <span class="row3"><span class="snip">${esc(it.snippet)}</span><span class="chips">${it.att ? '<span class="chip att-chip" title="Pièce jointe">📎</span>' : ''}${sizeChip}${accChip}${chips}</span></span>
     </span></a>`;
 }
 function drawList(data, plain) {
@@ -1184,14 +1185,20 @@ function renderBody(m, container, pre) {
   if (files.length) {
     const box = document.createElement('div');
     box.className = 'atts';
+    box.innerHTML = `<div class="atts-h">📎 ${files.length} pièce${files.length > 1 ? 's' : ''} jointe${files.length > 1 ? 's' : ''}</div>`;
+    const kind = a => { const n = (a.name || '').toLowerCase(), mt = (a.mime || '').toLowerCase(); if (/pdf/.test(mt) || n.endsWith('.pdf')) return ['PDF', 'PDF', 'pdf']; if (/^image\//.test(mt)) return ['IMG', 'Image', 'img']; if (/word|\.docx?$/.test(mt + n)) return ['DOC', 'Word', 'doc']; if (/sheet|excel|\.xlsx?$|\.csv$/.test(mt + n)) return ['XLS', 'Excel', 'xls']; if (/zip|compressed/.test(mt + n)) return ['ZIP', 'Archive', 'zip']; return [(n.split('.').pop() || 'FIC').slice(0, 4).toUpperCase(), 'Fichier', 'oth']; };
     files.forEach(a => {
-      const b = document.createElement('button');
-      b.className = 'att';
-      b.innerHTML = `${ICON.clip}<span class="n">${esc(a.name)}</span><span class="s">${esc(fmtSize(a.size))}</span>`;
-      b.onclick = () => openAttachment(fetcher, a, b);
-      box.appendChild(b);
+      const [lab, type, cls] = kind(a);
+      const c = document.createElement('div');
+      c.className = 'attc';
+      c.innerHTML = `<span class="thumb ${cls}">${esc(lab)}</span><span class="t"><b>${esc(a.name)}</b><small>${type} · ${esc(fmtSize(a.size))}</small></span><button class="btn">Ouvrir</button>`;
+      const btn = $('button', c);
+      btn.onclick = () => openAttachment(fetcher, a, btn);
+      $('.t', c).onclick = () => btn.click();
+      if (cls === 'img' && (a.size || 0) < 3e6) fetcher(a).then(d => { const th = $('.thumb', c); th.style.backgroundImage = `url(data:${a.mime || 'image/jpeg'};base64,${d})`; th.textContent = ''; }).catch(() => {});
+      box.appendChild(c);
     });
-    container.appendChild(box);
+    container.insertBefore(box, body);
   }
 }
 
@@ -1379,6 +1386,7 @@ const GUIDE = [
   ['📥', 'Réception et non lus', `
     <p>Les onglets <b>Tous / Gmail / Free</b> filtrent par boîte, avec le nombre de non lus de chacune. Le bouton <b>Non lus</b> n'affiche que ceux-là.</p>
     <p><b>Tout marquer lu</b> (à droite de « Non lus ») passe toute la boîte en lu, avec Annuler.</p>
+    <p>Une 📎 dans la liste signale un mail avec pièce jointe ; dans le mail, les pièces jointes s’affichent en cartes en haut, avant le texte, avec <b>Ouvrir</b>.</p>
     <p>Dans un mail : <b>Répondre</b>, <b>À tous</b>, <b>Transférer</b>, <b>Classer</b>, <b>Archiver</b>, <b>Bloquer</b>, <b>Suivre</b> (étoile). Les citations des anciens messages sont repliées.</p>
     <p><b>Se désabonner</b> : sur une newsletter, une barre en haut du mail permet de se désinscrire en un appui.</p>
     <p>Réglages › Affichage › <b>Principal seulement</b> masque Promotions, Réseaux sociaux, etc. de la réception et du compteur.</p>`],
