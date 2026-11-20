@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.5.0';
+const APP_VERSION = '3.5.1';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -535,6 +535,16 @@ function badgeNow(delta) {
   if (delta && cur) { const n = Math.max(0, cur - delta); if (b) { b.hidden = !n; b.textContent = n; } if (navigator.setAppBadge) (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {}); }
   clearTimeout(badgeT); badgeT = setTimeout(() => updateBadge(true), 1500);
 }
+/* Liste affichée remise à jour quand un mail arrive ou que le nombre de non lus change */
+let lastOwn = null, refreshT = null;
+function refreshVisibleList() {
+  clearTimeout(refreshT);
+  refreshT = setTimeout(() => {
+    const h = location.hash || '#/list/INBOX';
+    if (!h.startsWith('#/list/') || !state.listCtx || state.sel || document.visibilityState !== 'visible') return;
+    const c = state.listCtx; loadList(c.key, c.q, c.cacheKey, c.plain, true);
+  }, 800);
+}
 async function updateBadge(fresh) {
   try {
     let n, own, cnt = null;
@@ -544,6 +554,8 @@ async function updateBadge(fresh) {
       const a = curAcc(); own = a === 'free' ? r.free : a === 'gmail' ? r.gmail : n;
     } else if (settings.primaryOnly) { const t = (await api('threads?' + new URLSearchParams({ q: 'in:inbox category:primary is:unread', maxResults: 100 }))) || {}; n = (t.threads || []).length; own = n; }
     else { const l = await api('labels/INBOX'); n = l.threadsUnread || 0; own = n; }
+    if (lastOwn !== null && own !== lastOwn) refreshVisibleList();
+    lastOwn = own;
     const b = $('#badge-inbox'); b.hidden = !n; b.textContent = n > 99 ? '99+' : n;
     const f = $('#fcount'); if (f) f.textContent = own ? '· ' + own : '';
     if (cnt) $$('.acc-n').forEach(el => { const v = cnt[el.dataset.n] || 0; el.textContent = v ? v + ' non lu' + (v > 1 ? 's' : '') : 'à jour'; });
@@ -2625,4 +2637,10 @@ setInterval(() => { if (document.visibilityState === 'visible' && (auth.token() 
 document.addEventListener('visibilitychange', () => { if (auth.token() || relayOn()) updateBadge(document.visibilityState === 'hidden' ? true : false); });
 checkUpdate();
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkUpdate(); });
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+  // Le relais a signalé un nouveau mail ou un changement de non lus pendant que l'app est ouverte
+  navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.type === 'mail') { refreshVisibleList(); setTimeout(() => updateBadge(true), 1500); } });
+}
+// Filet de sécurité : vérification chaque minute quand l'app est au premier plan
+setInterval(() => { if (document.visibilityState === 'visible' && relayOn() && (relayGmailOn() || freeOn())) updateBadge(); }, 60000);

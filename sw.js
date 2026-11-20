@@ -1,4 +1,4 @@
-const V = 'ml-3.5.0';
+const V = 'ml-3.5.1';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon-v2.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(V).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== V).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
@@ -25,6 +25,8 @@ self.addEventListener('fetch', e => {
 self.addEventListener('push', e => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch (x) { d = { title: 'MailBox', body: e.data ? e.data.text() : '' }; }
+  // Prévient l'app ouverte pour qu'elle rafraîchisse sa liste
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cs => cs.forEach(c => c.postMessage({ type: 'mail' }))).catch(() => {}));
   if (d.type === 'badge') {
     // Mise à jour de la pastille seule : iOS impose une notification, on l'affiche sans bruit puis on la retire aussitôt
     const n = d.badge || 0;
