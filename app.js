@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.5.2';
+const APP_VERSION = '3.5.3';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -1300,7 +1300,7 @@ async function attData(msgId, a) {
   return attCache[k];
 }
 async function openAttachment(fetcher, a, btn) {
-  const label = btn.querySelector('.s'); const old = label.textContent; label.textContent = '…';
+  const label = btn.querySelector('.s') || btn; const old = label.textContent; label.textContent = '…';
   try {
     const b64 = await fetcher(a);
     const blob = new Blob([b64ToBytes(b64)], { type: a.mime || 'application/octet-stream' });
