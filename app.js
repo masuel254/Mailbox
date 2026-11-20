@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.5.1';
+const APP_VERSION = '3.5.2';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -464,13 +464,15 @@ function itemHTML(it, cls, sentView) {
   const sel = state.sel && state.sel.has(it.id) ? ' sel' : '';
   const href = it.acc === 'free' ? '#/free/' + encodeURIComponent(it.folder) + '/' + it.uid : '#/thread/' + encodeURIComponent(it.id);
   const sizeChip = state.showSize && it.size ? `<span class="chip size">${it.size >= 1048576 ? (it.size / 1048576).toFixed(1).replace('.', ',') + ' Mo' : Math.max(1, Math.round(it.size / 1024)) + ' Ko'}</span>` : '';
+  // Taille discrète à droite de l'objet quand le mail a une pièce jointe (taille du mail entier, quasi égale à celle des pièces jointes)
+  const attSize = it.att && it.size && !sizeChip ? `<span class="att-size" aria-label="Pièce jointe, ${fmtMo(it.size)}">📎 ${fmtMo(it.size)}</span>` : '';
   const accChip = state.showAcc ? `<span class="chip acc-${it.acc === 'free' ? 'free' : 'gmail'}">${it.acc === 'free' ? 'Free' : 'Gmail'}</span>` : '';
   return `<a class="item ${cls}${sel}" data-id="${esc(it.id)}" href="${href}">
     <span class="mark" aria-hidden="true"></span>
     <span class="body">
       <span class="row1"><span class="who">${esc(who)}${it.count > 1 ? ` <span class="count">(${it.count})</span>` : ''}</span>${it.starred ? '<span class="star" aria-label="Suivi">★</span>' : ''}<span class="when">${esc(state.dayMode ? new Date(it.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : fmtDate(it.date))}</span></span>
-      <span class="subj">${it.unread ? '<span class="sr">Non lu : </span>' : ''}${esc(it.subject)}</span>
-      <span class="row3"><span class="snip">${esc(it.snippet)}</span><span class="chips">${it.att ? '<span class="chip att-chip" title="Pièce jointe">📎</span>' : ''}${sizeChip}${accChip}${chips}</span></span>
+      <span class="subj${attSize ? ' has-att' : ''}"><span class="subj-t">${it.unread ? '<span class="sr">Non lu : </span>' : ''}${esc(it.subject)}</span>${attSize}</span>
+      <span class="row3"><span class="snip">${esc(it.snippet)}</span><span class="chips">${it.att && !attSize ? '<span class="chip att-chip" title="Pièce jointe">📎</span>' : ''}${sizeChip}${accChip}${chips}</span></span>
     </span></a>`;
 }
 function drawList(data, plain) {

@@ -402,3 +402,6 @@ body.selecting .item .mark{display:flex}
 .att-chip .att-n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px}
 .att-chip .att-s{color:var(--muted);font-size:.75rem}
 .att-chip button{border:none;background:var(--line2);color:var(--text);width:26px;height:26px;border-radius:50%;font-size:1rem;line-height:1}
+.subj.has-att{display:flex;gap:8px;justify-content:space-between;align-items:baseline}
+.subj.has-att .subj-t{min-width:0}
+.att-size{flex:none;font-size:.72rem;font-weight:500;color:var(--muted);white-space:nowrap}
