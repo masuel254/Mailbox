@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '3.7.2';
+const APP_VERSION = '3.7.3';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -489,7 +489,7 @@ function itemHTML(it, cls, sentView) {
   return `<a class="item ${cls}${sel}" data-id="${esc(it.id)}" href="${href}">
     <span class="mark" aria-hidden="true"></span>
     <span class="body">
-      <span class="row1"><span class="who">${esc(who)}${it.count > 1 ? ` <span class="count">(${it.count})</span>` : ''}</span>${it.starred ? '<span class="star" aria-label="Suivi">★</span>' : ''}<span class="when">${esc(state.dayMode ? new Date(it.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : fmtDate(it.date))}</span></span>
+      <span class="row1"><span class="who">${esc(who)}${it.count > 1 ? ` <span class="count">(${it.count})</span>` : ''}</span>${it.starred ? '<span class="star" role="button" aria-label="Ne plus suivre">★</span>' : ''}<span class="when">${esc(state.dayMode ? new Date(it.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : fmtDate(it.date))}</span></span>
       <span class="subj${attSize ? ' has-att' : ''}"><span class="subj-t">${it.unread ? '<span class="sr">Non lu : </span>' : ''}${esc(it.subject)}</span>${attSize}</span>
       <span class="row3"><span class="snip">${esc(it.snippet)}</span><span class="chips">${it.att && !attSize ? '<span class="chip att-chip" title="Pièce jointe">📎</span>' : ''}${sizeChip}${accChip}${chips}</span></span>
     </span></a>`;
@@ -682,6 +682,9 @@ function bindListGestures(list) {
   list.addEventListener('contextmenu', e => { if (e.target.closest('a.item')) e.preventDefault(); });
   list.addEventListener('click', e => {
     if (e.target.closest('[data-tray]')) return;
+    // Toucher l'étoile retire le suivi, sans ouvrir le mail
+    const st = e.target.closest('.star');
+    if (st && !state.sel) { e.preventDefault(); e.stopPropagation(); const a = st.closest('a.item'); if (a) unstarRow(a.dataset.id); return; }
     const a = e.target.closest('a.item'); if (!a) return;
     if (longDone || swiped) { e.preventDefault(); longDone = false; swiped = false; return; }
     if (state.sel) { e.preventDefault(); toggleSel(a); }
@@ -693,6 +696,16 @@ function collapseRow(a) {
   a.style.transition = 'transform .2s, opacity .2s'; a.style.transform = 'translateX(-110%)'; a.style.opacity = '0';
   setTimeout(() => { a.style.overflow = 'hidden'; a.style.height = a.offsetHeight + 'px'; a.offsetHeight; a.style.transition = 'height .2s, margin .2s, padding .2s'; a.style.height = '0'; a.style.margin = '0'; a.style.paddingTop = a.style.paddingBottom = '0'; a.style.borderWidth = '0'; }, 180);
   setTimeout(() => { a.remove(); $$('#list .swipe-bg').forEach(x => x.remove()); }, 420);
+}
+async function unstarRow(id) {
+  const it = findItem(id); if (!it) return;
+  const set = v => { Object.values(state.lists).forEach(d => { d.items = d.items.map(i => i.id === id ? Object.assign({}, i, { starred: v }) : i); }); reDraw(); };
+  const run = v => it.acc === 'free'
+    ? (p => rapi('/free/flags', { method: 'POST', body: { folder: p.folder, uids: [p.uid], flagged: v } }))(parseFreeId(id))
+    : api('threads/' + id + '/modify', { method: 'POST', body: v ? { addLabelIds: ['STARRED'] } : { removeLabelIds: ['STARRED'] } });
+  set(false);
+  try { await run(false); toast('Suivi retiré', { label: 'Annuler', run: async () => { set(true); try { await run(true); } catch (e) { set(false); toast('Annulation impossible'); } } }); }
+  catch (e) { set(true); if (e.message !== 'auth') toast('Échec : ' + e.message); }
 }
 function findItem(id) { for (const d of Object.values(state.lists)) { const i = d.items.find(x => x.id === id); if (i) return i; } return null; }
 async function swipeAct(id, kind) {

@@ -416,3 +416,4 @@ body.selecting .item .mark{display:flex}
 #list .swipe-bg.tray{pointer-events:auto}
 .fold.common .frow svg{width:22px;height:22px;flex:none;fill:none;stroke:currentColor;stroke-width:2;color:var(--muted)}
 .fold.common .cdots{display:flex;gap:4px;margin-left:auto}
+.item .star{display:inline-flex;align-items:center;justify-content:center;min-width:40px;min-height:36px;margin:-10px -4px -10px 0;font-size:1.15rem;cursor:pointer}
