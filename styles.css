@@ -325,3 +325,5 @@ details.set .ftog[aria-expanded="true"] .chev{transform:rotate(45deg)}
 .xfer-bar i{position:absolute;left:0;bottom:0;height:3px;background:var(--accent-fill);transition:width .5s}
 .xfer-bar .sec-btn{align-self:flex-start;margin:4px 0 0}
 .xfer-bar.err{border-color:#e5534b}
+a.frow.xfering{opacity:.45;pointer-events:none}
+a.frow.xfering .nm::after{content:' · transfert vers Gmail…';color:var(--accent);font-size:.78rem;font-weight:600}

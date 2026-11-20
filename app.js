@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.11.1';
+const APP_VERSION = '2.11.2';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -1552,7 +1552,10 @@ async function watchTransfer() {
     : t.state === 'done' ? `<b>Transfert terminé ✓</b><span>${t.done} mail${t.done > 1 ? 's' : ''} dans Gmail › ${esc(t.label.split('/').join(' › '))}${t.failed ? ' · ' + t.failed + ' en échec (restés dans Free)' : ''}</span><button class="sec-btn" id="xfer-ok">OK</button>`
     : `<b>Transfert interrompu</b><span>${esc(t.error)} · ${t.done} mails copiés. Relance le transfert : il reprend là où il s'est arrêté.</span><button class="sec-btn" id="xfer-ok">OK</button>`;
   const ok = $('#xfer-ok'); if (ok) ok.onclick = () => { LS.set('xferSeen', t.path + t.label + t.done); bar.hidden = true; state.folders = null; LS.del('foldersCache'); renderLabels(); };
-  if (t.state === 'running') xferTimer = setTimeout(watchTransfer, 3000);
+  // dossiers Free en cours de transfert : grisés avec la progression
+  $$('a.frow[data-k^="f:"]').forEach(a => { const p = a.dataset.k.slice(2); const on = t.state === 'running' && (p === t.path || p.startsWith(t.path + '/') || p.startsWith(t.path + '.')); a.classList.toggle('xfering', on); });
+  if (t.state === 'running') { state.xferRunning = true; xferTimer = setTimeout(watchTransfer, 3000); }
+  else if (state.xferRunning) { state.xferRunning = false; state.folders = null; LS.del('foldersCache'); labelsCache = null; setTimeout(renderLabels, 300); }
 }
 function moveFolderSheet(x, all) {
   if (x.full === BLOCK_LABEL) { toast('Le dossier Indésirables est protégé'); return; }
