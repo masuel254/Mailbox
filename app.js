@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.10.10';
+const APP_VERSION = '2.11.0';
 const APP_DATE = '19/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -1538,6 +1538,22 @@ function bindFolderSwipe(box, find, onDelete, onMove) {
   });
   box.addEventListener('click', e => { if (swiped && e.target.closest('a.frow')) { e.preventDefault(); swiped = false; } }, true);
 }
+let xferTimer = null;
+async function watchTransfer() {
+  clearTimeout(xferTimer);
+  const bar = $('#xfer-bar'); if (!bar) return;
+  let t; try { t = await rapi('/transfer/status'); } catch (e) { return; }
+  if (!t || t.state === 'none' || (t.state !== 'running' && LS.get('xferSeen', '') === t.path + t.label + t.done)) { bar.hidden = true; return; }
+  const pct = t.total ? Math.round(100 * t.done / t.total) : 0;
+  bar.hidden = false;
+  bar.className = 'xfer-bar' + (t.state === 'error' ? ' err' : '');
+  bar.innerHTML = t.state === 'running'
+    ? `<b>Transfert Free → Gmail</b><span>${esc(t.path)} → ${esc(t.label.split('/').join(' › '))} · ${t.done} / ${t.total || '…'}${t.failed ? ' · ' + t.failed + ' en échec' : ''}</span><i style="width:${pct}%"></i>`
+    : t.state === 'done' ? `<b>Transfert terminé ✓</b><span>${t.done} mail${t.done > 1 ? 's' : ''} dans Gmail › ${esc(t.label.split('/').join(' › '))}${t.failed ? ' · ' + t.failed + ' en échec (restés dans Free)' : ''}</span><button class="sec-btn" id="xfer-ok">OK</button>`
+    : `<b>Transfert interrompu</b><span>${esc(t.error)} · ${t.done} mails copiés. Relance le transfert : il reprend là où il s'est arrêté.</span><button class="sec-btn" id="xfer-ok">OK</button>`;
+  const ok = $('#xfer-ok'); if (ok) ok.onclick = () => { LS.set('xferSeen', t.path + t.label + t.done); bar.hidden = true; state.folders = null; LS.del('foldersCache'); renderLabels(); };
+  if (t.state === 'running') xferTimer = setTimeout(watchTransfer, 3000);
+}
 function moveFolderSheet(x, all) {
   if (x.full === BLOCK_LABEL) { toast('Le dossier Indésirables est protégé'); return; }
   const sep = x.delim || '/';
@@ -1549,7 +1565,20 @@ function moveFolderSheet(x, all) {
     <p style="margin:0;color:var(--muted);font-size:.85rem"><span class="dot tdot" style="background:var(--${x.acc})"></span>Ses mails et sous-dossiers suivent. Si un dossier du même nom existe déjà à l’arrivée, les deux sont fusionnés.</p>
     <label class="f">Ranger dans<select id="mv-parent"><option value="">— Premier niveau —</option>${targets.map(y => `<option value="${esc(y.full)}" ${y.full === curParent ? 'selected' : ''}>${esc(y.full.split(sep).join(' › '))}</option>`).join('')}</select></label>
     <label class="f">Nom<input id="mv-name" value="${esc(leaf)}" autocomplete="off"></label>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="mv-ok">Déplacer</button></div>`);
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="mv-ok">Déplacer</button></div>
+    ${x.acc === 'free' && relayOn() && relayGmailOn() ? `<div class="xfer"><h3 class="tidy-h"><span class="dot tdot" style="background:var(--free)"></span>→<span class="dot tdot" style="background:var(--gmail)"></span>Ou transférer vers Gmail</h3>
+      <p style="margin:0;color:var(--muted);font-size:.8rem;line-height:1.45">Les mails de ce dossier${all.some(y => y.acc === 'free' && y.full.startsWith(x.full + sep)) ? ' et de ses sous-dossiers' : ''} sont copiés dans Gmail, avec leurs dates, pièces jointes et état lu/non lu. Ça se fait sur ton serveur : tu peux fermer l'appli.</p>
+      <label class="f">Dossier Gmail d'arrivée<select id="xf-parent"><option value="">— Premier niveau —</option>${[...new Set(all.filter(y => y.acc === 'gmail').flatMap(y => { const ps = y.full.split('/'); return ps.map((_, i) => ps.slice(0, i + 1).join('/')); }))].filter(p => p !== BLOCK_LABEL).sort((a, c) => a.localeCompare(c, 'fr')).map(p => `<option value="${esc(p)}" ${p.toLowerCase() === curParent.split(sep).join('/').toLowerCase() ? 'selected' : ''}>${esc(p.split('/').join(' › '))}</option>`).join('')}</select></label>
+      <label class="f">Nom dans Gmail<input id="xf-name" value="${esc(leaf)}" autocomplete="off"></label>
+      <label class="switch">Ensuite, mettre les mails Free à la corbeille et supprimer le dossier Free<input type="checkbox" id="xf-del" checked></label>
+      <button class="btn primary" id="xf-ok">Transférer vers Gmail</button></div>` : ''}`);
+  const xf = $('#xf-ok'); if (xf) xf.onclick = async () => {
+    const name = $('#xf-name').value.trim().replace(/[\/]/g, '-'); if (!name) { toast('Donne un nom'); return; }
+    const parent = $('#xf-parent').value, label = parent ? parent + '/' + name : name;
+    xf.disabled = true; xf.textContent = 'Démarrage…';
+    try { await rapi('/transfer/free-to-gmail', { method: 'POST', body: { path: x.full, label, deleteSource: $('#xf-del').checked } }); closeSheet(); toast('Transfert lancé vers Gmail › ' + label.split('/').join(' › ')); state.folders = null; LS.del('foldersCache'); renderLabels(); }
+    catch (e) { xf.disabled = false; xf.textContent = 'Transférer vers Gmail'; toast(e.message); }
+  };
   $('#mv-ok').onclick = async () => {
     const name = $('#mv-name').value.trim().replace(/[\/]/g, '-'); if (!name) { toast('Donne un nom'); return; }
     const parent = $('#mv-parent').value, to = parent ? parent + sep + name : name;
@@ -1645,6 +1674,7 @@ async function renderLabels() {
   const v = $('#view');
   v.innerHTML = `<div class="sticky-head"><div class="top"><h1>Dossiers</h1><button class="icon-btn" id="btn-newdir" aria-label="Nouveau dossier">${ICON.plus}</button><button class="btn tidy-btn" id="btn-tidy">Ranger</button><button class="icon-btn" id="btn-refresh" aria-label="Actualiser">${ICON.refresh}</button></div>
     <div class="searchbar"><input type="search" id="fq" placeholder="Chercher un dossier" autocomplete="off" enterkeyhint="search"></div></div>
+    <div id="xfer-bar" hidden></div>
     <a class="set-link" href="#/waiting"><span class="set-t">⏳ En attente de réponse</span><span class="set-s">Suivi Gmail + Free</span><span class="chev-r" aria-hidden="true"></span></a>
     <div id="labs"><div class="loading">Chargement…</div></div>`;
   $('#btn-refresh').onclick = () => { state.folders = null; LS.del('foldersCache'); renderLabels(); };
@@ -1720,6 +1750,7 @@ async function renderLabels() {
   $('#fq').oninput = e => draw(e.target.value.trim());
   $('#btn-tidy').onclick = () => tidySheet(g, f);
   $('#btn-newdir').onclick = () => newFolderSheet(g, f);
+  if (relayOn() && freeOn()) watchTransfer();
   bindFolderSwipe($('#labs'), k => byKey.get(k), async x => { if (x.acc === 'gmail' && x.m === 0 && !(await gIsEmpty(x.id).catch(() => false))) x = Object.assign({}, x, { m: -1 }); deleteFolderSheet(x, all); }, x => moveFolderSheet(x, all));
   redraw = () => {
     if (!location.hash.startsWith('#/labels') || !$('#labs')) return;

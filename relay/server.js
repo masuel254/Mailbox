@@ -92,6 +92,73 @@ async function gapi(p, opt = {}) {
   return r.status === 204 ? null : r.json().catch(() => null);
 }
 
+/* ---------- Transfert d'un dossier Free vers Gmail ---------- */
+async function gImport(raw) {
+  const t = await gmailToken();
+  const r = await fetch('https://gmail.googleapis.com/upload/gmail/v1/users/me/messages/import?uploadType=media&internalDateSource=dateHeader&neverMarkSpam=true', { method: 'POST', headers: { Authorization: 'Bearer ' + t.access_token, 'Content-Type': 'message/rfc822' }, body: raw, signal: AbortSignal.timeout(120000) });
+  if (!r.ok) throw new Error('Gmail ' + r.status);
+  return r.json();
+}
+async function gEnsureLabel(name) {
+  const all = ((await gapi('labels')) || {}).labels || [];
+  const find = n => all.find(l => l.name.toLowerCase() === n.toLowerCase());
+  const parts = name.split('/');
+  let id = null;
+  for (let i = 1; i <= parts.length; i++) {
+    const n = parts.slice(0, i).join('/');
+    let l = find(n);
+    if (!l) { try { l = await gapi('labels', { method: 'POST', body: { name: n, labelListVisibility: 'labelShow', messageListVisibility: 'show' } }); all.push(l); } catch (e) { if (i === parts.length) throw e; } }
+    if (i === parts.length) id = l.id;
+  }
+  return id;
+}
+async function runTransfer(job) {
+  const client = new ImapFlow(Object.assign({}, C.imap, { auth: { user: S.free.user, pass: dec(S.free.pass) }, logger: false }));
+  try {
+    await client.connect();
+    const list = await client.list();
+    const root = list.find(m => m.path === job.path);
+    if (!root) throw new Error('Dossier Free introuvable');
+    const d = root.delimiter || '/';
+    const dirs = list.filter(m => m.path === job.path || m.path.startsWith(job.path + d)).sort((a, b) => a.path.length - b.path.length);
+    const trash = (await folders(client)).trash;
+    for (const dir of dirs) {
+      const st = await client.status(dir.path, { messages: true }).catch(() => ({ messages: 0 }));
+      job.total += st.messages || 0;
+    }
+    save();
+    for (const dir of dirs) {
+      const labelName = job.label + dir.path.slice(job.path.length).split(d).join('/');
+      const labelId = await gEnsureLabel(labelName);
+      const lock = await client.getMailboxLock(dir.path);
+      try {
+        const uids = ((await client.search({ all: true }, { uid: true })) || []).filter(u => !(job.doneUids[dir.path] || []).includes(u));
+        for (let i = 0; i < uids.length; i += 10) {
+          const part = uids.slice(i, i + 10), moved = [];
+          for await (const m of client.fetch(part, { source: true, flags: true }, { uid: true })) {
+            try {
+              const r = await gImport(m.source);
+              await gapi('messages/' + r.id + '/modify', { method: 'POST', body: { addLabelIds: [labelId].concat(m.flags.has('\\Seen') ? [] : ['UNREAD']), removeLabelIds: ['INBOX'] } });
+              job.done++; moved.push(m.uid);
+            } catch (e) { job.failed++; log('transfert', dir.path, m.uid, e.message); }
+          }
+          (job.doneUids[dir.path] = job.doneUids[dir.path] || []).push(...moved);
+          if (job.deleteSource && moved.length && trash) await client.messageMove(moved, trash, { uid: true }).catch(e => log('transfert corbeille', e.message));
+          save();
+        }
+      } finally { lock.release(); }
+    }
+    if (job.deleteSource && !job.failed) {
+      for (const dir of dirs.slice().reverse()) {
+        const st = await client.status(dir.path, { messages: true }).catch(() => ({ messages: 1 }));
+        if (!st.messages) await client.mailboxDelete(dir.path).catch(() => {});
+      }
+    }
+    job.state = 'done';
+  } catch (e) { job.state = 'error'; job.error = e.message; log('transfert', e.message); }
+  finally { job.endedAt = Date.now(); save(); await client.logout().catch(() => {}); }
+}
+
 /* ---------- Free (IMAP / SMTP) ---------- */
 let imapQueue = Promise.resolve();
 function withImap(fn) {
@@ -647,6 +714,17 @@ const routes = {
     if (!r || r.status === 401) throw Object.assign(new Error('Clé refusée par Groq'), { code: 400 });
     S.ai = { key: enc(k) }; save(); return { ok: true, ai: true };
   },
+  'POST /transfer/free-to-gmail': async (q, b) => {
+    if (!S.free || !S.gmail) throw Object.assign(new Error('Gmail et Free doivent être reliés au relais'), { code: 409 });
+    if (S.transfer && S.transfer.state === 'running') throw Object.assign(new Error('Un transfert est déjà en cours'), { code: 409 });
+    const path = String(b.path || ''), label = String(b.label || '').trim().replace(/^\/|\/$/g, '');
+    if (!path || !label || path === 'INBOX' || path === BLOCK_LABEL) throw Object.assign(new Error('Dossier invalide'), { code: 400 });
+    S.transfer = { path, label, deleteSource: !!b.deleteSource, total: 0, done: 0, failed: 0, state: 'running', startedAt: Date.now(), doneUids: {} };
+    save();
+    runTransfer(S.transfer);
+    return { ok: true };
+  },
+  'GET /transfer/status': async () => { const t = S.transfer; return t ? { path: t.path, label: t.label, total: t.total, done: t.done, failed: t.failed, state: t.state, error: t.error || '', deleteSource: t.deleteSource } : { state: 'none' }; },
   'POST /ai/folders': async (q, b) => aiFolders(Array.isArray(b.folders) ? b.folders : [], b.focus),
   'POST /free/folder-rename': async (q, b) => withImap(async client => {
     const from = String(b.from || ''), to = String(b.to || '');
@@ -737,5 +815,7 @@ server.listen(C.port, () => {
   setTimeout(() => poll().catch(() => {}), 3000);
   setInterval(() => poll().catch(() => {}), C.pollMs);
   setTimeout(() => startIdle().catch(() => {}), 5000);
+  // reprise d'un transfert interrompu par un redémarrage
+  if (S.transfer && S.transfer.state === 'running') { S.transfer.total = S.transfer.deleteSource ? S.transfer.done : 0; setTimeout(() => runTransfer(S.transfer), 8000); }
 });
 process.on('SIGTERM', () => { save(); process.exit(0); });
