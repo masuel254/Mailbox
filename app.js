@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '2.12.3';
+const APP_VERSION = '2.12.4';
 const APP_DATE = '20/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -199,6 +199,18 @@ function splitAddrs(s) {
 const isMe = email => !!email && [settings.email, settings.freeEmail].some(x => x && email.toLowerCase() === x.toLowerCase());
 const shortName = a => isMe(a.email) ? 'moi' : (a.name.split(/\s+/)[0].length > 1 && a.name !== a.email ? a.name : a.email);
 function initials(name) { const p = name.replace(/[^\p{L}\s]/gu, '').trim().split(/\s+/); return ((p[0] || '?')[0] + (p[1] ? p[1][0] : '')).toUpperCase(); }
+function dayLabel(ms) {
+  const d = new Date(ms), n = new Date(), same = (a, b) => a.toDateString() === b.toDateString();
+  if (same(d, n)) return 'Aujourd’hui';
+  const y = new Date(n); y.setDate(n.getDate() - 1); if (same(d, y)) return 'Hier';
+  return d.toLocaleDateString('fr-FR', Object.assign({ day: 'numeric', month: 'long' }, n - d < 6 * 864e5 ? { weekday: 'long' } : {}, d.getFullYear() !== n.getFullYear() ? { year: 'numeric' } : {}));
+}
+/* Liste groupée par jour : intertitre par jour, heure seule sur chaque mail */
+function byDay(items, render) {
+  let last = '', h = '';
+  items.forEach(i => { const dl = dayLabel(i.date); if (dl !== last) { h += `<div class="day-h">${esc(dl)}</div>`; last = dl; } h += render(i); });
+  return h;
+}
 function fmtDate(ms, long) {
   const d = new Date(ms), n = new Date();
   const same = (a, b) => a.toDateString() === b.toDateString();
@@ -450,14 +462,14 @@ function itemHTML(it, cls, sentView) {
   return `<a class="item ${cls}${sel}" data-id="${esc(it.id)}" href="${href}">
     <span class="mark" aria-hidden="true"></span>
     <span class="body">
-      <span class="row1"><span class="who">${esc(who)}${it.count > 1 ? ` <span class="count">(${it.count})</span>` : ''}</span>${it.starred ? '<span class="star" aria-label="Suivi">★</span>' : ''}<span class="when">${esc(fmtDate(it.date))}</span></span>
+      <span class="row1"><span class="who">${esc(who)}${it.count > 1 ? ` <span class="count">(${it.count})</span>` : ''}</span>${it.starred ? '<span class="star" aria-label="Suivi">★</span>' : ''}<span class="when">${esc(state.dayMode ? new Date(it.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : fmtDate(it.date))}</span></span>
       <span class="subj">${it.unread ? '<span class="sr">Non lu : </span>' : ''}${esc(it.subject)}</span>
       <span class="row3"><span class="snip">${esc(it.snippet)}</span><span class="chips">${sizeChip}${accChip}${chips}</span></span>
     </span></a>`;
 }
 function drawList(data, plain) {
   const l = $('#list'); if (!l) return;
-  state.showAcc = freeOn();
+  state.showAcc = freeOn(); state.dayMode = false;
   if (!data.items.length) { l.innerHTML = $('#subdirs') && $('#subdirs').innerHTML ? '<div class="empty">Aucun mail directement dans ce dossier : ouvre un sous-dossier ci-dessus.</div>' : '<div class="empty">Aucun message ici.</div>'; return; }
   // Recherche par taille (larger:) : du plus gros au plus petit, taille affichée
   const ck = String(state.current);
@@ -469,10 +481,11 @@ function drawList(data, plain) {
   }
   state.showSize = false;
   const unread = data.items.filter(i => i.unread), read = data.items.filter(i => !i.unread);
+  state.dayMode = true;
   let h = '';
   const inboxView = ['INBOX', 'UNREAD'].includes(keyOf(state.current)) || isFolderView(keyOf(state.current));
-  if (unread.length) h += `<h2 class="sec unread">Non lus · ${unread.length}${inboxView ? '<button class="sec-btn" id="btn-readall" type="button">Tout marquer lu</button>' : ''}</h2>` + unread.map(i => itemHTML(i, 'u')).join('');
-  if (read.length) h += (unread.length ? '<h2 class="sec">Déjà lus</h2>' : '') + read.map(i => itemHTML(i, plain ? 'plain' : '', keyOf(state.current) === 'SENT')).join('');
+  if (unread.length) h += `<h2 class="sec unread">Non lus · ${unread.length}${inboxView ? '<button class="sec-btn" id="btn-readall" type="button">Tout marquer lu</button>' : ''}</h2>` + byDay(unread, i => itemHTML(i, 'u'));
+  if (read.length) h += (unread.length ? '<h2 class="sec">Déjà lus</h2>' : '') + byDay(read, i => itemHTML(i, plain ? 'plain' : '', keyOf(state.current) === 'SENT'));
   if (data.next || data.freeMore) h += '<button class="more" id="more">Afficher plus</button>';
   l.innerHTML = h;
   const ra = $('#btn-readall'); if (ra) ra.onclick = e => { e.stopPropagation(); readAll(ra); };
@@ -1330,7 +1343,7 @@ const GUIDE = [
   ['👋', 'Prise en main', `
     <p>MailBox réunit <b>Gmail</b> (pastille bleue) et <b>Free</b> (pastille rose) dans une seule appli, plus lisible que Gmail.</p>
     <p>En bas : <b>Reçus</b>, <b>Envoyés</b>, <b>Écrire</b>, <b>Dossiers</b>, <b>Réglages</b>. Le chiffre sur Reçus et sur l'icône de l'iPhone est le nombre de mails non lus.</p>
-    <p>Un mail <b>non lu</b> a un cadre jaune et un rond jaune plein. Un mail <b>lu</b> est simplement en gris. L'étiquette <b>Gmail</b> ou <b>Free</b> en bas à droite indique la boîte.</p>
+    <p>Un mail <b>non lu</b> a un cadre jaune et un rond jaune plein. Les mails sont groupés par jour (Aujourd’hui, Hier, Mardi 17 novembre…), avec l’heure à droite. Un mail <b>lu</b> est simplement en gris. L'étiquette <b>Gmail</b> ou <b>Free</b> en bas à droite indique la boîte.</p>
     <div class="tip">Les mots de passe ne sont jamais dans l'appli ni sur GitHub : Gmail passe par Google, Free par ton serveur, chiffré.</div>`],
   ['👆', 'Les gestes', `
     <div class="gges"><span>← court<br><b>Supprimer</b></span><span>←← jusqu'au bord<br><b>Bloquer</b></span><span>→<br><b>Lu / non lu</b></span></div>
