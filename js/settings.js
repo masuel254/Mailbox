@@ -3,9 +3,25 @@
 // Nombre de mails de chaque boîte (pour info), en haut des Réglages
 async function mailboxStats() {
   const fmt = n => Number(n || 0).toLocaleString('fr-FR');
-  const g = $('#mbs-g'), f = $('#mbs-f');
-  try { const p = await api('profile'); if (g) g.textContent = 'Gmail · ' + fmt(p.messagesTotal) + ' mails'; } catch (e) { if (g) g.textContent = 'Gmail · indisponible'; }
-  if (f) { try { const r = await rapi('/free/stats'); f.textContent = 'Free · ' + fmt(r.total) + ' mails'; f.title = (r.folders || []).map(x => x.name + ' : ' + x.messages).join('\n'); } catch (e) { f.textContent = 'Free · indisponible'; } }
+  const g = $('#mbs-g'), f = $('#mbs-f'), sum = [];
+  const block = (dot, name, total, rows) => `<div class="mbs-h"><span class="dot" style="background:var(--${dot === 'g' ? 'gmail' : 'free'})"></span><b>${name}</b><span>${fmt(total)} mails</span></div>` + rows.map(([n, v]) => `<div class="mbs-r"><span>${esc(n)}</span><span>${fmt(v)}</span></div>`).join('');
+  const jobs = [(async () => {
+    try {
+      const [p, ...ls] = await Promise.all([api('profile'), ...['INBOX', 'SENT', 'DRAFT', 'SPAM', 'TRASH'].map(id => api('labels/' + id).catch(() => null))]);
+      const nm = { INBOX: 'Réception', SENT: 'Envoyés', DRAFT: 'Brouillons', SPAM: 'Spam', TRASH: 'Corbeille' };
+      if (g) g.innerHTML = block('g', 'Gmail', p.messagesTotal, ls.filter(Boolean).map(l => [nm[l.id] || l.name, l.messagesTotal || 0]));
+      sum[0] = 'Gmail ' + fmt(p.messagesTotal);
+    } catch (e) { if (g) g.innerHTML = '<p>Gmail indisponible</p>'; }
+  })()];
+  if (f) jobs.push((async () => {
+    try {
+      const r = await rapi('/free/stats');
+      f.innerHTML = block('f', 'Free', r.total, (r.folders || []).filter(x => x.messages).sort((a, b) => b.messages - a.messages).map(x => [fixMojibake ? fixMojibake(x.name) : x.name, x.messages]));
+      sum[1] = 'Free ' + fmt(r.total);
+    } catch (e) { f.innerHTML = '<p>Free indisponible (relais à mettre à jour ?)</p>'; }
+  })());
+  await Promise.all(jobs);
+  const s = $('#mbs-sum'); if (s) s.textContent = sum.filter(Boolean).join(' · ') || '—';
 }
 function renderSettings() {
   const hq = new URLSearchParams((location.hash.split('?')[1]) || '');
@@ -18,7 +34,8 @@ function renderSettings() {
   const connected = !!LS.get('token', null) || relayGmailOn();
   $('#view').innerHTML = `
     <a class="back back-sm" href="#/list/INBOX">${ICON.back}Reçus</a><div class="top"><h1>Réglages</h1></div>
-    <div class="mb-stats" id="mb-stats"><span>Boîtes mail</span><b id="mbs-g">Gmail · …</b>${freeOn() ? '<b id="mbs-f">Free · …</b>' : ''}</div>
+    <details class="set" data-set="mbstats"><summary><span class="set-t">Boîtes mail</span><span class="set-s" id="mbs-sum">…</span><span class="chev" aria-hidden="true"></span></summary>
+    <section class="card mbs-card"><div id="mbs-g"><p>Chargement…</p></div>${freeOn() ? '<div id="mbs-f"><p>Chargement…</p></div>' : ''}</section></details>
     <a class="set-link" href="#/guide"><span class="set-t">📖 Guide d'utilisation</span><span class="set-s">Gestes, dossiers, IA…</span><span class="chev-r" aria-hidden="true"></span></a>
     <a class="set-link" id="s-junk" href="#/labels"><span class="set-t">Voir les mails indésirables</span><span class="set-s">${freeOn() ? 'Gmail + Free' : 'Gmail'}</span><span class="chev-r" aria-hidden="true"></span></a>
     <details class="set" data-set="blocked"><summary><span class="set-t">Voir les expéditeurs bloqués</span><span class="set-s" id="s-blk-n"></span><span class="chev" aria-hidden="true"></span></summary>
