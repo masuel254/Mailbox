@@ -845,7 +845,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.11.5';
+const RELAY_V = '4.11.6';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -1094,6 +1094,14 @@ try { MJ = JSON.parse(dec(fs.readFileSync(MENAGE_FILE, 'utf8'))); if (MJ.status 
 const mjSave = () => { try { fs.writeFileSync(MENAGE_FILE, enc(JSON.stringify(MJ))); } catch (e) { log('ménage IA : sauvegarde', e.message); } };
 const mjPublic = () => { const o = Object.assign({}, MJ); delete o.refs; if (o.status === 'running' && gPaused()) o.waitUntil = gBackoff.until; return o; };
 async function gWait() { while (gPaused()) await pause(5000); }
+// Appel Gmail qui patiente pendant les pauses imposées par Google au lieu d'abandonner (jusqu'à 6 essais)
+async function gTry(p) {
+  for (let t = 0; t < 6; t++) {
+    await gWait();
+    try { return await gapi(p); } catch (e) { if (!/ 429| 403|rate|quota| 5\d\d/i.test(e.message)) throw e; if (!gPaused()) await pause(2000 * (t + 1)); }
+  }
+  throw new Error('Gmail indisponible');
+}
 async function menageScan() {
   MJ = { status: 'running', phase: 'Préparation', at: Date.now(), g: { done: 0, total: 0 }, f: { done: 0, total: 0 }, scanned: 0, excluded: 0 };
   const groups = new Map(), sentThreads = new Set();
@@ -1129,12 +1137,12 @@ async function menageScan() {
       MJ.g.total = sample.length; MJ.phase = 'Gmail : expéditeurs (échantillon des ' + sample.length + ' plus récents)';
       for (let i = 0; i < sample.length; i += 4) {
         await gWait();
-        await Promise.all(sample.slice(i, i + 4).map(id => gapi('messages/' + id + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=List-Unsubscribe').then(m => {
+        await Promise.all(sample.slice(i, i + 4).map(id => gTry('messages/' + id + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=List-Unsubscribe').then(m => {
           if (!m) return;
           const h = n => ((m.payload.headers || []).find(x => x.name.toLowerCase() === n) || {}).value || '';
           const f = addr(h('from'));
           add(f.name, f.email, h('subject'), !!h('list-unsubscribe'), { gs: m.id });
-        }).catch(() => {})));
+        }).catch(() => { MJ.gFail = (MJ.gFail || 0) + 1; })));
         MJ.g.done = Math.min(i + 4, sample.length); MJ.scanned = MJ.g.done + MJ.f.done;
         await pause(260);
       }
@@ -1184,7 +1192,7 @@ async function menageScan() {
         MJ.phase = 'Gmail : tes correspondants (' + (++k) + ' / ' + vir0.length + ')';
         await gWait();
         const em = [...g.emails].slice(0, 6);
-        const r = await gapi('messages?' + new URLSearchParams({ q: 'in:sent to:(' + em.join(' OR ') + ')', maxResults: 1 })).catch(() => null);
+        const r = await gTry('messages?' + new URLSearchParams({ q: 'in:sent to:(' + em.join(' OR ') + ')', maxResults: 1 })).catch(() => ({ messages: [1] }));  // en cas de doute (Gmail injoignable), on garde
         if (r && r.messages && r.messages.length) { verdict.set(g.key, { v: 'garder', why: 'tu lui as déjà écrit' }); MJ.excluded += g.count; }
         await pause(120);
       }
@@ -1200,7 +1208,7 @@ async function menageScan() {
           let pg = null;
           do {
             await gWait();
-            const r = (await gapi('messages?' + new URLSearchParams(Object.assign({ q: 'from:' + em + ' ' + BASEQ_G, maxResults: 500 }, pg ? { pageToken: pg } : {}))).catch(() => null)) || {};
+            const r = (await gTry('messages?' + new URLSearchParams(Object.assign({ q: 'from:' + em + ' ' + BASEQ_G, maxResults: 500 }, pg ? { pageToken: pg } : {}))).catch(() => { MJ.gFail = (MJ.gFail || 0) + 1; return null; })) || {};
             (r.messages || []).forEach(m => { if (!sentThreads.has(m.threadId)) g.g.push(m.id); });
             pg = r.nextPageToken;
           } while (pg && g.g.length < 20000);

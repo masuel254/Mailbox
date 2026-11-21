@@ -284,7 +284,8 @@ async function renderMenage() {
   let showAll = false;
   const draw = () => {
     const list = showAll ? vir : vir.slice(0, 25);
-    box.innerHTML = `<p class="fhint" style="margin:0 0 8px">Analyse du ${esc(new Date(r.end || r.at).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))} · ${fmt(r.scanned)} mails lus</p>
+    box.innerHTML = `<p class="fhint" style="margin:0 0 8px">Analyse du ${esc(new Date(r.end || r.at).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))} · ${fmt(r.scanned)} mails lus (Gmail ${fmt((r.g || {}).done)}, Free ${fmt((r.f || {}).done)})</p>
+      ${r.gFail ? `<p class="fhint" style="color:var(--accent)">⚠ ${fmt(r.gFail)} lectures Gmail refusées par Google pendant l’analyse : Gmail est incomplet, relance une analyse plus tard.</p>` : ''}
       <div class="mj-met"><div><b>${fmt(vir.reduce((a, g) => a + g.count, 0))}</b><span>mails de pub proposés</span></div><div><b>${vir.length}</b><span>expéditeurs</span></div></div>
       ${guards}
       ${vir.length ? `<h2 class="sec"><span>Proposés au ménage</span><button class="sec-btn" id="mj-all">${sel.size ? 'Tout décocher' : 'Tout cocher'}</button></h2><div class="card">${list.map(g => row(g, true)).join('')}${vir.length > list.length ? `<button class="mj-more" id="mj-more">Voir les ${vir.length - list.length} autres</button>` : ''}</div>` : '<div class="empty">Rien à virer : ta boîte est propre.</div>'}
