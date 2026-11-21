@@ -260,7 +260,7 @@ async function renderMenage() {
   let r;
   try { r = await rapi('/menage'); } catch (e) { box.innerHTML = `<div class="empty">${esc(e.status === 404 ? 'Ton relais n’est pas à jour : lance la commande Termius.' : e.message)}</div>`; return; }
   const fmt = n => Number(n || 0).toLocaleString('fr-FR');
-  const guards = `<div class="card mj-guard"><b>🛡 Jamais touchés</b><div><span>Pièces jointes</span><span>Factures, reçus</span><span>Commandes, billets</span><span>Tes réponses</span><span>Tes correspondants</span><span>Suivis</span></div></div>`;
+  const guards = `<div class="card mj-guard"><b>🛡 Jamais touchés</b><div><span>Pièces jointes</span><span>Factures, reçus</span><span>Confirmations de moins de 3 mois</span><span>Tes réponses</span><span>Tes correspondants</span><span>Suivis</span></div></div>`;
   if (r.status === 'running') {
     const tot = (r.g.total || 0) + (r.f.total || 0), done = (r.g.done || 0) + (r.f.done || 0), pct = tot ? Math.round(done / tot * 100) : 0;
     box.innerHTML = `<div class="card mj-run"><b>${esc(r.phase || 'Analyse')}…</b><div class="mj-bar"><span style="width:${pct}%"></span></div><small>${fmt(done)} / ${fmt(tot)} mails lus · ${fmt(r.excluded)} mis de côté par les garde-fous</small>
