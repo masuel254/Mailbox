@@ -16,7 +16,7 @@ async function mailboxStats() {
   if (f) jobs.push((async () => {
     try {
       const r = await rapi('/free/stats');
-      f.innerHTML = block('f', 'Free', r.total, (r.folders || []).filter(x => x.messages).sort((a, b) => b.messages - a.messages).map(x => [fixMojibake ? fixMojibake(x.name) : x.name, x.messages]));
+      f.innerHTML = block('f', 'Free', r.total, (r.folders || []).filter(x => x.messages).sort((a, b) => b.messages - a.messages).map(x => [fixMojibake(x.name), x.messages]));
       sum[1] = 'Free ' + fmt(r.total);
     } catch (e) { f.innerHTML = '<p>Free indisponible (relais à mettre à jour ?)</p>'; }
   })());
