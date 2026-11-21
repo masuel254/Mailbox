@@ -503,6 +503,7 @@ let trashJob = null;
 const pause = ms => new Promise(r => setTimeout(r, ms));
 async function runEmptyTrash(job) {
   log('vidage corbeille : début' + (S.gmail ? '' : ' (Gmail non relié au relais)'));
+  if (S.free) { try { job.free = (await freePurge('TRASH', n => { job.free = n; })).deleted || 0; } catch (e) { job.error = 'Free : ' + e.message; log('vidage corbeille Free :', e.message); } }
   if (S.gmail) {
     let tries = 0;
     while (true) {
@@ -521,20 +522,21 @@ async function runEmptyTrash(job) {
       }
     }
   }
-  if (S.free) { try { job.free = (await freePurge('TRASH')).deleted || 0; } catch (e) { job.error = job.error || 'Free : ' + e.message; } }
   job.running = false; job.end = Date.now();
   log('corbeille vidée : Gmail ' + job.gmail + ', Free ' + job.free + (job.error ? ' (' + job.error + ')' : ''));
 }
 /* Corbeille Free : effacement définitif (uniquement la corbeille) */
-async function freePurge(folderKey) {
+async function freePurge(folderKey, onProgress) {
   if (folderKey !== 'TRASH') throw Object.assign(new Error('Seule la corbeille peut être vidée définitivement'), { code: 400 });
   return withImap(async client => {
     const folder = await resolveFolder(client, 'TRASH');
     const lock = await client.getMailboxLock(folder);
     try {
       const uids = (await client.search({ all: true }, { uid: true })) || [];
-      if (uids.length) await client.messageDelete(uids, { uid: true });
-      return { ok: true, deleted: uids.length };
+      // Par lots de 200 : un seul ordre pour des milliers de mails est refusé ou trop long chez Free
+      let deleted = 0;
+      for (let i = 0; i < uids.length; i += 200) { await client.messageDelete(uids.slice(i, i + 200), { uid: true }); deleted += Math.min(200, uids.length - i); if (onProgress) onProgress(deleted); }
+      return { ok: true, deleted };
     } finally { lock.release(); }
   });
 }
@@ -845,7 +847,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.11.6';
+const RELAY_V = '4.11.7';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
