@@ -33,6 +33,8 @@ async function renderThread(id) {
   const chips = [...labels].map(l => l === 'INBOX' ? '<span class="chip">Réception</span>' : (labelById(l) ? `<span class="chip lab" style="--c:${esc(labelColor(labelById(l)))}">${esc(labelById(l).name)}</span>` : '')).join('');
   v.innerHTML = `
     <div class="top"><a class="back" href="#" id="back">${ICON.back}Retour</a>${FS_CTL}</div>
+    ${(() => { const lm = msgs[msgs.length - 1] || {}, fa = parseAddr(hdr(lm, 'From')); const tos = splitAddrs(hdr(lm, 'To')).concat(splitAddrs(hdr(lm, 'Cc'))).map(parseAddr).map(shortName);
+      return senderTop(fa.name || fa.email, fa.email, tos.join(', '), +lm.internalDate, msgs.length); })()}
     <h1 class="thread-title">${esc(subject)}</h1>
     <div class="thread-chips">${chips}</div>
     ${(() => { const other = msgs.map(m => parseAddr(hdr(m, 'From'))).filter(a => a.email && !isMe(a.email)).pop() || splitAddrs(hdr(lastM, 'To')).map(parseAddr).find(a => a.email && !isMe(a.email)); return other ? contactLink(other.name, other.email.toLowerCase()) : ''; })()}
@@ -50,7 +52,7 @@ async function renderThread(id) {
       <button id="t-cal">${ICON.cal}Agenda</button>
     </div>
     ${aiBar()}
-    <div id="msgs"></div>
+    <div id="msgs" class="${msgs.length === 1 ? 'solo' : ''}"></div>
     <div class="reply-bar">
       <button class="btn primary" id="r-reply">Répondre</button>
       <button class="btn" id="r-all">À tous</button>
@@ -92,6 +94,7 @@ async function renderFree(folder, uid) {
   state.freeMsg = m;
   v.innerHTML = `
     <div class="top"><a class="back" href="#" id="back">${ICON.back}Retour</a>${FS_CTL}</div>
+    ${senderTop(m.from.name || m.from.email, m.from.email, (m.to || '') + (m.cc ? ', ' + m.cc : ''), m.date, 1)}
     <h1 class="thread-title">${esc(m.subject)}</h1>
     <div class="thread-chips"><span class="chip acc-free">Free</span><span class="chip">${esc(folder === 'INBOX' ? 'Réception' : folder)}</span></div>
     ${(() => { if (m.from.email && !isMe(m.from.email)) return contactLink(m.from.name, m.from.email.toLowerCase()); const t = splitAddrs(m.to || '').map(parseAddr).find(a => a.email && !isMe(a.email)); return t ? contactLink(t.name, t.email.toLowerCase()) : ''; })()}
@@ -108,7 +111,7 @@ async function renderFree(folder, uid) {
       <button id="t-cal">${ICON.cal}Agenda</button>
     </div>
     ${aiBar()}
-    <div id="msgs"><article class="msg"><div class="msg-head" style="cursor:default">
+    <div id="msgs" class="solo"><article class="msg"><div class="msg-head" style="cursor:default">
       <span class="avatar" aria-hidden="true">${esc(initials(m.from.name || m.from.email || '?'))}</span>
       <span class="meta"><span class="from" style="display:block">${esc(isMe(m.from.email) ? 'Moi' : (m.from.name || m.from.email))}</span><span class="to" style="display:block">à ${esc(m.to || '…')}${m.cc ? ', ' + esc(m.cc) : ''}</span></span>
       <span class="date">${esc(fmtDate(m.date, true))}</span></div><div class="content"></div></article></div>
@@ -218,6 +221,13 @@ function goBack() {
 }
 window.addEventListener('hashchange', () => { state.cameFromApp = true; });
 
+/* Expéditeur en tête du mail : qui, à qui, quand, avant tout le reste */
+function senderTop(name, email, to, date, n) {
+  const me = isMe(email);
+  return `<div class="sender-top"><span class="avatar" aria-hidden="true">${esc(initials(name || email || '?'))}</span>
+    <span class="meta"><span class="from">${esc(me ? 'Moi' : name || email)}</span><span class="to">à ${esc(to.split(',').map(x => isMe(parseAddr(x).email) || /^moi$/i.test(x.trim()) ? 'moi' : x.trim()).filter(Boolean).join(', ') || '…')}${n > 1 ? ' · ' + n + ' messages' : ''}</span></span>
+    <span class="date">${esc(fmtDate(date, true))}</span></div>`;
+}
 function messageEl(m, open) {
   const from = parseAddr(hdr(m, 'From'));
   const tos = splitAddrs(hdr(m, 'To')).concat(splitAddrs(hdr(m, 'Cc'))).map(parseAddr).map(shortName);

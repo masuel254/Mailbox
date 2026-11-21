@@ -595,3 +595,12 @@ body.selecting .item .mark{display:flex}
 #outbox-bar{background:var(--accent-fill);color:var(--on-accent);text-decoration:none;bottom:calc(env(safe-area-inset-bottom) + 128px)}
 body:not(.offline) #outbox-bar{bottom:calc(env(safe-area-inset-bottom) + 86px)}
 body.no-tabbar #offline-bar,body.no-tabbar #outbox-bar{bottom:calc(env(safe-area-inset-bottom) + 14px)}
+/* Expéditeur tout en haut du mail */
+.sender-top{display:flex;gap:12px;align-items:center;padding:4px 4px 10px}
+.sender-top .avatar{flex:none}
+.sender-top .meta{flex:1;min-width:0;display:flex;flex-direction:column}
+.sender-top .from{font-weight:800;font-size:1.02rem;color:var(--strong);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.sender-top .to{font-size:.8rem;color:var(--muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.sender-top .date{font-size:.78rem;color:var(--muted);flex:none;align-self:flex-start;padding-top:4px;text-align:right;max-width:38%}
+#msgs.solo .msg-head{display:none}
+#msgs.solo .msg .content{padding-top:6px}
