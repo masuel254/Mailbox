@@ -494,8 +494,8 @@ async function renderLabels() {
       $l.innerHTML = (fv.length ? `<h2 class="sec"><span class="fav-t">★</span>Favoris</h2><div class="card fold">${fv.map(x => `<a class="frow" data-k="${esc(x.key)}" href="${x.href}">${FOLD_ICON}<span class="nm">${esc(x.full.split(x.delim || '/').join(' › '))}</span>${dot(x.acc)}${nb(x.n)}${star(x.key)}</a>`).join('')}</div>` : '<p class="fhint">Touche ☆ à côté d’un dossier pour l’épingler ici.</p>')
         + section('Gmail', 'gmail', g.filter(x => !isBlk(x))) + section('Free', 'free', f.filter(x => !isBlk(x)))
         + `<a class="set-link" href="#/list/STARRED"><span class="set-t">⭐ Suivis</span><span class="set-s">Mails marqués « Suivre »</span><span class="chev-r" aria-hidden="true"></span></a>`
-        + (LS.get('outboxN', 0) ? `<a class="set-link" href="#/outbox"><span class="set-t">📤 À envoyer · ${LS.get('outboxN', 0)}</span><span class="set-s">Écrits sans réseau, partent au retour de la connexion</span><span class="chev-r" aria-hidden="true"></span></a>` : '')
-        + `<a class="set-link" href="#/scheduled"><span class="set-t">⏱ Programmés et relances</span><span class="set-s">Envois à venir, rappels « pas de réponse »</span><span class="chev-r" aria-hidden="true"></span></a>`
+        + (LS.get('outboxN', 0) ? `<a class="set-link" href="#/outbox"><span class="set-t">📤 À envoyer · ${LS.get('outboxN', 0)}</span><span class="set-s">Sans réseau</span><span class="chev-r" aria-hidden="true"></span></a>` : '')
+        + `<a class="set-link" href="#/scheduled"><span class="set-t">⏱ Programmés</span><span class="set-s">Envois et relances</span><span class="chev-r" aria-hidden="true"></span></a>`
         + `<a class="set-link" href="#/list/DRAFT"><span class="set-t">📝 Brouillons</span><span class="set-s">Gmail</span><span class="chev-r" aria-hidden="true"></span></a>`
         + common();
       $$('details.fsec', $l).forEach(d => d.addEventListener('toggle', () => { openSecs[d.dataset.sec] = d.open; LS.set('openSecs', openSecs); }));

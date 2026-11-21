@@ -610,3 +610,6 @@ body.no-tabbar #offline-bar,body.no-tabbar #outbox-bar{bottom:calc(env(safe-area
 .toolbar:not(.tb-more){display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px}
 .toolbar:not(.tb-more) button{flex-direction:column;justify-content:center;gap:3px;height:auto;min-height:58px;padding:6px 2px;font-size:.72rem;border-radius:14px}
 .toolbar:not(.tb-more) button svg{margin:0}
+/* Lignes de réglages/dossiers : titre sur une ligne, sous-titre raccourci si besoin */
+.set-link .set-t{white-space:nowrap;flex:none}
+.set-link .set-s{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
