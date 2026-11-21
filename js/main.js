@@ -70,3 +70,4 @@ async function pullRefresh() {
 document.addEventListener('click', e => { const b = e.target.closest && e.target.closest('[data-fs]'); if (!b) return; settings.fontSize = Math.max(14, Math.min(28, settings.fontSize + +b.dataset.fs)); saveSettings(); toast('Taille du texte : ' + settings.fontSize + ' px'); });
 // Astuce affichée une seule fois : les gestes ne se devinent pas
 setTimeout(() => { if (!LS.get('tipGestures', false) && (location.hash || '').match(/#\/(list|today)/)) { LS.set('tipGestures', true); toast('Astuce : appui long sur un mail ou un dossier pour voir toutes ses actions', { label: 'OK', run: () => {} }); } }, 2500);
+onNetChange();

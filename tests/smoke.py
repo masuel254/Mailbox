@@ -62,7 +62,7 @@ async def main():
         await pg.click('.ct-row >> nth=0'); await pg.wait_for_timeout(1500)
         check(await pg.locator('#cs-feed').count() == 1, 'fiche contact : échanges et rendez-vous')
         await pg.evaluate("closeSheet()")
-        for h in ['#/labels', '#/scheduled', '#/settings', '#/tasks', '#/waiting', '#/search/devis']:
+        for h in ['#/labels', '#/scheduled', '#/outbox', '#/settings', '#/tasks', '#/waiting', '#/search/devis']:
             await go(h, 1800); check(len(await pg.inner_text('#view')) > 20, 'écran ' + h)
         check(not errs, 'aucune erreur JavaScript' + (' : ' + ' | '.join(errs[:3]) if errs else ''))
         await b.close()

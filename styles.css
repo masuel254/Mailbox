@@ -589,3 +589,9 @@ body.selecting .item .mark{display:flex}
 .home-seg a{height:40px;background:var(--surface);border:1px solid var(--line2);border-radius:12px;color:var(--text)}
 .home-seg a.on{border-color:var(--accent-fill)}
 #seg-n{margin-left:5px}
+/* Hors connexion */
+#offline-bar,#outbox-bar{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom) + 86px);z-index:55;border-radius:12px;padding:8px 12px;font-size:.82rem;font-weight:700;text-align:center;box-shadow:0 4px 14px rgba(0,0,0,.3)}
+#offline-bar{background:var(--surface);color:var(--muted);border:1px solid var(--line2)}
+#outbox-bar{background:var(--accent-fill);color:var(--on-accent);text-decoration:none;bottom:calc(env(safe-area-inset-bottom) + 128px)}
+body:not(.offline) #outbox-bar{bottom:calc(env(safe-area-inset-bottom) + 86px)}
+body.no-tabbar #offline-bar,body.no-tabbar #outbox-bar{bottom:calc(env(safe-area-inset-bottom) + 14px)}

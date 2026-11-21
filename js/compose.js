@@ -197,7 +197,19 @@ function renderCompose(params) {
       state.composeFrom = null;
       toast('Message envoyé');
       goBack();
-    } catch (e) { btn.disabled = false; btn.lastChild.textContent = 'Envoyer'; if (e.message !== 'auth') toast('Échec : ' + e.message); }
+    } catch (e) {
+      // Pas de réseau (avion, métro) : le message part dans « À envoyer » au lieu d'être perdu
+      if (isNetErr(e)) {
+        if (!o.attachments && added.length) o.attachments = added.map(a => ({ name: a.name, mime: a.mime, b64: a.b64 }));
+        const viaFree = $('#c-from') && $('#c-from').value === 'free';
+        await outboxAdd(Object.assign({ acc: viaFree ? 'free' : 'gmail', subject: o.subject, to: o.to, follow: follow ? { acc: viaFree ? 'free' : 'gmail', days: follow, to: parseAddr(splitAddrs(o.to)[0] || '').name || toEmail, toEmail, subject: o.subject } : null },
+          viaFree ? { body: { to: o.to, cc: o.cc, bcc: o.bcc, subject: o.subject, text: o.body, inReplyTo: o.inReplyTo, references: o.references, attachments: o.attachments } } : { o, threadId }));
+        dropDraft(); state.composeFrom = null;
+        toast('Pas de réseau : rangé dans « À envoyer », il partira tout seul au retour de la connexion');
+        goBack(); return;
+      }
+      btn.disabled = false; btn.lastChild.textContent = 'Envoyer'; if (e.message !== 'auth') toast('Échec : ' + e.message);
+    }
   };
 }
 

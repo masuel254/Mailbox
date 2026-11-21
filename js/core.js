@@ -2,7 +2,7 @@
    Le code est découpé par domaine ; les fichiers sont chargés dans l'ordre de index.html et partagent la même portée. */
 'use strict';
 
-const APP_VERSION = '4.8.3';
+const APP_VERSION = '4.9.0';
 const APP_DATE = '21/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -23,16 +23,17 @@ const IDB = (() => {
   const tx = (mode, fn) => db().then(d => new Promise((res, rej) => { const t = d.transaction('kv', mode); const q = fn(t.objectStore('kv')); t.oncomplete = () => res(q && q.result); t.onerror = () => rej(t.error); }));
   return { get: k => tx('readonly', s => s.get(k)).catch(() => undefined), set: (k, v) => tx('readwrite', s => s.put(v, k)).catch(() => {}), del: k => tx('readwrite', s => s.delete(k)).catch(() => {}) };
 })();
-// Conversations ouvertes gardées (les 60 dernières) : relisibles sans réseau
-function idbKeep(key, v) {
+// Conversations (120 dernières) et pièces jointes légères (80) gardées : relisibles sans réseau
+function idbKeep(key, v, group) {
   IDB.set(key, { at: Date.now(), v });
-  const ks = LS.get('idbKeys', []).filter(k => k !== key); ks.push(key);
-  while (ks.length > 60) IDB.del(ks.shift());
-  LS.set('idbKeys', ks);
+  const lk = group === 'att' ? 'idbAtt' : 'idbKeys', max = group === 'att' ? 80 : 120;
+  const ks = LS.get(lk, []).filter(k => k !== key); ks.push(key);
+  while (ks.length > max) IDB.del(ks.shift());
+  LS.set(lk, ks);
 }
-async function cachedFetch(key, fetcher) {
-  try { const v = await fetcher(); if (v) idbKeep(key, v); return v; }
-  catch (e) { if (e.message === 'auth') throw e; const c = await IDB.get(key); if (c && c.v) { toast('Hors connexion : version enregistrée sur l’iPhone'); return c.v; } throw e; }
+async function cachedFetch(key, fetcher, group) {
+  try { const v = await fetcher(); if (v) idbKeep(key, v, group); return v; }
+  catch (e) { if (e.message === 'auth' && navigator.onLine) throw e; const c = await IDB.get(key); if (c && c.v) { toast('Hors connexion : version enregistrée sur l’iPhone'); return c.v; } throw e; }
 }
 // Expéditeurs automatiques (notifications, newsletters) : affichés en retrait, jamais dans « À traiter »
 const NOREPLY_RE = /no-?reply|ne-?pas-?repondre|notification|newsletter|mailer-daemon|bounce|news@|info@|marketing|promo/i;
@@ -148,7 +149,7 @@ async function accessToken() {
       return r.access_token;
     } catch (e) {
       if (e.status === 409 || e.status === 401) { settings.relayGmail = false; saveSettings(); toast('Gmail est à relier de nouveau au relais (Réglages)'); }
-      else { toast(e.message); throw new Error('auth'); }
+      else { if (navigator.onLine) toast(e.message); throw new Error('auth'); }
     }
   }
   return auth.token();
@@ -310,7 +311,7 @@ function route() {
   exitSelect(true);
   document.body.classList.toggle('no-tabbar', view === 'thread' || view === 'compose' || view === 'free');
   const lk = parts[1] === 'UNREAD' ? 'INBOX' : (parts[1] || 'INBOX');
-  $$('#tabbar a').forEach(a => a.classList.toggle('on', a.dataset.tab === (view === 'list' ? (lk === 'INBOX' ? 'INBOX' : 'labels') : ['waiting', 'tasks', 'scheduled'].includes(view) ? 'labels' : view === 'today' ? 'INBOX' : ['guide', 'settings'].includes(view) ? 'INBOX' : view)));
+  $$('#tabbar a').forEach(a => a.classList.toggle('on', a.dataset.tab === (view === 'list' ? (lk === 'INBOX' ? 'INBOX' : 'labels') : ['waiting', 'tasks', 'scheduled', 'outbox'].includes(view) ? 'labels' : view === 'today' ? 'INBOX' : ['guide', 'settings'].includes(view) ? 'INBOX' : view)));
   $('#view').scrollTop = 0;
   if (!settings.clientId && !relayGmailOn() && view !== 'settings') return renderWelcome();
   if (view === 'thread') return renderThread(decodeURIComponent(parts[1]));
@@ -321,6 +322,7 @@ function route() {
   if (view === 'guide') return renderGuide();
   if (view === 'tasks') return renderTasks();
   if (view === 'scheduled') return renderScheduled();
+  if (view === 'outbox') return renderOutbox();
   if (view === 'today') return renderToday();
   if (view === 'contacts') return renderContacts();
   if (view === 'agenda') return renderAgenda();

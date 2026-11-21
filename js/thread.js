@@ -25,7 +25,7 @@ async function renderThread(id) {
   const starred = labels.has('STARRED');
   state.thread = { id, msgs, labels, subject };
   if (labels.has('UNREAD')) {
-    api('threads/' + id + '/modify', { method: 'POST', body: { removeLabelIds: ['UNREAD'] } }).then(() => badgeNow(1)).catch(() => {});
+    api('threads/' + id + '/modify', { method: 'POST', body: { removeLabelIds: ['UNREAD'] } }).then(() => badgeNow(1)).catch(e => { if (isNetErr(e)) queueAction({ t: 'gmodify', id, body: { removeLabelIds: ['UNREAD'] } }); });
     patchCached(id, i => Object.assign({}, i, { unread: false }));
   }
   const lastM = msgs[msgs.length - 1] || {};
@@ -88,7 +88,7 @@ async function renderFree(folder, uid) {
   try { m = await cachedFetch('fm:' + folder + ':' + uid, () => rapi('/free/message?' + new URLSearchParams({ folder, uid }))); }
   catch (e) { v.querySelector('.loading').outerHTML = `<div class="empty">Impossible d'ouvrir : ${esc(e.message)}</div>`; return; }
   const id = 'f:' + uid + ':' + folder;
-  if (!m.seen) { rapi('/free/flags', { method: 'POST', body: { folder, uids: [uid], seen: true } }).then(() => badgeNow(1)).catch(() => {}); patchCached(id, i => Object.assign({}, i, { unread: false })); }
+  if (!m.seen) { rapi('/free/flags', { method: 'POST', body: { folder, uids: [uid], seen: true } }).then(() => badgeNow(1)).catch(e => { if (isNetErr(e)) queueAction({ t: 'fflags', body: { folder, uids: [uid], seen: true } }); }); patchCached(id, i => Object.assign({}, i, { unread: false })); }
   state.freeMsg = m;
   v.innerHTML = `
     <div class="top"><a class="back" href="#" id="back">${ICON.back}Retour</a>${FS_CTL}</div>
@@ -118,7 +118,7 @@ async function renderFree(folder, uid) {
       <button class="btn" id="r-fwd">Transférer</button>
     </div>`;
   $('#back').onclick = e => { e.preventDefault(); goBack(); };
-  const att = a => a.data ? Promise.resolve(a.data) : rapi('/free/attachment?' + new URLSearchParams({ folder, uid, idx: a.idx })).then(r => { a.data = r.data; return r.data; });
+  const att = a => a.data ? Promise.resolve(a.data) : cachedFetch('fatt:' + folder + ':' + uid + ':' + a.idx, () => rapi('/free/attachment?' + new URLSearchParams({ folder, uid, idx: a.idx })).then(r => r.data), 'att').then(d => { a.data = d; return d; });
   renderBody(null, $('#msgs .content'), { acc: { html: fixMojibake(m.html), text: fixMojibake(m.text), att: m.attachments || [] }, att });
   const move = async (to, label) => { try { await rapi('/free/move', { method: 'POST', body: { folder, uids: [uid], to } }); patchCached(id, () => null); toast(label); badgeNow(0); goBack(); } catch (e) { toast(e.message); } };
   $('#t-archive').onclick = () => move('ARCHIVE', 'Archivé');
@@ -203,7 +203,8 @@ async function unsubscribe(h, post, acc, who) {
 }
 async function threadAction(id, body, msg, leave) {
   try {
-    await api('threads/' + id + '/modify', { method: 'POST', body });
+    try { await api('threads/' + id + '/modify', { method: 'POST', body }); }
+    catch (e) { if (!isNetErr(e)) throw e; queueAction({ t: 'gmodify', id, body }); msg += ' (appliqué au retour du réseau)'; }
     if (body.removeLabelIds && body.removeLabelIds.includes('INBOX')) Object.entries(state.lists).forEach(([k, c]) => { if (['INBOX', 'UNREAD'].includes(keyOf(k))) c.items = c.items.filter(i => i.id !== id); });
     toast(msg); badgeNow(0);
     if (leave) goBack();
@@ -381,7 +382,7 @@ const attCache = {};
 async function attData(msgId, a) {
   if (a.data) return a.data.replace(/-/g, '+').replace(/_/g, '/');
   const k = msgId + a.id;
-  if (!attCache[k]) attCache[k] = api('messages/' + msgId + '/attachments/' + a.id).then(r => r.data.replace(/-/g, '+').replace(/_/g, '/'));
+  if (!attCache[k]) attCache[k] = cachedFetch('att:' + msgId + ':' + a.id, () => api('messages/' + msgId + '/attachments/' + a.id).then(r => r.data.replace(/-/g, '+').replace(/_/g, '/')), 'att');
   return attCache[k];
 }
 async function openAttachment(fetcher, a, btn) {

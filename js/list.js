@@ -582,6 +582,8 @@ function updateSelBar() {
 }
 /* Applique une action à des mails (Gmail et Free) et renvoie de quoi l'annuler */
 async function act(ids, kind) {
+  // Hors connexion : l'action est notée et rejouée au retour du réseau
+  if (!navigator.onLine) { queueAction({ t: 'act', ids, kind }); toast('Hors connexion : fait au retour du réseau'); return { ok: ids.length, undo: async () => { LS.set('pendingActs', LS.get('pendingActs', []).filter(a => !(a.t === 'act' && a.kind === kind && a.ids.join() === ids.join()))); } }; }
   const undo = []; let ok = 0;
   const gIds = ids.filter(i => !i.startsWith('f:')), fIds = ids.filter(i => i.startsWith('f:'));
   const gBody = { read: { removeLabelIds: ['UNREAD'] }, unread: { addLabelIds: ['UNREAD'] }, archive: { removeLabelIds: ['INBOX'] } }[kind];
