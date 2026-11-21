@@ -678,7 +678,11 @@ async function moveExisting(target, lab) {
     if (page) p.set('pageToken', page);
     const r = (await api('messages?' + p.toString())) || {};
     const ids = (r.messages || []).map(m => m.id);
-    if (ids.length) await api('messages/batchModify', { method: 'POST', body: { ids, addLabelIds: [lab], removeLabelIds: ['INBOX', 'UNREAD'].concat(userLabs) } });
+    // Gmail limite le nombre de libellés changés par requête : les dossiers à retirer partent par paquets de 40
+    if (ids.length) {
+      await api('messages/batchModify', { method: 'POST', body: { ids, addLabelIds: [lab], removeLabelIds: ['INBOX', 'UNREAD'] } });
+      for (let i = 0; i < userLabs.length; i += 40) await api('messages/batchModify', { method: 'POST', body: { ids, removeLabelIds: userLabs.slice(i, i + 40) } });
+    }
     n += ids.length; page = r.nextPageToken;
   } while (page && n < 5000);
   return n;
