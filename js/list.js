@@ -96,7 +96,9 @@ async function loadList(key, q, cacheKey, plain, reset) {
     if ((key === 'INBOX' || key === 'UNREAD') && !more && useIndex(acc)) {
       // Relais pas encore mis à jour (pas d'index) : lecture classique, sans bloquer
       const ix = await rapi('/inbox' + (reset === 'fresh' ? '?fresh=1' : '')).catch(e => { if (e.status === 404) state.noIndex = true; return null; });
-      if (ix && ix.v && (ix.gmail || acc === 'free' || !relayGmailOn())) { applyIndex(ix, true); return; }
+      // Index incomplet (Gmail ou Free pas encore relu par le relais, ou en pause) : lecture classique
+      const ready = ix && ix.v && (ix.gReady !== false || acc === 'free') && (ix.fReady !== false || acc === 'gmail') && (ix.gmail || acc === 'free' || !relayGmailOn());
+      if (ready && !(ix.err && ((ix.err.gmail && acc !== 'free') || (ix.err.free && acc !== 'gmail')))) { applyIndex(ix, true); return; }
     }
     const jobs = [];
     if (acc !== 'free' && (!more || prev.next)) {
@@ -198,7 +200,7 @@ async function watchInbox() {
     while (document.visibilityState === 'visible' && useIndex(curAcc())) {
       let r = null;
       try { r = await rapi('/inbox?wait=1&v=' + (state.ixV || 0)); } catch (e) { if (e.status === 404) { state.noIndex = true; break; } await sleep(20000); continue; }
-      if (r && r.same) { if (r.badge) paintBadge(r.badge); } else if (r) applyIndex(r);
+      if (r && r.same) { if (r.badge) paintBadge(r.badge); } else if (r && r.gReady !== false && r.fReady !== false) applyIndex(r); else if (r) { state.ixV = r.v; if (r.badge) paintBadge(r.badge); }
     }
   } finally { ixLoop = false; }
 }

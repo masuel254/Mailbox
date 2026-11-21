@@ -871,7 +871,7 @@ async function ixRefresh(force) {
   if (ch) { IX.v++; IX.at = Date.now(); const w = ixWaiters; ixWaiters = []; w.forEach(f => f()); }
   return ch;
 }
-const ixOut = () => ({ v: IX.v, at: IX.at, g: IX.g, gNext: IX.gNext, f: IX.f, fMore: IX.fMore, fBefore: IX.fBefore, badge: { gmail: S.badge.gmail, free: S.badge.free, total: total() }, err: IX.err, gmail: !!S.gmail, free: !!S.free });
+const ixOut = () => ({ gReady: !S.gmail || !!IX.gHist, fReady: !S.free || !!IX.fSig || IX.f.length > 0, v: IX.v, at: IX.at, g: IX.g, gNext: IX.gNext, f: IX.f, fMore: IX.fMore, fBefore: IX.fBefore, badge: { gmail: S.badge.gmail, free: S.badge.free, total: total() }, err: IX.err, gmail: !!S.gmail, free: !!S.free });
 let polling = false;
 let pollP = null, badgeTimer = null;
 /* Pastille seule : quand des mails sont lus ailleurs (PC, Gmail web…), on remet le chiffre de l'iPhone à jour */
