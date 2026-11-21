@@ -584,3 +584,8 @@ body.selecting .item .mark{display:flex}
 .item.auto:not(.u) .who,.item.auto:not(.u) .subj{color:var(--muted);font-weight:500}
 .fs-ctl{margin-left:auto;display:flex;gap:6px}
 .fs-ctl button{width:44px;height:40px;border-radius:12px;border:1px solid var(--line2);background:var(--surface);color:var(--text);font-weight:800;font-size:.9rem}
+/* Sélecteur Aujourd'hui / Tous les mails : aligné sur la ligne du dessous, deux vrais boutons */
+.home-seg{margin:2px 4px 8px;padding:0;gap:8px;background:transparent}
+.home-seg a{height:40px;background:var(--surface);border:1px solid var(--line2);border-radius:12px;color:var(--text)}
+.home-seg a.on{border-color:var(--accent-fill)}
+#seg-n{margin-left:5px}
