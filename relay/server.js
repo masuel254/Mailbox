@@ -87,12 +87,15 @@ async function gmailToken() {
 }
 /* Pause générale quand Google demande de ralentir : le relais arrête ses lectures de fond un moment */
 let gBackoff = { until: 0, ms: 0 };
-const gRateHit = () => { gBackoff.ms = Math.min(20 * 60000, gBackoff.ms ? gBackoff.ms * 2 : 3 * 60000); gBackoff.until = Date.now() + gBackoff.ms; log('Gmail demande de ralentir : pause des lectures de fond ' + Math.round(gBackoff.ms / 60000) + ' min'); };
+const gRateHit = (msg) => {
+  const m = /retry after (\d{4}-\d\d-\d\dT[\d:.]+Z)/i.exec(msg || ''), at = m ? Date.parse(m[1]) : 0;
+  if (at && at > Date.now()) { gBackoff.until = at + 3000; gBackoff.ms = Math.max(60000, at - Date.now()); log('Gmail demande de ralentir jusqu’à ' + m[1]); return; }
+  gBackoff.ms = Math.min(20 * 60000, gBackoff.ms ? gBackoff.ms * 2 : 3 * 60000); gBackoff.until = Date.now() + gBackoff.ms; log('Gmail demande de ralentir : pause des lectures de fond ' + Math.round(gBackoff.ms / 60000) + ' min'); };
 const gPaused = () => Date.now() < gBackoff.until;
 async function gapi(p, opt = {}) {
   const t = await gmailToken();
   const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/' + p, { method: opt.method || 'GET', headers: Object.assign({ Authorization: 'Bearer ' + t.access_token }, opt.body ? { 'Content-Type': 'application/json' } : {}), body: opt.body ? JSON.stringify(opt.body) : undefined });
-  if (!r.ok) { let why = ''; try { const j = await r.json(); why = (j.error && ((j.error.errors && j.error.errors[0] && j.error.errors[0].reason) || j.error.status || j.error.message)) || ''; } catch (e) {} if (r.status === 429 || /rate|quota/i.test(why)) { if (!gPaused()) gRateHit(); } throw new Error('Gmail ' + r.status + (why ? ' ' + why : '')); }
+  if (!r.ok) { let why = '', msg = ''; try { const j = await r.json(); msg = (j.error && j.error.message) || ''; why = (j.error && ((j.error.errors && j.error.errors[0] && j.error.errors[0].reason) || j.error.status || j.error.message)) || ''; } catch (e) {} if (r.status === 429 || /rate|quota/i.test(why)) { if (!gPaused()) gRateHit(msg); } throw new Error('Gmail ' + r.status + (why ? ' ' + why : '')); }
   if (gBackoff.ms && !gPaused()) gBackoff.ms = 0;
   return r.status === 204 ? null : r.json().catch(() => null);
 }
@@ -827,7 +830,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.11.1';
+const RELAY_V = '4.11.2';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -1074,11 +1077,11 @@ const KEEP_RE = /factur|re[çc]u\b|re[çc]us\b|commande|billet|contrat|devis|inv
 let MJ = { status: 'idle' };
 try { MJ = JSON.parse(dec(fs.readFileSync(MENAGE_FILE, 'utf8'))); if (MJ.status === 'running') MJ.status = 'idle'; } catch (e) {}
 const mjSave = () => { try { fs.writeFileSync(MENAGE_FILE, enc(JSON.stringify(MJ))); } catch (e) { log('ménage IA : sauvegarde', e.message); } };
-const mjPublic = () => { const o = Object.assign({}, MJ); delete o.refs; return o; };
+const mjPublic = () => { const o = Object.assign({}, MJ); delete o.refs; if (o.status === 'running' && gPaused()) o.waitUntil = gBackoff.until; return o; };
 async function gWait() { while (gPaused()) await pause(5000); }
 async function menageScan() {
   MJ = { status: 'running', phase: 'Préparation', at: Date.now(), g: { done: 0, total: 0 }, f: { done: 0, total: 0 }, scanned: 0, excluded: 0 };
-  const groups = new Map(), sentTo = new Set(), sentThreads = new Set();
+  const groups = new Map(), sentThreads = new Set();
   const BASEQ_G = '-in:sent -in:drafts -in:trash -in:spam -is:starred -has:attachment -label:"' + MENAGE + '" -label:"' + BLOCK_LABEL + '" -subject:(facture OR reçu OR commande OR billet OR contrat OR devis OR invoice OR receipt OR réservation OR livraison OR relevé OR impôts OR attestation OR remboursement)';
   const keyOf = (name, email) => { const n = normName(name); return n && n.length >= 3 && !n.includes('@') ? 'n:' + n : 'e:' + email; };
   const add = (name, email, subject, unsub, ref) => {
@@ -1096,11 +1099,6 @@ async function menageScan() {
       MJ.phase = 'Gmail : mes envois';
       let page = null, sentIds = [];
       do { await gWait(); const r = (await gapi('messages?' + new URLSearchParams(Object.assign({ q: 'in:sent', maxResults: 500 }, page ? { pageToken: page } : {})))) || {}; (r.messages || []).forEach(m => { sentThreads.add(m.threadId); sentIds.push(m.id); }); page = r.nextPageToken; } while (page && sentIds.length < 20000);
-      for (let i = 0; i < Math.min(sentIds.length, 800); i += 4) {
-        await gWait(); MJ.phase = 'Gmail : mes envois (' + i + ' / ' + Math.min(sentIds.length, 800) + ')';
-        await Promise.all(sentIds.slice(i, i + 4).map(id => gapi('messages/' + id + '?format=metadata&metadataHeaders=To&metadataHeaders=Cc').then(m => ((m && m.payload.headers) || []).forEach(h => String(h.value).split(',').forEach(a => { const x = addr(a.trim()); if (x.email) sentTo.add(x.email.toLowerCase()); }))).catch(() => {})));
-        await pause(260);
-      }
       // Gmail limite fortement la lecture mail par mail : on lit un échantillon (les 2 500 plus récents) pour découvrir les expéditeurs,
       // puis, pour ceux que l'IA juge sans intérêt, on récupère tous leurs mails d'un coup par une recherche « from: » (très rapide)
       MJ.phase = 'Gmail : liste des mails';
@@ -1120,7 +1118,6 @@ async function menageScan() {
           if (!m) return;
           const h = n => ((m.payload.headers || []).find(x => x.name.toLowerCase() === n) || {}).value || '';
           const f = addr(h('from'));
-          if (sentTo.has(String(f.email).toLowerCase())) { MJ.excluded++; return; }
           add(f.name, f.email, h('subject'), !!h('list-unsubscribe'), { gs: m.id });
         }).catch(() => {})));
         MJ.g.done = Math.min(i + 4, sample.length); MJ.scanned = MJ.g.done + MJ.f.done;
@@ -1142,7 +1139,7 @@ async function menageScan() {
               MJ.f.done++; MJ.scanned = MJ.g.done + MJ.f.done;
               const f = addr(m.envelope.from), fl = m.flags || new Set();
               const att = JSON.stringify(m.bodyStructure || {}).match(/"disposition":"attachment"|"type":"application\/pdf"|"type":"image\//i);
-              if (fl.has('\\Flagged') || fl.has('\\Answered') || att || sentTo.has(String(f.email).toLowerCase())) { MJ.excluded++; continue; }
+              if (fl.has('\\Flagged') || fl.has('\\Answered') || att) { MJ.excluded++; continue; }
               add(f.name, f.email, m.envelope.subject, /list-unsubscribe/i.test(String(m.headers || '')), { folder: b.path, uid: m.uid });
             }
           } catch (e) { log('ménage IA ' + b.path, e.message); } finally { if (lock) lock.release(); }
@@ -1163,6 +1160,19 @@ async function menageScan() {
         (r.items || []).forEach(x => { const g = part[x.i]; if (g) verdict.set(g.key, { v: x.v === 'virer' ? 'virer' : 'garder', why: String(x.why || '').slice(0, 60) }); });
       } catch (e) { log('ménage IA : avis', e.message); }
       MJ.phase = 'L’IA examine ' + cands.length + ' expéditeurs (' + Math.min(i + 25, cands.length) + ')';
+    }
+    // Tes correspondants : une recherche « in:sent to: » par expéditeur à virer, au lieu de relire tous tes envois
+    if (S.gmail) {
+      const vir0 = cands.filter(g => (verdict.get(g.key) || {}).v === 'virer');
+      let k = 0;
+      for (const g of vir0) {
+        MJ.phase = 'Gmail : tes correspondants (' + (++k) + ' / ' + vir0.length + ')';
+        await gWait();
+        const em = [...g.emails].slice(0, 6);
+        const r = await gapi('messages?' + new URLSearchParams({ q: 'in:sent to:(' + em.join(' OR ') + ')', maxResults: 1 })).catch(() => null);
+        if (r && r.messages && r.messages.length) { verdict.set(g.key, { v: 'garder', why: 'tu lui as déjà écrit' }); MJ.excluded += g.count; }
+        await pause(120);
+      }
     }
     // Décompte complet Gmail des expéditeurs à virer : une recherche par adresse, mêmes garde-fous que plus haut
     if (S.gmail) {

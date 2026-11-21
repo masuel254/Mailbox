@@ -264,6 +264,7 @@ async function renderMenage() {
   if (r.status === 'running') {
     const tot = (r.g.total || 0) + (r.f.total || 0), done = (r.g.done || 0) + (r.f.done || 0), pct = tot ? Math.round(done / tot * 100) : 0;
     box.innerHTML = `<div class="card mj-run"><b>${esc(r.phase || 'Analyse')}…</b><div class="mj-bar"><span style="width:${pct}%"></span></div><small>${fmt(done)} / ${fmt(tot)} mails lus · ${fmt(r.excluded)} mis de côté par les garde-fous</small>
+      ${r.waitUntil > Date.now() ? `<p class="fhint" style="margin:6px 0 0;color:var(--accent)">⏸ Gmail impose une pause (trop de lectures ce matin). Reprise automatique vers ${new Date(r.waitUntil).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}.</p>` : ''}
       <p class="fhint" style="margin:6px 0 0">Tu peux fermer l’appli : l’analyse continue sur ton serveur et tu reçois une notification à la fin.</p></div>${guards}`;
     menageT = setTimeout(() => { if ((location.hash || '').startsWith('#/menage')) renderMenage(); }, 3000);
     return;
