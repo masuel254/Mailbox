@@ -259,9 +259,19 @@ function itemHTML(it, cls, sentView) {
 const gone = new Map();
 const hideGone = ids => { const t = Date.now() + 30000; ids.forEach(id => gone.set(id, t)); };
 const isGone = id => { const t = gone.get(id); if (!t) return false; if (t < Date.now()) { gone.delete(id); return false; } return true; };
+/* Changements faits dans l'appli (lu, non lu…) : appliqués tout de suite à l'écran et gardés 45 s,
+   le temps que Gmail/Free les confirment, pour qu'une actualisation arrivée entre-temps ne les annule pas à l'écran */
+const localPatch = new Map();
+function setLocal(ids, p) { const t = Date.now() + 45000; ids.forEach(id => localPatch.set(id, { p: Object.assign({}, (localPatch.get(id) || {}).p, p), t })); }
+function withLocal(items) {
+  if (!localPatch.size) return items;
+  const now = Date.now();
+  return items.map(i => { const x = localPatch.get(i.id); if (!x) return i; if (x.t < now) { localPatch.delete(i.id); return i; } return Object.assign({}, i, x.p); });
+}
 function drawList(data, plain) {
   const l = $('#list'); if (!l) return;
   if (gone.size && data.items.some(i => isGone(i.id))) data = Object.assign({}, data, { items: data.items.filter(i => !isGone(i.id)) });
+  if (localPatch.size) data = Object.assign({}, data, { items: withLocal(data.items).filter(i => !(state.listCtx && state.listCtx.key === 'UNREAD' && !i.unread && localPatch.has(i.id))) });
   // Suivis : un mail dont on vient de retirer l'étoile n'a plus rien à faire ici
   if (state.listCtx && state.listCtx.key === 'STARRED' && data.items.some(i => !i.starred)) data = Object.assign({}, data, { items: data.items.filter(i => i.starred) });
   state.showAcc = freeOn(); state.dayMode = false;
@@ -292,7 +302,12 @@ function patchCached(id, fn) { Object.values(state.lists).forEach(d => { d.items
 async function readAll(btn) {
   const ck = String(state.current), acc = ck.includes('|') ? ck.split('|')[0] : 'gmail', key = keyOf(ck);
   const inbox = key === 'INBOX' || key === 'UNREAD', fFolder = inbox ? 'INBOX' : freeFolderOf(key);
-  btn.disabled = true; btn.textContent = 'En cours…';
+  btn.disabled = true;
+  // Tout de suite à l'écran : plus aucun non lu dans cette liste, compteurs à zéro ; Gmail et Free suivent en arrière-plan
+  const shown = []; Object.entries(state.lists).forEach(([k, d]) => { if (keyOf(k) === key || (inbox && ['INBOX', 'UNREAD'].includes(keyOf(k)))) d.items.forEach(i => { if (i.unread && (acc === 'all' || i.acc === acc)) shown.push(i.id); }); });
+  setLocal(shown, { unread: false }); reDraw();
+  if (inbox) { const c = state.counts || {}; paintCounts(acc === 'all' ? 0 : Math.max(0, (c.n || 0) - (c.own || 0)), 0, c.cnt ? Object.assign({}, c.cnt, acc === 'all' ? { all: 0, gmail: 0, free: 0 } : { [acc]: 0, all: Math.max(0, c.cnt.all - (c.cnt[acc] || 0)) }) : null); }
+  toast('Tout est marqué comme lu');
   let total = 0; const errs = [], gDone = [], fDone = [];
   const jobs = [];
   if (acc !== 'free' && !String(key).startsWith('F:')) jobs.push((async () => {
@@ -309,12 +324,12 @@ async function readAll(btn) {
   })().catch(e => { if (e.message !== 'auth') errs.push('Gmail : ' + e.message); }));
   if (acc !== 'gmail' && freeOn() && fFolder) jobs.push(rapi('/free/readall', { method: 'POST', body: { folder: fFolder } }).then(r => { total += r.count || 0; if (r.uids && r.uids.length) fDone.push({ folder: r.folder || fFolder, uids: r.uids }); }).catch(e => errs.push('Free : ' + e.message)));
   await Promise.all(jobs);
-  Object.keys(state.lists).forEach(k => delete state.lists[k]);
+  Object.values(state.lists).forEach(d => { d.items = d.items.map(i => shown.includes(i.id) ? Object.assign({}, i, { unread: false }) : i); });
   const undo = () => Promise.all(gDone.map(ids => api('messages/batchModify', { method: 'POST', body: { ids, addLabelIds: ['UNREAD'] } })).concat(fDone.map(d => rapi('/free/flags', { method: 'POST', body: { folder: d.folder, uids: d.uids, seen: false } }))));
   if (errs.length) toast(errs.join(' · '));
   else if (total) undoToast(total + ' mail' + (total > 1 ? 's' : '') + ' marqué' + (total > 1 ? 's' : '') + ' comme lu' + (total > 1 ? 's' : ''), undo);
-  else toast('Tout était déjà lu');
-  route(); badgeNow(0);
+  if (errs.length) { shown.forEach(id => localPatch.delete(id)); refreshVisibleList(); }
+  badgeNow(0);
 }
 
 let badgeT = null;

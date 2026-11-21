@@ -2,7 +2,7 @@
    Le code est découpé par domaine ; les fichiers sont chargés dans l'ordre de index.html et partagent la même portée. */
 'use strict';
 
-const APP_VERSION = '4.9.2';
+const APP_VERSION = '4.9.3';
 const APP_DATE = '21/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -38,6 +38,17 @@ async function cachedFetch(key, fetcher, group) {
 // Expéditeurs automatiques (notifications, newsletters) : affichés en retrait, jamais dans « À traiter »
 const NOREPLY_RE = /no-?reply|ne-?pas-?repondre|notification|newsletter|mailer-daemon|bounce|news@|info@|marketing|promo/i;
 const FS_CTL = '<span class="fs-ctl"><button type="button" data-fs="-1" aria-label="Texte plus petit">A−</button><button type="button" data-fs="1" aria-label="Texte plus grand">A+</button></span>';
+// Ouverture instantanée : version gardée sur l'iPhone affichée tout de suite, relue en arrière-plan ;
+// l'écran n'est redessiné que si la conversation a vraiment changé (nouveau message)
+async function fastFetch(key, fetcher, changed) {
+  const c = await IDB.get(key);
+  if (c && c.v && navigator.onLine) {
+    const h0 = location.hash;
+    fetcher().then(v => { if (!v) return; idbKeep(key, v); if (changed(c.v, v) && location.hash === h0) route(); }).catch(() => {});
+    return c.v;
+  }
+  return cachedFetch(key, fetcher);
+}
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const settings = Object.assign({ clientId: '', fontSize: 18, theme: 'auto', images: true, readable: true, email: '', relayUrl: 'https://vps-444b360b.vps.ovh.net/mailbox', relayToken: '', relayGmail: false, freeEmail: '', acc: 'all', vapid: '', primaryOnly: false }, LS.get('settings', {}));
 function saveSettings() { LS.set('settings', settings); applySettings(); }
