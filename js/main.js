@@ -73,3 +73,18 @@ setTimeout(() => { if (!LS.get('tipGestures', false) && (location.hash || '').ma
 onNetChange();
 // Bouton « Plus » d'un mail : déplie les autres actions sur place, sans nouvelle fenêtre
 document.addEventListener('click', e => { const b = e.target.closest && e.target.closest('#t-more'); if (!b) return; const m = $('#tb-more'); if (!m) return; m.hidden = !m.hidden; b.setAttribute('aria-expanded', String(!m.hidden)); b.lastChild.textContent = m.hidden ? 'Plus' : 'Moins'; });
+// Relais pas à jour : bandeau avec la commande à copier (sinon certaines fonctions échouent sans explication)
+async function checkRelayVersion() {
+  if (!relayOn() || !navigator.onLine) return;
+  let r; try { r = await rapi('/status'); } catch (e) { return; }
+  const old = document.getElementById('relay-old'); if (old) old.remove();
+  if (r && r.relayVersion && !verLt(r.relayVersion, MIN_RELAY)) return;
+  const cmd = 'curl -fsSL https://raw.githubusercontent.com/masuel254/Mailbox/main/relay/install.sh | sudo bash';
+  const b = document.createElement('div'); b.id = 'relay-old';
+  b.innerHTML = `<b>Ton relais n’est pas à jour</b> (${esc((r && r.relayVersion) || 'ancienne version')}). Lance la commande dans Termius.<div><button type="button" id="ro-copy">Copier la commande</button><button type="button" id="ro-x" aria-label="Fermer">✕</button></div>`;
+  document.body.appendChild(b);
+  $('#ro-copy').onclick = () => { navigator.clipboard.writeText(cmd).then(() => toast('Commande copiée : colle-la dans Termius')).catch(() => toast(cmd)); };
+  $('#ro-x').onclick = () => b.remove();
+}
+setTimeout(checkRelayVersion, 4000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setTimeout(checkRelayVersion, 3000); });

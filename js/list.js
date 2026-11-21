@@ -693,7 +693,7 @@ async function quickBlock(item) {
   if (!item || !item.fromEmail) { toast('Expéditeur introuvable'); return; }
   hideGone([item.id]);
   const t = blockTarget(item.fromEmail);
-  const names = LS.get('blockedNames', {}); names[t] = t.includes('@') ? (item.fromName || t) : brandOf(t); LS.set('blockedNames', names);
+  const names = LS.get('blockedNames', {}); names[t] = item.fromName && !item.fromName.includes('@') ? item.fromName : t.includes('@') ? t : brandOf(t); LS.set('blockedNames', names);
   const dates = LS.get('blockedDates', {}); dates[t] = Date.now(); LS.set('blockedDates', dates);
   // Free d'abord, indépendamment de Gmail : un Gmail qui freine ne doit pas empêcher le blocage côté Free
   let moved = 0, freeErr = null;

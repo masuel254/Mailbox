@@ -49,6 +49,9 @@ async function fastFetch(key, fetcher, changed) {
   }
   return cachedFetch(key, fetcher);
 }
+// Version minimale du relais attendue par cette appli (à relever quand le relais change)
+const MIN_RELAY = '4.10.0';
+const verLt = (a, b) => { const x = String(a || '0').split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) < (y[i] || 0); } return false; };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const settings = Object.assign({ clientId: '', fontSize: 18, theme: 'auto', images: true, readable: true, email: '', relayUrl: 'https://vps-444b360b.vps.ovh.net/mailbox', relayToken: '', relayGmail: false, freeEmail: '', acc: 'all', vapid: '', primaryOnly: false }, LS.get('settings', {}));
 function saveSettings() { LS.set('settings', settings); applySettings(); }

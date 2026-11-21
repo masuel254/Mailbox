@@ -826,6 +826,7 @@ async function pollFree() {
     return out;
   });
 }
+const RELAY_V = '4.10.0';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -1188,7 +1189,7 @@ const routes = {
     return { enabled: true, email: S.timetree.user, at: (S.ttCache || {}).at || 0, error: (S.ttCache || {}).error || null, cals: (S.ttCache || {}).cals || [], calIds: (S.ttCache || {}).calIds || [], items: ttExpand(from, to) };
   },
   'GET /health': async () => ({ ok: true, gmail: !!S.gmail, free: !!S.free, subs: S.subs.length }),
-  'GET /status': async () => ({ gmail: S.gmail ? { email: S.gmail.email } : null, free: S.free ? { email: S.free.user, name: S.free.name || '' } : null, subs: S.subs.length, badge: { gmail: S.badge.gmail, free: S.badge.free, total: total() }, vapid: C.vapidPub, ai: !!S.ai, timetree: S.timetree ? { email: S.timetree.user } : null }),
+  'GET /status': async () => ({ relayVersion: RELAY_V, gmail: S.gmail ? { email: S.gmail.email } : null, free: S.free ? { email: S.free.user, name: S.free.name || '' } : null, subs: S.subs.length, badge: { gmail: S.badge.gmail, free: S.badge.free, total: total() }, vapid: C.vapidPub, ai: !!S.ai, timetree: S.timetree ? { email: S.timetree.user } : null }),
   'GET /gmail/token': async () => { const t = await gmailToken(); return { access_token: t.access_token, expires_in: Math.floor((t.exp - Date.now()) / 1000), scope: t.scope, email: S.gmail.email }; },
   'DELETE /gmail': async () => { S.gmail = null; gTok = null; save(); return { ok: true }; },
   'POST /push/subscribe': async (q, b) => { if (!b.subscription || !b.subscription.endpoint) throw Object.assign(new Error('abonnement invalide'), { code: 400 }); S.subs = S.subs.filter(s => s.endpoint !== b.subscription.endpoint).concat([b.subscription]); save(); return { ok: true, count: S.subs.length }; },
