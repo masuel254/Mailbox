@@ -803,6 +803,27 @@ function brandOf(email) {
   const core = d[0];
   return core.charAt(0).toUpperCase() + core.slice(1);
 }
+/* Ménage complet : tous les mails existants des expéditeurs bloqués (Gmail + Free, tous dossiers) rejoignent Indésirables */
+async function sweepBlocked(froms, lab) {
+  const btn = $('#blk-sweep'), st = $('#blk-sweep-s');
+  const say = t => { if (st) { st.hidden = false; st.textContent = t; } };
+  if (btn) btn.disabled = true;
+  let free = null;
+  if (freeOn()) rapi('/free/resweep', { method: 'POST' }).catch(e => { free = { error: e.message }; });
+  let n = 0, done = 0;
+  for (const f of froms) {
+    try { n += await moveExisting(f, lab); } catch (e) { if (/ralentir|quota|rate/i.test(e.message)) { say('Gmail freine : reprise dans 30 s…'); await sleep(30000); } }
+    done++; say('Gmail : ' + done + '/' + froms.length + ' expéditeurs vérifiés · ' + n + ' mail' + (n > 1 ? 's' : '') + ' rangé' + (n > 1 ? 's' : ''));
+  }
+  if (freeOn() && !free) {
+    for (let i = 0; i < 120; i++) { const r = await rapi('/free/resweep').catch(() => null); if (r && !r.running) { free = r; break; } say('Gmail : ' + n + ' rangé' + (n > 1 ? 's' : '') + ' · Free : vérification en cours' + (r && r.done ? ' (' + r.done + '/' + r.total + ' dossiers)' : '') + '…'); await sleep(2000); }
+  }
+  const fm = free ? (free.error ? ' · Free : ' + free.error : ' · Free : ' + (free.moved || 0)) : '';
+  say('Terminé · Gmail : ' + n + fm + ' mail(s) rangé(s) dans Indésirables');
+  toast('Ménage terminé : ' + (n + ((free && free.moved) || 0)) + ' mail(s) rangé(s)');
+  if (btn) btn.disabled = false;
+  Object.keys(state.lists).forEach(k => delete state.lists[k]); badgeNow(0);
+}
 async function renderBlocked(box) {
   getLabels().then(ls => { const l = (ls || []).find(x => x.name === BLOCK_LABEL), a = $('#s-junk'); if (a) { if (l) a.href = '#/list/' + encodeURIComponent(l.id); else a.hidden = true; } }).catch(() => {});
   if (!auth.hasSettingsScope()) { box.innerHTML = '<p>Aucun expéditeur bloqué pour l’instant.</p>'; return; }
@@ -825,8 +846,9 @@ async function renderBlocked(box) {
     const fmtD = t => t ? 'bloqué le ' + new Date(t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) + ' à ' + new Date(t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : 'bloqué avant le ' + new Date(first).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
     const sortBar = `<div class="accounts" role="tablist" style="margin:0 0 8px"><button class="${order === 'date' ? 'on' : ''}" data-bsort="date">Plus récents</button><button class="${order === 'az' ? 'on' : ''}" data-bsort="az">A → Z</button></div>`;
     const nEl = $('#s-blk-n'); if (nEl) nEl.textContent = String(fs.length);
-    box.innerHTML = mergeBtn + sortBar + `<div>` + fs.map(f => `<div class="lab-row" style="padding:6px 0;gap:10px"><span class="nm" style="min-width:0;display:flex;flex-direction:column"><b style="font-size:.95rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label(f.criteria.from))}</b><span style="font-size:.72rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(sub(f.criteria.from))}</span><span style="font-size:.7rem;color:var(--muted);opacity:.8">${esc(fmtD(dOf(f)))}</span></span><button class="btn" style="height:38px;font-size:.75rem" data-fid="${esc(f.id)}">Débloquer</button></div>`).join('') +
+    box.innerHTML = `<button class="btn" id="blk-sweep" style="width:100%;margin-bottom:8px">🧹 Relancer le ménage : ranger les anciens mails des bloqués</button><p class="fhint" id="blk-sweep-s" style="margin:0 0 8px" hidden></p>` + mergeBtn + sortBar + `<div>` + fs.map(f => `<div class="lab-row" style="padding:6px 0;gap:10px"><span class="nm" style="min-width:0;display:flex;flex-direction:column"><b style="font-size:.95rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label(f.criteria.from))}</b><span style="font-size:.72rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(sub(f.criteria.from))}</span><span style="font-size:.7rem;color:var(--muted);opacity:.8">${esc(fmtD(dOf(f)))}</span></span><button class="btn" style="height:38px;font-size:.75rem" data-fid="${esc(f.id)}">Débloquer</button></div>`).join('') +
       `</div>`;
+    $('#blk-sweep').onclick = () => sweepBlocked(fs.map(f => f.criteria.from.trim()), l.id);
     $$('[data-bsort]', box).forEach(b => b.onclick = () => { LS.set('blockedSort', b.dataset.bsort); renderBlocked(box); });
     const mb = $('#blk-merge', box);
     if (mb) mb.onclick = async () => { mb.disabled = true; mb.textContent = 'Regroupement…'; try { const r = await mergeBlocked(fs, l.id, box); toast('Règles regroupées : ' + r.removed + ' remplacées'); } catch (e) { toast('Échec : ' + e.message); } renderBlocked(box); };

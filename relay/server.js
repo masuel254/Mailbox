@@ -589,6 +589,7 @@ async function senderPurge(email, dry) {
 }
 /* ---------- Blocage : règles Gmail « Indésirables », appliquées aussi à Free ---------- */
 let blockedCache = { at: 0, list: [] };
+let resweep = { running: false, moved: 0, done: 0, total: 0 };
 /* Liste des expéditeurs bloqués gardée sur le serveur : elle survit aux redémarrages et aux pauses de Gmail */
 async function blockedTargets() {
   const local = S.blocked || [];
@@ -826,7 +827,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.10.2';
+const RELAY_V = '4.10.4';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -1404,6 +1405,33 @@ const routes = {
     return trashJob;
   },
   'GET /trash/empty': async () => trashJob || { running: false, gmail: 0, free: 0, error: null },
+  // Ménage complet Free : tous les dossiers, tous les bloqués (adresse, domaine, nom), en arrière-plan
+  'POST /free/resweep': async () => {
+    if (!S.free) throw Object.assign(new Error('Free non connecté'), { code: 400 });
+    if (resweep.running) return resweep;
+    resweep = { running: true, moved: 0, done: 0, total: 0, at: Date.now() };
+    blockedCache.at = 0;
+    (async () => {
+      try {
+        const targets = await blockedTargets();
+        await withImap(async client => {
+          const dest = await blockPath(client), f = await folders(client);
+          const boxes = (await client.list()).filter(m => !(m.flags && m.flags.has('\\Noselect')) && ![dest, f.trash, f.sent, f.drafts].includes(m.path));
+          resweep.total = boxes.length;
+          for (const m of boxes) {
+            let lock = null;
+            try { lock = await client.getMailboxLock(m.path); const n = await sweepInbox(client, targets); resweep.moved += n; }
+            catch (e) { log('ménage Free ' + m.path, e.message); } finally { if (lock) lock.release(); }
+            resweep.done++;
+          }
+        });
+        log('Free : ménage complet, ' + resweep.moved + ' mail(s) rangé(s) dans Indésirables');
+      } catch (e) { resweep.error = e.message; log('ménage Free', e.message); }
+      resweep.running = false; resweep.end = Date.now();
+    })();
+    return resweep;
+  },
+  'GET /free/resweep': async () => resweep,
   'POST /free/block': async (q, b) => {
     const t = (b.target || '').toLowerCase(); if (!t) throw Object.assign(new Error('cible manquante'), { code: 400 });
     const nm = b.name && String(b.name).trim().length >= 3 && !String(b.name).includes('@') ? 'name:' + String(b.name).trim() : null;
