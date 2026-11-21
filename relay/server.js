@@ -220,6 +220,12 @@ async function blockPath(client) {
   return hit ? hit.path : ensureFolder(client, BLOCK_LABEL);
 }
 async function ensureFolder(client, name) { try { await client.mailboxCreate(name); } catch (e) { /* existe déjà */ } return name; }
+// Dossier « Ménage IA » côté Free : retrouvé même s'il est rangé sous INBOX (INBOX.Ménage IA), créé sinon
+async function menagePath(client) {
+  const all = await client.list(), hit = all.find(m => m.path === MENAGE || m.name === MENAGE);
+  if (hit) return hit.path;
+  try { await client.mailboxCreate(MENAGE); return MENAGE; } catch (e) { const d = (all.find(m => m.path.toUpperCase().startsWith('INBOX')) || {}).delimiter || '.'; const p = 'INBOX' + d + MENAGE; await client.mailboxCreate(p).catch(() => {}); return p; }
+}
 async function resolveFolder(client, key) {
   const f = await folders(client);
   if (key === 'INBOX') return 'INBOX';
@@ -228,6 +234,7 @@ async function resolveFolder(client, key) {
   if (key === 'JUNK') return f.junk;
   if (key === 'ARCHIVE') return f.archive || ensureFolder(client, 'Archives');
   if (key === 'BLOCKED') return blockPath(client);
+  if (key === 'MENAGE') return menagePath(client);
   if (f.all.find(m => m.path === key)) return key;
   throw Object.assign(new Error('Dossier inconnu'), { code: 400 });
 }
@@ -830,7 +837,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.11.2';
+const RELAY_V = '4.11.3';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -1128,7 +1135,7 @@ async function menageScan() {
       MJ.phase = 'Free : lecture des dossiers';
       await withImap(async client => {
         const fo = await folders(client), dest = await blockPath(client);
-        const boxes = (await client.list()).filter(m => !(m.flags && m.flags.has('\\Noselect')) && ![fo.sent, fo.trash, fo.drafts, fo.junk, dest, MENAGE].includes(m.path));
+        const boxes = (await client.list()).filter(m => !(m.flags && m.flags.has('\\Noselect')) && ![fo.sent, fo.trash, fo.drafts, fo.junk, dest, MENAGE].includes(m.path) && m.name !== MENAGE);
         for (const b of boxes) {
           let lock = null;
           try {
@@ -1223,12 +1230,12 @@ async function menageApply(keys) {
     }
   }
   if (S.free) await withImap(async client => {
-    await ensureFolder(client, MENAGE);
+    const mPath = await menagePath(client);
     const byFolder = {};
     sel.forEach(g => Object.entries((MJ.refs[g.key] || {}).f || {}).forEach(([fd, uids]) => { byFolder[fd] = (byFolder[fd] || []).concat(uids); }));
     for (const [fd, uids] of Object.entries(byFolder)) {
       let lock = null;
-      try { lock = await client.getMailboxLock(fd); for (let i = 0; i < uids.length; i += 500) { await client.messageFlagsAdd(uids.slice(i, i + 500), ['\\Seen'], { uid: true }); await client.messageMove(uids.slice(i, i + 500), MENAGE, { uid: true }); } out.free += uids.length; }
+      try { lock = await client.getMailboxLock(fd); for (let i = 0; i < uids.length; i += 500) { await client.messageFlagsAdd(uids.slice(i, i + 500), ['\\Seen'], { uid: true }); await client.messageMove(uids.slice(i, i + 500), mPath, { uid: true }); } out.free += uids.length; }
       catch (e) { log('Ménage IA : déplacement ' + fd, e.message); } finally { if (lock) lock.release(); }
     }
   });
@@ -1246,7 +1253,7 @@ async function menageEmpty() {
   }
   if (S.free) await withImap(async client => {
     const fo = await folders(client); let lock = null;
-    try { lock = await client.getMailboxLock(MENAGE); if (client.mailbox.exists) { out.free = client.mailbox.exists; await client.messageMove('1:*', fo.trash); } } catch (e) {} finally { if (lock) lock.release(); }
+    try { lock = await client.getMailboxLock(await menagePath(client)); if (client.mailbox.exists) { out.free = client.mailbox.exists; await client.messageMove('1:*', fo.trash); } } catch (e) {} finally { if (lock) lock.release(); }
   });
   log('Ménage IA : dossier vidé (' + (out.gmail + out.free) + ' mails à la corbeille)');
   return out;

@@ -302,7 +302,7 @@ async function renderMenage() {
       try { const o = await rapi('/menage/apply', { method: 'POST', body: { keys } }); LS.del('mjSel'); Object.keys(state.lists).forEach(k => delete state.lists[k]); badgeNow(0); toast(fmt(o.gmail + o.free) + ' mails rangés dans « Ménage IA »'); renderMenage(); }
       catch (e) { ap.disabled = false; toast('Échec : ' + e.message); draw(); }
     };
-    $('#mj-open').onclick = async () => { try { const ls = await getLabels(); const l = ls.find(x => x.name === 'Ménage IA'); location.hash = l ? '#/list/' + encodeURIComponent(l.id) : '#/list/' + encodeURIComponent('F:Ménage IA'); } catch (e) { toast(e.message); } };
+    $('#mj-open').onclick = async () => { try { const ls = await getLabels(true); const l = ls.find(x => x.name === 'Ménage IA'); if (l) location.hash = '#/list/' + encodeURIComponent(l.id); else if (freeOn() && r.applied) location.hash = '#/list/F:MENAGE'; else toast('Le dossier est encore vide : clique d’abord sur « Ranger »'); } catch (e) { toast(e.message); } };
     $('#mj-empty').onclick = async () => { if (!confirm('Envoyer tout le dossier « Ménage IA » à la corbeille ? (récupérable 30 jours)')) return; try { const o = await rapi('/menage/empty', { method: 'POST' }); toast(fmt(o.gmail + o.free) + ' mails envoyés à la corbeille'); } catch (e) { toast(e.message); } };
     $('#mj-again').onclick = async () => { if (!confirm('Relancer une analyse complète ?')) return; LS.del('mjSel'); try { await rapi('/menage/start', { method: 'POST' }); } catch (e) { toast(e.message); } renderMenage(); };
   };

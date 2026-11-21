@@ -6,7 +6,7 @@ async function renderList(key, q) {
   const sys = SYSTEM[key];
   const contactQ = isSearch && (String(q || '').match(/^from:(\S+) OR to:\1$/) || [])[1];
   let title = contactQ ? 'Échanges' : isSearch ? 'Recherche' : sys ? sys.name : 'Libellé';
-  if (String(key).startsWith('F:')) title = decodeURIComponent(key.slice(2)).split(/[\/.]/).pop();
+  if (String(key).startsWith('F:')) title = key === 'F:MENAGE' ? 'Ménage IA' : decodeURIComponent(key.slice(2)).split(/[\/.]/).pop();
   else if (!sys && !isSearch) { try { await getLabels(); const l = labelById(key); if (l) title = l.name; } catch (e) { if (e.message === 'auth') return; } }
   const plain = !!(sys && sys.plain);
   const isFreeDir = String(key).startsWith('F:');
