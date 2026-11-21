@@ -669,14 +669,16 @@ function rootDomain(addr) {
 // Cible du blocage : le domaine de la marque, sauf messageries grand public (adresse exacte)
 function blockTarget(email) { const d = rootDomain(email); return WEBMAIL.includes(d) ? email.toLowerCase() : d; }
 function isCovered(target, froms) { return froms.some(f => f === target || (!f.includes('@') && (target === f || target.endsWith('.' + f) || target.endsWith('@' + f)))); }
+// Tous ses anciens mails (réception, dossiers, archive) rejoignent Indésirables ; corbeille et envoyés restent tels quels
 async function moveExisting(target, lab) {
   let page = null, n = 0;
+  const userLabs = (await getLabels().catch(() => [])).filter(l => l.type === 'user' && l.id !== lab).map(l => l.id);
   do {
-    const p = new URLSearchParams({ q: 'from:' + target + ' in:inbox', maxResults: 500 });
+    const p = new URLSearchParams({ q: 'from:' + target + ' -in:trash -in:sent -in:drafts', maxResults: 500 });
     if (page) p.set('pageToken', page);
     const r = (await api('messages?' + p.toString())) || {};
     const ids = (r.messages || []).map(m => m.id);
-    if (ids.length) await api('messages/batchModify', { method: 'POST', body: { ids, addLabelIds: [lab], removeLabelIds: ['INBOX', 'UNREAD'] } });
+    if (ids.length) await api('messages/batchModify', { method: 'POST', body: { ids, addLabelIds: [lab], removeLabelIds: ['INBOX', 'UNREAD'].concat(userLabs) } });
     n += ids.length; page = r.nextPageToken;
   } while (page && n < 5000);
   return n;

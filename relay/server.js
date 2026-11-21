@@ -1404,14 +1404,21 @@ const routes = {
     const t = (b.target || '').toLowerCase(); if (!t) throw Object.assign(new Error('cible manquante'), { code: 400 });
     blockedCache.at = 0;
     if (!(S.blocked || []).includes(t)) { S.blocked = (S.blocked || []).concat(t); save(); }
+    // Tous ses anciens mails (réception et autres dossiers) rejoignent Indésirables ; corbeille, envoyés, brouillons exclus
     return withImap(async client => {
-      const lock = await client.getMailboxLock('INBOX');
-      try {
-        const uids = (await client.search({ from: t }, { uid: true })) || [];
-        if (uids.length) { await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true }); await client.messageMove(uids, await blockPath(client), { uid: true }); }
-        log('Free : blocage de ' + t + ', ' + uids.length + ' mail(s) rangé(s) dans Indésirables');
-        return { ok: true, moved: uids.length };
-      } finally { lock.release(); }
+      const dest = await blockPath(client), f = await folders(client);
+      let moved = 0;
+      for (const m of await client.list()) {
+        if ((m.flags && m.flags.has('\\Noselect')) || [dest, f.trash, f.sent, f.drafts].includes(m.path)) continue;
+        let lock = null;
+        try {
+          lock = await client.getMailboxLock(m.path);
+          const uids = (await client.search({ from: t }, { uid: true })) || [];
+          if (uids.length) { await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true }); await client.messageMove(uids, dest, { uid: true }); moved += uids.length; }
+        } catch (e) { log('Free : blocage dans ' + m.path, e.message); } finally { if (lock) lock.release(); }
+      }
+      log('Free : blocage de ' + t + ', ' + moved + ' mail(s) rangé(s) dans Indésirables');
+      return { ok: true, moved };
     });
   }
 };
