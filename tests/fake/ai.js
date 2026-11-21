@@ -9,6 +9,7 @@ require('http').createServer((q, r) => { let b=''; q.on('data', d => b += d); q.
  else if (/repères un rendez-vous/.test(sys)) c = { found: true, title: 'Point MRP V3', start: '2026-11-26T10:00', end: null, allDay: false, location: 'Visio', note: 'Proposé par Claire' };
  else if (/retrouver des mails/.test(sys)) c = { queries: ['Pergola'], resume: 'portail', indices: 'artisan' };
  else if (/évalues des mails candidats/.test(sys)) c = { results: [{ i: 0, score: 9, why: 'intervention portail' }], contact: { name: 'EDF', email: 'c@edf.fr' } };
+ else if (/ménage dans la messagerie/.test(sys)) c = { items: JSON.parse(b).messages[1].content.split('\n').map((l, i) => ({ i, v: /Exteralu/.test(l) ? 'garder' : 'virer', why: 'Promotions sans intérêt' })) };
  else if (/écran d’accueil/.test(sys)) c = { resume: 'Claire attend ta réponse pour jeudi ; comité produit à 9 h.', mails: [{ i: 0, tag: 'Travail' }] };
  else c = { q: 'devred', resume: 'x' };
  r.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(c) } }] })); }); }).listen(8977);

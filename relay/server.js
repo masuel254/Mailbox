@@ -827,7 +827,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.10.5';
+const RELAY_V = '4.11.0';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -1063,6 +1063,155 @@ async function hasReply(f) {
     } finally { lock.release(); }
   });
   return true;
+}
+/* ---------- Ménage IA ----------
+   Lit l'en-tête de tous les mails (pas le contenu), regroupe par expéditeur, demande à l'IA lesquels sont de la pub sans intérêt,
+   puis range les mails choisis dans le dossier « Ménage IA » (rien n'est supprimé sans action de l'utilisateur).
+   Jamais proposés : pièces jointes, factures / commandes / billets…, conversations où l'utilisateur a répondu, mails suivis, ses correspondants. */
+const MENAGE = 'Ménage IA';
+const MENAGE_FILE = path.join(C.dataDir, 'menage.json');
+const KEEP_RE = /factur|re[çc]u\b|re[çc]us\b|commande|billet|contrat|devis|invoice|receipt|order|r[ée]servation|booking|livraison|exp[ée]di|relev[ée]|imp[oô]t|attestation|mot de passe|password|\bcode\b|s[ée]curit|rendez-vous|ordonnance|r[ée]sultat|bulletin|avis d.?[ée]ch[ée]ance|[ée]ch[ée]ancier|sinistre|remboursement/i;
+let MJ = { status: 'idle' };
+try { MJ = JSON.parse(dec(fs.readFileSync(MENAGE_FILE, 'utf8'))); if (MJ.status === 'running') MJ.status = 'idle'; } catch (e) {}
+const mjSave = () => { try { fs.writeFileSync(MENAGE_FILE, enc(JSON.stringify(MJ))); } catch (e) { log('ménage IA : sauvegarde', e.message); } };
+const mjPublic = () => { const o = Object.assign({}, MJ); delete o.refs; return o; };
+async function gWait() { while (gPaused()) await pause(5000); }
+async function menageScan() {
+  MJ = { status: 'running', phase: 'Préparation', at: Date.now(), g: { done: 0, total: 0 }, f: { done: 0, total: 0 }, scanned: 0, excluded: 0 };
+  const groups = new Map(), sentTo = new Set(), sentThreads = new Set();
+  const keyOf = (name, email) => { const n = normName(name); return n && n.length >= 3 && !n.includes('@') ? 'n:' + n : 'e:' + email; };
+  const add = (name, email, subject, unsub, ref) => {
+    email = String(email || '').toLowerCase(); if (!email) return;
+    const k = keyOf(name, email);
+    let g = groups.get(k); if (!g) { g = { key: k, name: name || email, emails: new Set(), count: 0, kept: 0, subjects: [], unsub: false, g: [], f: {} }; groups.set(k, g); }
+    g.emails.add(email);
+    if (KEEP_RE.test(subject || '')) { g.kept++; MJ.excluded++; return; }
+    g.count++; if (unsub) g.unsub = true;
+    if (g.subjects.length < 6 && subject && !g.subjects.includes(subject)) g.subjects.push(String(subject).slice(0, 90));
+    if (ref.g) g.g.push(ref.g); else (g.f[ref.folder] = g.f[ref.folder] || []).push(ref.uid);
+  };
+  try {
+    if (S.gmail) {
+      MJ.phase = 'Gmail : mes envois';
+      let page = null, sentIds = [];
+      do { await gWait(); const r = (await gapi('messages?' + new URLSearchParams(Object.assign({ q: 'in:sent', maxResults: 500 }, page ? { pageToken: page } : {})))) || {}; (r.messages || []).forEach(m => { sentThreads.add(m.threadId); sentIds.push(m.id); }); page = r.nextPageToken; } while (page && sentIds.length < 20000);
+      for (let i = 0; i < Math.min(sentIds.length, 1500); i += 8) {
+        await gWait();
+        await Promise.all(sentIds.slice(i, i + 8).map(id => gapi('messages/' + id + '?format=metadata&metadataHeaders=To&metadataHeaders=Cc').then(m => ((m && m.payload.headers) || []).forEach(h => String(h.value).split(',').forEach(a => { const x = addr(a.trim()); if (x.email) sentTo.add(x.email.toLowerCase()); }))).catch(() => {})));
+        await pause(120);
+      }
+      MJ.phase = 'Gmail : liste des mails';
+      const ids = []; page = null;
+      do {
+        await gWait();
+        const r = (await gapi('messages?' + new URLSearchParams(Object.assign({ q: '-in:sent -in:drafts -in:trash -in:spam -is:starred -has:attachment -label:"' + MENAGE + '" -label:"' + BLOCK_LABEL + '"', maxResults: 500 }, page ? { pageToken: page } : {})))) || {};
+        (r.messages || []).forEach(m => { if (sentThreads.has(m.threadId)) MJ.excluded++; else ids.push(m.id); });
+        page = r.nextPageToken; MJ.g.total = ids.length;
+      } while (page && ids.length < 80000);
+      MJ.phase = 'Gmail : lecture des en-têtes';
+      for (let i = 0; i < ids.length; i += 10) {
+        await gWait();
+        await Promise.all(ids.slice(i, i + 10).map(id => gapi('messages/' + id + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=List-Unsubscribe').then(m => {
+          if (!m) return;
+          const h = n => ((m.payload.headers || []).find(x => x.name.toLowerCase() === n) || {}).value || '';
+          const f = addr(h('from'));
+          if ((m.labelIds || []).includes('STARRED') || sentTo.has(String(f.email).toLowerCase())) { MJ.excluded++; return; }
+          add(f.name, f.email, h('subject'), !!h('list-unsubscribe'), { g: m.id });
+        }).catch(() => {})));
+        MJ.g.done = Math.min(i + 10, ids.length); MJ.scanned = MJ.g.done + MJ.f.done;
+        await pause(180);
+      }
+    }
+    if (S.free) {
+      MJ.phase = 'Free : lecture des dossiers';
+      await withImap(async client => {
+        const fo = await folders(client), dest = await blockPath(client);
+        const boxes = (await client.list()).filter(m => !(m.flags && m.flags.has('\\Noselect')) && ![fo.sent, fo.trash, fo.drafts, fo.junk, dest, MENAGE].includes(m.path));
+        for (const b of boxes) {
+          let lock = null;
+          try {
+            lock = await client.getMailboxLock(b.path);
+            if (!client.mailbox.exists) continue;
+            MJ.f.total += client.mailbox.exists;
+            for await (const m of client.fetch('1:*', { uid: true, envelope: true, flags: true, bodyStructure: true, headers: ['list-unsubscribe'] }, { uid: true })) {
+              MJ.f.done++; MJ.scanned = MJ.g.done + MJ.f.done;
+              const f = addr(m.envelope.from), fl = m.flags || new Set();
+              const att = JSON.stringify(m.bodyStructure || {}).match(/"disposition":"attachment"|"type":"application\/pdf"|"type":"image\//i);
+              if (fl.has('\\Flagged') || fl.has('\\Answered') || att || sentTo.has(String(f.email).toLowerCase())) { MJ.excluded++; continue; }
+              add(f.name, f.email, m.envelope.subject, /list-unsubscribe/i.test(String(m.headers || '')), { folder: b.path, uid: m.uid });
+            }
+          } catch (e) { log('ménage IA ' + b.path, e.message); } finally { if (lock) lock.release(); }
+        }
+      });
+    }
+    // Les expéditeurs rares (moins de 3 mails) sont souvent des personnes : on ne les propose pas
+    const cands = [...groups.values()].filter(g => g.count >= 3).sort((a, b) => b.count - a.count).slice(0, 600);
+    MJ.phase = 'L’IA examine ' + cands.length + ' expéditeurs';
+    const verdict = new Map();
+    for (let i = 0; i < cands.length; i += 25) {
+      const part = cands.slice(i, i + 25);
+      try {
+        const r = await aiCall('Tu fais le ménage dans la messagerie personnelle de Samuel. Pour chaque expéditeur (nom, adresse, nombre de mails, lien de désabonnement, objets récents), réponds "virer" si ce sont des publicités, promotions, newsletters commerciales ou notifications sans valeur durable ; "garder" si cela peut avoir une utilité : banque, assurance, administration, impôts, santé, travail, école, association, personnes, voyages, services dont il est client et qui envoient des informations utiles. En cas de doute : garder. Réponds UNIQUEMENT en JSON {"items":[{"i":numéro,"v":"virer"|"garder","why":"6 mots max"}]}.',
+          part.map((g, j) => j + '. ' + g.name + ' <' + [...g.emails].slice(0, 2).join(', ') + '> · ' + g.count + ' mails' + (g.unsub ? ' · désabonnement' : '') + ' · objets : ' + g.subjects.slice(0, 5).join(' | ')).join('\n'), 1800);
+        (r.items || []).forEach(x => { const g = part[x.i]; if (g) verdict.set(g.key, { v: x.v === 'virer' ? 'virer' : 'garder', why: String(x.why || '').slice(0, 60) }); });
+      } catch (e) { log('ménage IA : avis', e.message); }
+      MJ.phase = 'L’IA examine ' + cands.length + ' expéditeurs (' + Math.min(i + 25, cands.length) + ')';
+    }
+    MJ.refs = {};
+    MJ.groups = cands.map(g => { const v = verdict.get(g.key) || { v: 'garder', why: 'non examiné' }; MJ.refs[g.key] = { g: g.g, f: g.f };
+      return { key: g.key, name: g.name, emails: [...g.emails].slice(0, 5), count: g.count, kept: g.kept, unsub: g.unsub, subjects: g.subjects.slice(0, 3), v: v.v, why: v.why, gCount: g.g.length, fCount: Object.values(g.f).reduce((a, x) => a + x.length, 0) }; });
+    MJ.status = 'done'; MJ.end = Date.now(); MJ.phase = 'Terminé';
+    const n = MJ.groups.filter(g => g.v === 'virer').reduce((a, g) => a + g.count, 0);
+    log('Ménage IA : ' + MJ.scanned + ' mails lus, ' + n + ' proposés au ménage');
+    if (S.subs.length) push({ title: '✦ Ménage IA terminé', body: n + ' mails de pub proposés au ménage. Ouvre l’appli pour vérifier.', url: C.appUrl + '#/menage', tag: 'mailbox-menage', badge: total() }).catch(() => {});
+  } catch (e) { MJ.status = 'error'; MJ.error = e.message; log('Ménage IA', e.message); }
+  mjSave();
+}
+async function menageApply(keys) {
+  const out = { gmail: 0, free: 0 };
+  const sel = (MJ.groups || []).filter(g => keys.includes(g.key));
+  const gIds = [].concat(...sel.map(g => (MJ.refs[g.key] || {}).g || []));
+  if (S.gmail && gIds.length) {
+    const labels = ((await gapi('labels')) || {}).labels || [];
+    let lab = labels.find(l => l.name === MENAGE);
+    if (!lab) lab = await gapi('labels', { method: 'POST', body: { name: MENAGE, labelListVisibility: 'labelShow', messageListVisibility: 'show' } });
+    const userLabs = labels.filter(l => l.type === 'user' && l.id !== lab.id).map(l => l.id);
+    for (let i = 0; i < gIds.length; i += 1000) {
+      const ids = gIds.slice(i, i + 1000);
+      await gWait();
+      await gapi('messages/batchModify', { method: 'POST', body: { ids, addLabelIds: [lab.id], removeLabelIds: ['INBOX', 'UNREAD'] } });
+      for (let j = 0; j < userLabs.length; j += 40) await gapi('messages/batchModify', { method: 'POST', body: { ids, removeLabelIds: userLabs.slice(j, j + 40) } });
+      out.gmail += ids.length;
+    }
+  }
+  if (S.free) await withImap(async client => {
+    await ensureFolder(client, MENAGE);
+    const byFolder = {};
+    sel.forEach(g => Object.entries((MJ.refs[g.key] || {}).f || {}).forEach(([fd, uids]) => { byFolder[fd] = (byFolder[fd] || []).concat(uids); }));
+    for (const [fd, uids] of Object.entries(byFolder)) {
+      let lock = null;
+      try { lock = await client.getMailboxLock(fd); for (let i = 0; i < uids.length; i += 500) { await client.messageFlagsAdd(uids.slice(i, i + 500), ['\\Seen'], { uid: true }); await client.messageMove(uids.slice(i, i + 500), MENAGE, { uid: true }); } out.free += uids.length; }
+      catch (e) { log('Ménage IA : déplacement ' + fd, e.message); } finally { if (lock) lock.release(); }
+    }
+  });
+  sel.forEach(g => { g.applied = true; delete MJ.refs[g.key]; });
+  MJ.applied = (MJ.applied || 0) + out.gmail + out.free; mjSave();
+  log('Ménage IA : ' + (out.gmail + out.free) + ' mails rangés dans « ' + MENAGE + ' »');
+  poll().catch(() => {});
+  return out;
+}
+async function menageEmpty() {
+  const out = { gmail: 0, free: 0 };
+  if (S.gmail) {
+    const lab = ((((await gapi('labels')) || {}).labels) || []).find(l => l.name === MENAGE);
+    if (lab) { let page = null; do { const r = (await gapi('messages?' + new URLSearchParams(Object.assign({ labelIds: lab.id, maxResults: 500 }, page ? { pageToken: page } : {})))) || {}; const ids = (r.messages || []).map(m => m.id); if (ids.length) { await gapi('messages/batchModify', { method: 'POST', body: { ids, addLabelIds: ['TRASH'], removeLabelIds: [lab.id] } }); out.gmail += ids.length; } page = r.nextPageToken; } while (page); }
+  }
+  if (S.free) await withImap(async client => {
+    const fo = await folders(client); let lock = null;
+    try { lock = await client.getMailboxLock(MENAGE); if (client.mailbox.exists) { out.free = client.mailbox.exists; await client.messageMove('1:*', fo.trash); } } catch (e) {} finally { if (lock) lock.release(); }
+  });
+  log('Ménage IA : dossier vidé (' + (out.gmail + out.free) + ' mails à la corbeille)');
+  return out;
 }
 async function checkTimers() {
   const now = Date.now();
@@ -1432,6 +1581,10 @@ const routes = {
     return resweep;
   },
   'GET /free/resweep': async () => resweep,
+  'GET /menage': async () => mjPublic(),
+  'POST /menage/start': async () => { if (!S.ai) throw Object.assign(new Error('Assistant IA non configuré (Réglages)'), { code: 400 }); if (MJ.status !== 'running') menageScan(); await pause(300); return mjPublic(); },
+  'POST /menage/apply': async (q, b) => { if (MJ.status !== 'done') throw Object.assign(new Error('Aucune analyse terminée'), { code: 400 }); return menageApply((b.keys || []).map(String)); },
+  'POST /menage/empty': async () => menageEmpty(),
   // Nombre de mails par dossier Free (et total)
   'GET /free/stats': async () => {
     if (!S.free) throw Object.assign(new Error('Free non connecté'), { code: 400 });

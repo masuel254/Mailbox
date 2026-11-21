@@ -249,6 +249,64 @@ async function renderSmart(question) {
     : '<div class="empty">Aucun mail ne correspond vraiment. Ajoute un détail : le nom de l’entreprise, la ville, le mois…</div>');
   save();
 }
+/* ---------- Ménage IA : l'IA repère les pubs sans intérêt, l'utilisateur valide, tout part dans « Ménage IA » ---------- */
+let menageT = null;
+async function renderMenage() {
+  clearTimeout(menageT);
+  const v = $('#view');
+  if (!$('#mj')) v.innerHTML = `<div class="top"><a class="back" href="#/labels">${ICON.back}Dossiers</a></div><h1 class="thread-title">✦ Ménage IA</h1><div id="mj"><div class="loading">Chargement…</div></div>`;
+  const box = $('#mj');
+  if (!relayOn()) { box.innerHTML = '<div class="empty">Le Ménage IA tourne sur ton relais : configure-le dans Réglages.</div>'; return; }
+  let r;
+  try { r = await rapi('/menage'); } catch (e) { box.innerHTML = `<div class="empty">${esc(e.status === 404 ? 'Ton relais n’est pas à jour : lance la commande Termius.' : e.message)}</div>`; return; }
+  const fmt = n => Number(n || 0).toLocaleString('fr-FR');
+  const guards = `<div class="card mj-guard"><b>🛡 Jamais touchés</b><div><span>Pièces jointes</span><span>Factures, reçus</span><span>Commandes, billets</span><span>Tes réponses</span><span>Tes correspondants</span><span>Suivis</span></div></div>`;
+  if (r.status === 'running') {
+    const tot = (r.g.total || 0) + (r.f.total || 0), done = (r.g.done || 0) + (r.f.done || 0), pct = tot ? Math.round(done / tot * 100) : 0;
+    box.innerHTML = `<div class="card mj-run"><b>${esc(r.phase || 'Analyse')}…</b><div class="mj-bar"><span style="width:${pct}%"></span></div><small>${fmt(done)} / ${fmt(tot)} mails lus · ${fmt(r.excluded)} mis de côté par les garde-fous</small>
+      <p class="fhint" style="margin:6px 0 0">Tu peux fermer l’appli : l’analyse continue sur ton serveur et tu reçois une notification à la fin.</p></div>${guards}`;
+    menageT = setTimeout(() => { if ((location.hash || '').startsWith('#/menage')) renderMenage(); }, 3000);
+    return;
+  }
+  if (r.status !== 'done') {
+    box.innerHTML = `<p class="fhint">L’IA lit l’en-tête de tous tes mails (expéditeur et objet, jamais le contenu), les regroupe par expéditeur et te propose ceux qui ne sont que de la pub. Rien n’est supprimé : tu vérifies, puis les mails choisis partent dans le dossier « Ménage IA ».</p>
+      ${r.status === 'error' ? `<p style="color:var(--danger)">Dernière analyse interrompue : ${esc(r.error || '')}</p>` : ''}${guards}
+      <button class="btn primary" id="mj-go" style="width:100%;margin-top:12px">Lancer l’analyse</button><p class="fhint" style="text-align:center">Compte 20 à 30 minutes pour une grosse boîte Gmail.</p>`;
+    $('#mj-go').onclick = async () => { $('#mj-go').disabled = true; try { await rapi('/menage/start', { method: 'POST' }); } catch (e) { toast(e.message); } renderMenage(); };
+    return;
+  }
+  const groups = r.groups || [], vir = groups.filter(g => g.v === 'virer' && !g.applied), kept = groups.filter(g => g.v !== 'virer'), done = groups.filter(g => g.applied);
+  // Expéditeurs mixtes (pubs + commandes/factures) : décochés par défaut, leurs factures restent de toute façon
+  const sel = new Set(LS.get('mjSel', null) || vir.filter(g => g.kept / (g.count + g.kept) < 0.2).map(g => g.key));
+  const total = () => vir.filter(g => sel.has(g.key)).reduce((a, g) => a + g.count, 0);
+  const row = (g, chk) => `<label class="mj-row">${chk ? `<input type="checkbox" data-k="${esc(g.key)}" ${sel.has(g.key) ? 'checked' : ''}>` : ''}<span class="mj-av">${esc(initials(g.name))}</span><span class="mj-nm"><b>${esc(g.name)}</b><small>${esc(g.why || '')}${g.kept ? ' · ' + g.kept + ' commandes/factures gardées' : ''}</small><small class="mj-sub">${esc((g.subjects || []).join(' · '))}</small></span><span class="mj-n">${fmt(g.count)}</span></label>`;
+  let showAll = false;
+  const draw = () => {
+    const list = showAll ? vir : vir.slice(0, 25);
+    box.innerHTML = `<p class="fhint" style="margin:0 0 8px">Analyse du ${esc(new Date(r.end || r.at).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))} · ${fmt(r.scanned)} mails lus</p>
+      <div class="mj-met"><div><b>${fmt(vir.reduce((a, g) => a + g.count, 0))}</b><span>mails de pub proposés</span></div><div><b>${vir.length}</b><span>expéditeurs</span></div></div>
+      ${guards}
+      ${vir.length ? `<h2 class="sec"><span>Proposés au ménage</span><button class="sec-btn" id="mj-all">${sel.size ? 'Tout décocher' : 'Tout cocher'}</button></h2><div class="card">${list.map(g => row(g, true)).join('')}${vir.length > list.length ? `<button class="mj-more" id="mj-more">Voir les ${vir.length - list.length} autres</button>` : ''}</div>` : '<div class="empty">Rien à virer : ta boîte est propre.</div>'}
+      ${kept.length ? `<details class="mj-kept"><summary>Gardés par l’IA · ${kept.length} expéditeurs</summary><div class="card">${kept.slice(0, 80).map(g => row(g, false)).join('')}</div></details>` : ''}
+      ${done.length ? `<p class="fhint">${fmt(r.applied)} mails déjà rangés dans « Ménage IA ».</p>` : ''}
+      <div class="mj-foot">${vir.length ? `<button class="btn primary" id="mj-apply">Ranger ${fmt(total())} mails dans « Ménage IA »</button>` : ''}
+        <div class="mj-2"><button class="btn" id="mj-open">Ouvrir le dossier</button><button class="btn danger" id="mj-empty">Vider le dossier</button></div>
+        <button class="btn" id="mj-again">Relancer une analyse</button></div>`;
+    $$('[data-k]', box).forEach(c => c.onchange = () => { c.checked ? sel.add(c.dataset.k) : sel.delete(c.dataset.k); LS.set('mjSel', [...sel]); const b = $('#mj-apply'); if (b) b.textContent = 'Ranger ' + fmt(total()) + ' mails dans « Ménage IA »'; });
+    const all = $('#mj-all'); if (all) all.onclick = () => { if (sel.size) sel.clear(); else vir.forEach(g => sel.add(g.key)); LS.set('mjSel', [...sel]); draw(); };
+    const more = $('#mj-more'); if (more) more.onclick = () => { showAll = true; draw(); };
+    const ap = $('#mj-apply'); if (ap) ap.onclick = async () => {
+      const keys = vir.filter(g => sel.has(g.key)).map(g => g.key); if (!keys.length) { toast('Coche au moins un expéditeur'); return; }
+      ap.disabled = true; ap.textContent = 'Rangement en cours…';
+      try { const o = await rapi('/menage/apply', { method: 'POST', body: { keys } }); LS.del('mjSel'); Object.keys(state.lists).forEach(k => delete state.lists[k]); badgeNow(0); toast(fmt(o.gmail + o.free) + ' mails rangés dans « Ménage IA »'); renderMenage(); }
+      catch (e) { ap.disabled = false; toast('Échec : ' + e.message); draw(); }
+    };
+    $('#mj-open').onclick = async () => { try { const ls = await getLabels(); const l = ls.find(x => x.name === 'Ménage IA'); location.hash = l ? '#/list/' + encodeURIComponent(l.id) : '#/list/' + encodeURIComponent('F:Ménage IA'); } catch (e) { toast(e.message); } };
+    $('#mj-empty').onclick = async () => { if (!confirm('Envoyer tout le dossier « Ménage IA » à la corbeille ? (récupérable 30 jours)')) return; try { const o = await rapi('/menage/empty', { method: 'POST' }); toast(fmt(o.gmail + o.free) + ' mails envoyés à la corbeille'); } catch (e) { toast(e.message); } };
+    $('#mj-again').onclick = async () => { if (!confirm('Relancer une analyse complète ?')) return; LS.del('mjSel'); try { await rapi('/menage/start', { method: 'POST' }); } catch (e) { toast(e.message); } renderMenage(); };
+  };
+  draw();
+}
 /* ---------- Envois programmés et rappels « pas de réponse » ---------- */
 async function renderScheduled() {
   const v = $('#view');
@@ -495,6 +553,7 @@ async function renderLabels() {
         + section('Gmail', 'gmail', g.filter(x => !isBlk(x))) + section('Free', 'free', f.filter(x => !isBlk(x)))
         + `<a class="set-link" href="#/list/STARRED"><span class="set-t">⭐ Suivis</span><span class="set-s">Mails marqués « Suivre »</span><span class="chev-r" aria-hidden="true"></span></a>`
         + (LS.get('outboxN', 0) ? `<a class="set-link" href="#/outbox"><span class="set-t">📤 À envoyer · ${LS.get('outboxN', 0)}</span><span class="set-s">Sans réseau</span><span class="chev-r" aria-hidden="true"></span></a>` : '')
+        + `<a class="set-link" href="#/menage"><span class="set-t">✦ Ménage IA</span><span class="set-s">Virer les pubs</span><span class="chev-r" aria-hidden="true"></span></a>`
         + `<a class="set-link" href="#/blocked"><span class="set-t">⛔️ Bloqués</span><span class="set-s">Expéditeurs bloqués</span><span class="chev-r" aria-hidden="true"></span></a>`
         + `<a class="set-link" href="#/scheduled"><span class="set-t">⏱ Programmés</span><span class="set-s">Envois et relances</span><span class="chev-r" aria-hidden="true"></span></a>`
         + `<a class="set-link" href="#/list/DRAFT"><span class="set-t">📝 Brouillons</span><span class="set-s">Gmail</span><span class="chev-r" aria-hidden="true"></span></a>`

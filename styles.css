@@ -637,3 +637,18 @@ a.set-link .set-s{flex:1 1 auto;min-width:0;text-align:right;overflow:hidden;tex
 .mbs-h{display:flex;align-items:center;gap:8px;font-size:.95rem;margin-bottom:4px}.mbs-h b{flex:1}.mbs-h span:last-child{font-weight:700;color:var(--text)}
 .mbs-r{display:flex;justify-content:space-between;padding:5px 0 5px 18px;border-top:1px solid var(--line);font-size:.85rem;color:var(--muted)}
 .mbs-r span:last-child{color:var(--text);font-variant-numeric:tabular-nums}
+/* Ménage IA */
+.mj-guard{padding:10px 12px;margin:8px 0}.mj-guard b{font-size:.85rem}.mj-guard div{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+.mj-guard span{font-size:.74rem;border-radius:7px;padding:2px 8px;background:color-mix(in srgb,#1D9E75 22%,transparent);color:var(--text)}
+.mj-run{padding:12px 14px;display:flex;flex-direction:column;gap:8px}.mj-run small{color:var(--muted)}
+.mj-bar{height:8px;border-radius:4px;background:var(--line2);overflow:hidden}.mj-bar span{display:block;height:100%;background:var(--accent-fill);transition:width .5s}
+.mj-met{display:grid;grid-template-columns:1fr 1fr;gap:8px}.mj-met div{background:var(--surface);border-radius:12px;padding:10px 12px}.mj-met b{display:block;font-size:1.5rem}.mj-met span{font-size:.78rem;color:var(--muted)}
+.mj-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid var(--line);cursor:pointer}.mj-row:first-child{border-top:none}
+.mj-row input{width:22px;height:22px;accent-color:var(--accent-fill);flex:none}
+.mj-av{width:32px;height:32px;border-radius:50%;background:var(--line2);display:flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:800;flex:none}
+.mj-nm{flex:1;min-width:0;display:flex;flex-direction:column}.mj-nm b{font-size:.92rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mj-nm small{font-size:.74rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mj-sub{opacity:.75}
+.mj-n{font-weight:800;font-size:.9rem;flex:none}
+.mj-more{width:100%;border:none;background:none;color:var(--accent);font-weight:700;padding:12px;border-top:1px solid var(--line)}
+.mj-kept{margin-top:12px}.mj-kept summary{font-weight:700;color:var(--muted);padding:8px 2px;cursor:pointer}
+.mj-foot{display:flex;flex-direction:column;gap:8px;margin-top:14px}.mj-foot .btn{width:100%}.mj-2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
