@@ -610,8 +610,8 @@ body.no-tabbar #offline-bar,body.no-tabbar #outbox-bar{bottom:calc(env(safe-area
 .toolbar:not(.tb-more) button{flex-direction:column;justify-content:center;gap:3px;height:auto;min-height:58px;padding:6px 2px;font-size:.72rem;border-radius:14px}
 .toolbar:not(.tb-more) button svg{margin:0}
 /* Lignes de réglages/dossiers : titre sur une ligne, sous-titre raccourci si besoin */
-.set-link .set-t{white-space:nowrap;flex:none}
-.set-link .set-s{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+a.set-link .set-t{white-space:nowrap;flex:0 0 auto;max-width:62%;overflow:hidden;text-overflow:ellipsis}
+a.set-link .set-s{flex:1 1 auto;min-width:0;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* A− / A+ dans l'en-tête de la réception : un seul bloc compact */
 .sticky-head .top .fs-ctl{margin-left:0;gap:0;border:1px solid var(--line2);border-radius:22px;overflow:hidden;background:var(--surface)}
 .sticky-head .top .fs-ctl button{width:42px;height:44px;border:none;border-radius:0;background:transparent;font-size:.85rem}

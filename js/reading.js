@@ -402,7 +402,7 @@ async function renderLabels() {
     <div id="xfer-bar" hidden></div>
     <a class="set-link" href="#/tasks"><span class="set-t">✅ Tâches</span><span class="set-s" id="tk-count">À faire et rappels</span><span class="chev-r" aria-hidden="true"></span></a>
     <a class="set-link" href="#/list/SENT"><span class="set-t">📤 Envoyés</span><span class="set-s">Gmail + Free</span><span class="chev-r" aria-hidden="true"></span></a>
-    <a class="set-link" href="#/waiting"><span class="set-t">⏳ En attente de réponse</span><span class="set-s">Suivi Gmail + Free</span><span class="chev-r" aria-hidden="true"></span></a>
+    <a class="set-link" href="#/waiting"><span class="set-t">⏳ En attente</span><span class="set-s">Sans réponse</span><span class="chev-r" aria-hidden="true"></span></a>
     <div id="labs"><div class="loading">Chargement…</div></div>`;
   $('#btn-refresh').onclick = () => { state.folders = null; LS.del('foldersCache'); renderLabels(); };
   // Affichage instantané depuis le cache (mémoire ou appareil), puis mise à jour en arrière-plan
@@ -495,6 +495,7 @@ async function renderLabels() {
         + section('Gmail', 'gmail', g.filter(x => !isBlk(x))) + section('Free', 'free', f.filter(x => !isBlk(x)))
         + `<a class="set-link" href="#/list/STARRED"><span class="set-t">⭐ Suivis</span><span class="set-s">Mails marqués « Suivre »</span><span class="chev-r" aria-hidden="true"></span></a>`
         + (LS.get('outboxN', 0) ? `<a class="set-link" href="#/outbox"><span class="set-t">📤 À envoyer · ${LS.get('outboxN', 0)}</span><span class="set-s">Sans réseau</span><span class="chev-r" aria-hidden="true"></span></a>` : '')
+        + `<a class="set-link" href="#/blocked"><span class="set-t">⛔️ Bloqués</span><span class="set-s">Expéditeurs bloqués</span><span class="chev-r" aria-hidden="true"></span></a>`
         + `<a class="set-link" href="#/scheduled"><span class="set-t">⏱ Programmés</span><span class="set-s">Envois et relances</span><span class="chev-r" aria-hidden="true"></span></a>`
         + `<a class="set-link" href="#/list/DRAFT"><span class="set-t">📝 Brouillons</span><span class="set-s">Gmail</span><span class="chev-r" aria-hidden="true"></span></a>`
         + common();
