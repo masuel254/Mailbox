@@ -847,7 +847,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.12.0';
+const RELAY_V = '4.12.1';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -1132,7 +1132,7 @@ async function menageScan(acc) {
     if (useG) {
       MJ.phase = 'Gmail : mes envois';
       let page = null, sentIds = [];
-      do { await gWait(); const r = (await gapi('messages?' + new URLSearchParams(Object.assign({ q: 'in:sent', maxResults: 500 }, page ? { pageToken: page } : {})))) || {}; (r.messages || []).forEach(m => { sentThreads.add(m.threadId); sentIds.push(m.id); }); page = r.nextPageToken; } while (page && sentIds.length < 20000);
+      do { await gWait(); const r = (await gTry('messages?' + new URLSearchParams(Object.assign({ q: 'in:sent', maxResults: 500 }, page ? { pageToken: page } : {})))) || {}; (r.messages || []).forEach(m => { sentThreads.add(m.threadId); sentIds.push(m.id); }); page = r.nextPageToken; } while (page && sentIds.length < 20000);
       // Gmail limite fortement la lecture mail par mail : on lit un échantillon (les 2 500 plus récents) pour découvrir les expéditeurs,
       // puis, pour ceux que l'IA juge sans intérêt, on récupère tous leurs mails d'un coup par une recherche « from: » (très rapide)
       MJ.phase = 'Gmail : liste des mails (' + sentThreads.size + ' conversations envoyées)';
@@ -1140,14 +1140,14 @@ async function menageScan(acc) {
       const ids = []; page = null;
       do {
         await gWait();
-        const r = (await gapi('messages?' + new URLSearchParams(Object.assign({ q: BASEQ, maxResults: 500 }, page ? { pageToken: page } : {})))) || {};
+        const r = (await gTry('messages?' + new URLSearchParams(Object.assign({ q: BASEQ, maxResults: 500 }, page ? { pageToken: page } : {})))) || {};
         (r.messages || []).forEach(m => { if (sentThreads.has(m.threadId)) MJ.excluded++; else ids.push(m.id); });
         page = r.nextPageToken; MJ.gAll = ids.length;
       } while (page && ids.length < 80000);
       let sample = ids.slice(0, 1800);
       try {
         const promo = []; let pp = null;
-        do { await gWait(); const r = (await gapi('messages?' + new URLSearchParams(Object.assign({ q: BASEQ + ' category:promotions', maxResults: 500 }, pp ? { pageToken: pp } : {})))) || {}; (r.messages || []).forEach(m => { if (!sentThreads.has(m.threadId)) promo.push(m.id); }); pp = r.nextPageToken; } while (pp && promo.length < 30000);
+        do { await gWait(); const r = (await gTry('messages?' + new URLSearchParams(Object.assign({ q: BASEQ + ' category:promotions', maxResults: 500 }, pp ? { pageToken: pp } : {})))) || {}; (r.messages || []).forEach(m => { if (!sentThreads.has(m.threadId)) promo.push(m.id); }); pp = r.nextPageToken; } while (pp && promo.length < 30000);
         const inS = new Set(sample), rest = promo.filter(id => !inS.has(id)), step = Math.max(1, rest.length / 1200);
         for (let x = 0; x < rest.length && sample.length < 3000; x += step) sample.push(rest[Math.floor(x)]);
       } catch (e) { log('ménage IA : promotions', e.message); }
