@@ -1,5 +1,12 @@
 'use strict';
 /* ---------- Réglages ---------- */
+// Nombre de mails de chaque boîte (pour info), en haut des Réglages
+async function mailboxStats() {
+  const fmt = n => Number(n || 0).toLocaleString('fr-FR');
+  const g = $('#mbs-g'), f = $('#mbs-f');
+  try { const p = await api('profile'); if (g) g.textContent = 'Gmail · ' + fmt(p.messagesTotal) + ' mails'; } catch (e) { if (g) g.textContent = 'Gmail · indisponible'; }
+  if (f) { try { const r = await rapi('/free/stats'); f.textContent = 'Free · ' + fmt(r.total) + ' mails'; f.title = (r.folders || []).map(x => x.name + ' : ' + x.messages).join('\n'); } catch (e) { f.textContent = 'Free · indisponible'; } }
+}
 function renderSettings() {
   const hq = new URLSearchParams((location.hash.split('?')[1]) || '');
   if (hq.get('relay')) {
@@ -11,6 +18,7 @@ function renderSettings() {
   const connected = !!LS.get('token', null) || relayGmailOn();
   $('#view').innerHTML = `
     <a class="back back-sm" href="#/list/INBOX">${ICON.back}Reçus</a><div class="top"><h1>Réglages</h1></div>
+    <div class="mb-stats" id="mb-stats"><span>Boîtes mail</span><b id="mbs-g">Gmail · …</b>${freeOn() ? '<b id="mbs-f">Free · …</b>' : ''}</div>
     <a class="set-link" href="#/guide"><span class="set-t">📖 Guide d'utilisation</span><span class="set-s">Gestes, dossiers, IA…</span><span class="chev-r" aria-hidden="true"></span></a>
     <a class="set-link" id="s-junk" href="#/labels"><span class="set-t">Voir les mails indésirables</span><span class="set-s">${freeOn() ? 'Gmail + Free' : 'Gmail'}</span><span class="chev-r" aria-hidden="true"></span></a>
     <details class="set" data-set="blocked"><summary><span class="set-t">Voir les expéditeurs bloqués</span><span class="set-s" id="s-blk-n"></span><span class="chev" aria-hidden="true"></span></summary>
@@ -82,6 +90,7 @@ function renderSettings() {
   else if (perm === 'absent' || !navigator.setAppBadge) { bs.textContent = 'Non disponible sur cet appareil (iOS 16.4 minimum).'; bb.hidden = true; }
   bb.onclick = async () => { try { const r = await Notification.requestPermission(); if (r === 'granted') { await updateBadge(); toast('Pastille activée'); } renderSettings(); } catch (e) { toast('Autorisation impossible'); } };
   renderBlocked($('#s-blocked'));
+  mailboxStats();
   renderRelay();
   $('#s-upd').onclick = async () => {
     const st = $('#s-upd-state'); st.textContent = 'Vérification…';

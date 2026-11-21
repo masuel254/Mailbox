@@ -827,7 +827,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.10.4';
+const RELAY_V = '4.10.5';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -1432,6 +1432,18 @@ const routes = {
     return resweep;
   },
   'GET /free/resweep': async () => resweep,
+  // Nombre de mails par dossier Free (et total)
+  'GET /free/stats': async () => {
+    if (!S.free) throw Object.assign(new Error('Free non connecté'), { code: 400 });
+    return withImap(async client => {
+      const out = [];
+      for (const m of await client.list()) {
+        if (m.flags && m.flags.has('\\Noselect')) continue;
+        try { const st = await client.status(m.path, { messages: true }); out.push({ name: m.name, path: m.path, messages: st.messages || 0 }); } catch (e) {}
+      }
+      return { total: out.reduce((a, x) => a + x.messages, 0), folders: out };
+    });
+  },
   'POST /free/block': async (q, b) => {
     const t = (b.target || '').toLowerCase(); if (!t) throw Object.assign(new Error('cible manquante'), { code: 400 });
     const nm = b.name && String(b.name).trim().length >= 3 && !String(b.name).includes('@') ? 'name:' + String(b.name).trim() : null;
