@@ -545,8 +545,16 @@ async function freeEmpty(folderKey) {
     const lock = await client.getMailboxLock(folder);
     try {
       const uids = (await client.search({ all: true }, { uid: true })) || [];
-      if (uids.length) { await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true }); await client.messageMove(uids, dest, { uid: true }); }
-      return { ok: true, moved: uids.length };
+      // Par lots : un seul ordre IMAP pour des milliers de mails peut échouer ou dépasser le délai du téléphone
+      let moved = 0;
+      for (let i = 0; i < uids.length; i += 200) {
+        const part = uids.slice(i, i + 200);
+        await client.messageFlagsAdd(part, ['\\Seen'], { uid: true }).catch(() => {});
+        await client.messageMove(part, dest, { uid: true });
+        moved += part.length;
+      }
+      log('Free : ' + moved + ' mails de « ' + folder + ' » mis à la corbeille');
+      return { ok: true, moved };
     } finally { lock.release(); }
   });
 }
@@ -837,7 +845,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.11.3';
+const RELAY_V = '4.11.5';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */

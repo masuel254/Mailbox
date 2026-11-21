@@ -916,7 +916,7 @@ async function emptyLabel(labelId, name) {
         b.textContent = total + ' supprimés…';
         page = r.nextPageToken;
       } while (page);
-      if (freeOn() && isMenageLabel(labelId)) total += ((await rapi('/free/empty', { method: 'POST', body: { folder: 'MENAGE' } }).catch(() => null)) || {}).moved || 0;
+      if (freeOn() && isMenageLabel(labelId)) { b.textContent = 'Free : suppression…'; try { total += (await rapi('/free/empty', { method: 'POST', body: { folder: 'MENAGE' } })).moved || 0; } catch (e) { toast('Free : ' + e.message); } }
       if (isBlockLabel(labelId)) {
         // spam Gmail : à la corbeille aussi
         let sp = null;
