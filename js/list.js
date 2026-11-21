@@ -879,7 +879,8 @@ async function labelSize(labelId) {
     try { localStorage.setItem('ml-size-' + labelId, JSON.stringify(out)); } catch (e) {}
     return out;
   })();
-  const free = freeOn() && (isBlockLabel(labelId) || labelId === 'TRASH') ? rapi('/free/size?folder=' + (labelId === 'TRASH' ? 'TRASH' : 'BLOCKED')).catch(() => null) : Promise.resolve(null);
+  const fKey = labelId === 'TRASH' ? 'TRASH' : isBlockLabel(labelId) ? 'BLOCKED' : isMenageLabel(labelId) ? 'MENAGE' : null;
+  const free = freeOn() && fKey ? rapi('/free/size?folder=' + fKey).catch(() => null) : Promise.resolve(null);
   try {
     const [g, f] = await Promise.all([gmail.catch(() => null), free]);
     if (!g && !f) return 'Taille indisponible';
@@ -894,7 +895,7 @@ async function labelSize(labelId) {
 
 async function emptyLabel(labelId, name) {
   openSheet(`<span class="grip"></span><h2>Tout supprimer ?</h2>
-    <p style="margin:0;color:var(--muted);font-size:.85rem;line-height:1.5">Tous les mails « ${esc(name)} » partent dans la corbeille${String(labelId).startsWith('F:') ? ' de Free' : freeOn() && isBlockLabel(labelId) ? ' de leur boîte, Gmail et Free' : ' de Gmail'}.${String(labelId).startsWith('F:') ? '' : ' Côté Gmail, ils y restent 30 jours avant suppression définitive : la place n’est libérée qu’à ce moment-là, ou plus tôt si tu vides la corbeille.'}</p>
+    <p style="margin:0;color:var(--muted);font-size:.85rem;line-height:1.5">Tous les mails « ${esc(name)} » partent dans la corbeille${String(labelId).startsWith('F:') ? ' de Free' : freeOn() && (isBlockLabel(labelId) || isMenageLabel(labelId)) ? ' de leur boîte, Gmail et Free' : ' de Gmail'}.${String(labelId).startsWith('F:') ? '' : ' Côté Gmail, ils y restent 30 jours avant suppression définitive : la place n’est libérée qu’à ce moment-là, ou plus tôt si tu vides la corbeille.'}</p>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="empty-ok">Tout supprimer</button></div>`);
   $('#empty-ok').onclick = async () => {
     const b = $('#empty-ok'); b.disabled = true; b.textContent = 'Suppression…';
@@ -915,6 +916,7 @@ async function emptyLabel(labelId, name) {
         b.textContent = total + ' supprimés…';
         page = r.nextPageToken;
       } while (page);
+      if (freeOn() && isMenageLabel(labelId)) total += ((await rapi('/free/empty', { method: 'POST', body: { folder: 'MENAGE' } }).catch(() => null)) || {}).moved || 0;
       if (isBlockLabel(labelId)) {
         // spam Gmail : à la corbeille aussi
         let sp = null;
