@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '4.7.1';
+const APP_VERSION = '4.7.2';
 const APP_DATE = '21/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -3158,7 +3158,9 @@ async function renderAgenda() {
     do { (byDay.get(dayKey(d)) || byDay.set(dayKey(d), []).get(dayKey(d))).push(it); d = addDays(d, 1); } while (d < end && d < range[1]);
   });
   const nav = $('#ag-nav'), tk = dayKey(new Date());
-  const head = (lbl, prev, next, pl, nl) => { nav.innerHTML = `<div class="ag-head"><button class="icon-btn" id="ag-prev" aria-label="${pl}">‹</button><b>${esc(lbl)}</b><button class="icon-btn" id="ag-next" aria-label="${nl}">›</button></div>`; $('#ag-prev').onclick = () => { state.agDay = prev; renderAgenda(); }; $('#ag-next').onclick = () => { state.agDay = next; renderAgenda(); }; };
+  // bouton « Aujourd'hui » dès qu'on s'est éloigné du jour courant, pour ne pas s'y perdre
+  const away = dayKey(d0) !== tk;
+  const head = (lbl, prev, next, pl, nl) => { nav.innerHTML = `<div class="ag-head"><button class="icon-btn" id="ag-prev" aria-label="${pl}">‹</button><div class="ag-mid"><b>${esc(lbl)}</b>${away ? '<button class="today-pill" id="ag-today">Revenir à aujourd’hui</button>' : ''}</div><button class="icon-btn" id="ag-next" aria-label="${nl}">›</button></div>`; $('#ag-prev').onclick = () => { state.agDay = prev; renderAgenda(); }; $('#ag-next').onclick = () => { state.agDay = next; renderAgenda(); }; const tb = $('#ag-today'); if (tb) tb.onclick = () => { state.agDay = startOfDay(new Date()); renderAgenda(); }; };
   // titre et couleur d'un élément (Google, TimeTree ou tâche), pour les pastilles des vues Semaine et Mois
   const itTitle = it => it.kind === 'tt' ? it.x.title : it.kind === 'task' ? it.t.title : (it.ev.summary || '(sans titre)');
   const itColor = it => it.kind === 'tt' ? (it.x.color || '#4caf8f') : it.kind === 'task' ? '#9be3b4' : (EV_COLORS[it.ev.colorId] || '#8fb6ff');
