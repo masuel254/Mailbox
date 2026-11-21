@@ -1,8 +1,8 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '4.6.1';
-const APP_DATE = '20/11/2026';
+const APP_VERSION = '4.7.0';
+const APP_DATE = '21/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
 const BLOCK_LABEL = 'Indésirables';
@@ -3123,14 +3123,14 @@ async function renderAgenda() {
   const mode = LS.get('agMode', 'week');
   state.agDay = state.agDay || startOfDay(new Date());
   v.innerHTML = `<div class="sticky-head"><div class="top"><h1>Agenda</h1><button class="icon-btn" id="ag-new" aria-label="Nouvel événement">${ICON.plus}</button><button class="icon-btn" id="ag-ref" aria-label="Actualiser">${ICON.refresh}</button></div>
-    <div class="seg" id="ag-seg">${[['week', 'Semaine'], ['month', 'Mois'], ['list', 'Liste']].map(([k, n]) => `<button data-m="${k}" class="${mode === k ? 'on' : ''}">${n}</button>`).join('')}</div>
+    <div class="seg" id="ag-seg">${[['day', 'Jour'], ['week', 'Semaine'], ['month', 'Mois'], ['list', 'Liste']].map(([k, n]) => `<button data-m="${k}" class="${mode === k ? 'on' : ''}">${n}</button>`).join('')}</div>
     <div id="ag-nav"></div></div>${settings.ai && relayOn() ? '<div class="ag-ai"><button class="btn" id="ag-ai-day">✦ Ma journée</button><button class="btn" id="ag-ai-week">✦ Ma semaine</button><button class="btn" id="ag-ai-we">✦ Week-end</button></div><div id="ag-ai-out"></div>' : ''}<div id="ag-sug"></div><div id="ag-list"><div class="loading">Chargement…</div></div>`;
   $$('#ag-seg button').forEach(b => b.onclick = () => { LS.set('agMode', b.dataset.m); renderAgenda(); });
   $('#ag-new').onclick = () => eventSheet({ start: defaultStart(state.agDay) }, () => renderAgenda());
   $('#ag-ref').onclick = () => { state.agCache = null; renderAgenda(); };
   if (hq.get('new')) { history.replaceState(null, '', '#/agenda'); eventSheet({ title: hq.get('title') || '', note: hq.get('with') ? 'Avec ' + hq.get('with') : '', start: defaultStart(state.agDay) }, () => renderAgenda()); }
   const d0 = state.agDay;
-  const range = mode === 'week' ? [monday(d0), addDays(monday(d0), 7)]
+  const range = mode === 'day' ? [startOfDay(d0), addDays(startOfDay(d0), 1)] : mode === 'week' ? [monday(d0), addDays(monday(d0), 7)]
     : mode === 'month' ? (() => { const f = new Date(d0.getFullYear(), d0.getMonth(), 1); const s = monday(f); return [s, addDays(s, 42)]; })()
     : [startOfDay(new Date()), addDays(startOfDay(new Date()), 60)];
   const ck = mode + range[0].getTime();
@@ -3158,24 +3158,34 @@ async function renderAgenda() {
     do { (byDay.get(dayKey(d)) || byDay.set(dayKey(d), []).get(dayKey(d))).push(it); d = addDays(d, 1); } while (d < end && d < range[1]);
   });
   const nav = $('#ag-nav'), tk = dayKey(new Date());
-  if (mode === 'week') {
+  const head = (lbl, prev, next, pl, nl) => { nav.innerHTML = `<div class="ag-head"><button class="icon-btn" id="ag-prev" aria-label="${pl}">‹</button><b>${esc(lbl)}</b><button class="icon-btn" id="ag-next" aria-label="${nl}">›</button></div>`; $('#ag-prev').onclick = () => { state.agDay = prev; renderAgenda(); }; $('#ag-next').onclick = () => { state.agDay = next; renderAgenda(); }; };
+  // titre et couleur d'un élément (Google, TimeTree ou tâche), pour les pastilles des vues Semaine et Mois
+  const itTitle = it => it.kind === 'tt' ? it.x.title : it.kind === 'task' ? it.t.title : (it.ev.summary || '(sans titre)');
+  const itColor = it => it.kind === 'tt' ? (it.x.color || '#4caf8f') : it.kind === 'task' ? '#9be3b4' : (EV_COLORS[it.ev.colorId] || '#8fb6ff');
+  const itAttr = it => it.kind === 'tt' ? `data-tt="${esc(it.x.id)}"` : it.kind === 'task' ? `data-task="${esc(it.t.id)}"` : `data-ev="${esc(it.ev.id)}"`;
+  let days = [], pre = '';
+  if (mode === 'day') {
+    head(d0.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) + (dayKey(d0) === tk ? ' (auj.)' : ''), addDays(d0, -1), addDays(d0, 1), 'Jour précédent', 'Jour suivant');
+    days = [startOfDay(d0)];
+  } else if (mode === 'week') {
     const m = monday(d0);
-    nav.innerHTML = `<div class="ag-head"><button class="icon-btn" id="ag-prev" aria-label="Semaine précédente">‹</button><b>${esc(m.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }))} – ${esc(addDays(m, 6).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }))}</b><button class="icon-btn" id="ag-next" aria-label="Semaine suivante">›</button></div>
-      <div class="week">${[...Array(7)].map((_, i) => { const d = addDays(m, i), k = dayKey(d); return `<button class="wd ${k === dayKey(d0) ? 'on' : ''} ${k === tk ? 'today' : ''}" data-d="${k}">${esc(d.toLocaleDateString('fr-FR', { weekday: 'short' }).replace('.', ''))}<b>${d.getDate()}</b>${byDay.has(k) ? '<i></i>' : '<i class="no"></i>'}</button>`; }).join('')}</div>`;
-    $('#ag-prev').onclick = () => { state.agDay = addDays(d0, -7); renderAgenda(); };
-    $('#ag-next').onclick = () => { state.agDay = addDays(d0, 7); renderAgenda(); };
+    head(m.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) + ' – ' + addDays(m, 6).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }), addDays(d0, -7), addDays(d0, 7), 'Semaine précédente', 'Semaine suivante');
+    // 7 grandes cases sur 2 colonnes : titres et heures en entier, sans avoir à toucher chaque jour
+    const wk = [...Array(7)].map((_, i) => addDays(m, i));
+    const cnt = wk.map(d => (byDay.get(dayKey(d)) || []).length), total = new Set(wk.flatMap(d => byDay.get(dayKey(d)) || [])).size;
+    const busy = cnt.indexOf(Math.max(...cnt)), free = wk.filter((d, i) => !cnt[i]);
+    pre = `<div class="wgrid">${wk.map(d => { const k = dayKey(d), its = byDay.get(k) || [];
+      return `<div class="wcard ${k === tk ? 'today' : ''}"><button class="wcard-h" data-day="${k}">${esc(d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric' }).replace('.', ''))}${k === tk ? ' · auj.' : ''}</button>${its.length ? its.map(it => `<button class="chip-ev" style="--c:${esc(itColor(it))}" ${itAttr(it)}>${it.allDay ? '' : `<i>${hhmm(it.s)}</i> `}${esc(itTitle(it))}</button>`).join('') : '<span class="wfree">Libre</span>'}</div>`; }).join('')}
+      <div class="wcard wsum"><b>${total} événement${total > 1 ? 's' : ''}</b>${total ? `<span>${esc(wk[busy].toLocaleDateString('fr-FR', { weekday: 'long' }))} le plus chargé</span>` : ''}${free.length ? `<span>Libre : ${esc(free.map(d => d.toLocaleDateString('fr-FR', { weekday: 'short' }).replace('.', '')).join(', '))}</span>` : ''}</div></div>`;
   } else if (mode === 'month') {
-    const f = new Date(d0.getFullYear(), d0.getMonth(), 1), s = monday(f);
-    nav.innerHTML = `<div class="ag-head"><button class="icon-btn" id="ag-prev" aria-label="Mois précédent">‹</button><b>${esc(f.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }))}</b><button class="icon-btn" id="ag-next" aria-label="Mois suivant">›</button></div>
-      <div class="month">${['L', 'M', 'M', 'J', 'V', 'S', 'D'].map(x => `<span class="mh">${x}</span>`).join('')}${[...Array(42)].map((_, i) => { const d = addDays(s, i), k = dayKey(d); return `<button class="md ${d.getMonth() !== f.getMonth() ? 'out' : ''} ${k === dayKey(d0) ? 'on' : ''} ${k === tk ? 'today' : ''}" data-d="${k}">${d.getDate()}${byDay.has(k) ? '<i></i>' : ''}</button>`; }).join('')}</div>`;
-    $('#ag-prev').onclick = () => { state.agDay = new Date(d0.getFullYear(), d0.getMonth() - 1, 1); renderAgenda(); };
-    $('#ag-next').onclick = () => { state.agDay = new Date(d0.getFullYear(), d0.getMonth() + 1, 1); renderAgenda(); };
-  } else nav.innerHTML = '';
-  $$('[data-d]', nav).forEach(b => b.onclick = () => { state.agDay = new Date(b.dataset.d + 'T00:00'); renderAgenda(); });
-  // Liste : le jour choisi puis la suite de la semaine (semaine), le jour choisi (mois), 60 jours (liste)
-  const days = mode === 'week' ? [...Array(7)].map((_, i) => addDays(monday(d0), i)).filter(d => d >= startOfDay(d0))
-    : mode === 'month' ? [startOfDay(d0)]
-    : [...Array(60)].map((_, i) => addDays(startOfDay(new Date()), i)).filter(d => byDay.has(dayKey(d)));
+    const f = new Date(d0.getFullYear(), d0.getMonth(), 1), st = monday(f);
+    head(f.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }), new Date(d0.getFullYear(), d0.getMonth() - 1, 1), new Date(d0.getFullYear(), d0.getMonth() + 1, 1), 'Mois précédent', 'Mois suivant');
+    // cases hautes avec le début des titres ; la dernière ligne n'est affichée que si elle contient des jours du mois
+    const n = addDays(st, 35).getMonth() === f.getMonth() ? 42 : 35;
+    pre = `<div class="mgrid">${['L', 'M', 'M', 'J', 'V', 'S', 'D'].map(x => `<span class="mh">${x}</span>`).join('')}${[...Array(n)].map((_, i) => { const d = addDays(st, i), k = dayKey(d), its = byDay.get(k) || [];
+      return `<button class="mcell ${d.getMonth() !== f.getMonth() ? 'out' : ''} ${k === dayKey(d0) ? 'on' : ''} ${k === tk ? 'today' : ''}" data-d="${k}"><b>${d.getDate()}</b>${its.slice(0, its.length > 3 ? 2 : 3).map(it => `<span style="--c:${esc(itColor(it))}">${esc(itTitle(it))}</span>`).join('')}${its.length > 3 ? `<small>+${its.length - 2}</small>` : ''}</button>`; }).join('')}</div>`;
+    days = [startOfDay(d0)];
+  } else { nav.innerHTML = ''; days = [...Array(60)].map((_, i) => addDays(startOfDay(new Date()), i)).filter(d => byDay.has(dayKey(d))); }
   const evRow = it => {
     if (it.kind === 'tt') { const x = it.x; return `<button class="ev" style="--c:${esc(x.color || '#4caf8f')}" data-tt="${esc(x.id)}"><span class="t">${it.allDay ? 'Journée' : hhmm(it.s) + (it.e > it.s ? '<br>' + hhmm(it.e) : '')}</span><span class="ev-b"><b>${esc(x.title)}</b><small><span class="tt-tag">TimeTree</span> ${esc(x.cal)}${x.location || mapLinkIn(x.note) ? ' · ' + locChip(x.location || mapLinkIn(x.note)) : ''}</small></span></button>`; }
     if (it.kind === 'task') return `<button class="ev" style="--c:#9be3b4" data-task="${esc(it.t.id)}"><span class="t">${hhmm(it.s)}</span><span class="ev-b"><b>${esc(it.t.title)}</b><small>Tâche MailBox${it.t.ref && it.t.ref.from ? ' · mail de ' + esc(it.t.ref.from) : ''}</small></span></button>`;
@@ -3183,8 +3193,11 @@ async function renderAgenda() {
     return `<button class="ev" style="--c:${EV_COLORS[e.colorId] || '#8fb6ff'}" data-ev="${esc(e.id)}"><span class="t">${it.allDay ? 'Journée' : hhmm(it.s) + '<br>' + hhmm(it.e)}</span><span class="ev-b"><b>${esc(e.summary || '(sans titre)')}</b>${e.location || e.description ? `<small>${e.location ? locChip(e.location) : ''}${e.location && e.description ? ' · ' : ''}${!e.location && mapLinkIn(e.description) ? locChip(mapLinkIn(e.description)) + ' · ' : ''}${e.description ? esc(String(e.description).replace(/<[^>]+>/g, ' ').replace(/https?:\/\/\S+/g, '').slice(0, 80)) : ''}</small>` : ''}</span></button>`;
   };
   const box = $('#ag-list');
-  box.innerHTML = days.map(d => { const its = byDay.get(dayKey(d)) || []; return `<div class="day-h">${esc(d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }))}${dayKey(d) === tk ? ' · aujourd’hui' : ''}</div>` + (its.length ? its.map(evRow).join('') : '<p class="fhint" style="margin:2px 6px 8px">Rien de prévu</p>'); }).join('')
-    || '<div class="empty">Rien de prévu sur les 60 prochains jours.</div>';
+  box.innerHTML = pre + days.map(d => { const its = byDay.get(dayKey(d)) || []; return (mode === 'day' ? '' : `<div class="day-h">${esc(d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }))}${dayKey(d) === tk ? ' · aujourd’hui' : ''}</div>`) + (its.length ? its.map(evRow).join('') : '<p class="fhint" style="margin:2px 6px 8px">Rien de prévu</p>'); }).join('')
+    || (mode === 'list' ? '<div class="empty">Rien de prévu sur les 60 prochains jours.</div>' : '');
+  $$('[data-d]', box).forEach(b => b.onclick = () => { state.agDay = new Date(b.dataset.d + 'T00:00'); renderAgenda(); });
+  // toucher l'en-tête d'un jour de la semaine ouvre la vue Jour
+  $$('[data-day]', box).forEach(b => b.onclick = () => { state.agDay = new Date(b.dataset.day + 'T00:00'); LS.set('agMode', 'day'); renderAgenda(); });
   // toucher le lieu ouvre la carte (Plans ou le lien Maps collé), sans ouvrir l'événement
   $$('[data-ev]', box).forEach(b => b.onclick = () => { const e = evs.find(x => x.id === b.dataset.ev); if (e) eventSheet(e, () => { state.agCache = null; renderAgenda(); }); });
   $$('[data-task]', box).forEach(b => b.onclick = () => { location.hash = '#/tasks'; });

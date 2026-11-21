@@ -131,6 +131,7 @@ label.f{display:flex;flex-direction:column;gap:5px;font-size:.75rem;color:var(--
 .f input,.f textarea,.f select{height:48px;border-radius:11px;border:1px solid var(--line2);background:var(--bg);color:var(--text);padding:0 12px;font-size:1rem;outline:none;width:100%}
 .f input:focus,.f textarea:focus{border-color:var(--accent)}
 .seg{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+#ag-seg{grid-template-columns:repeat(4,minmax(0,1fr))}
 .seg button{height:42px;border-radius:10px;border:1px solid var(--line2);background:transparent;color:var(--text);cursor:pointer;font-size:.85rem}
 .seg button.on{background:var(--accent-fill);color:var(--on-accent);border-color:var(--accent-fill);font-weight:750}
 .switch{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;font-size:.9rem}
@@ -491,3 +492,23 @@ body.selecting .item .mark{display:flex}
 .ev-locbar .linkish{font-size:.82rem;padding:2px 0}
 .ev-grid input,.ev-grid .f input{min-width:0;max-width:100%;width:100%;box-sizing:border-box;-webkit-appearance:none;appearance:none}
 .ev-grid .f{min-width:0}
+/* Agenda : semaine en cartes (2 colonnes) et mois avec titres */
+.wgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:4px 0 10px}
+.wcard{background:var(--surface);border-radius:14px;padding:6px 7px 8px;min-height:92px;min-width:0;border:2px solid transparent;display:flex;flex-direction:column;gap:4px}
+.wcard.today{border-color:var(--accent)}
+.wcard-h{border:none;background:none;color:var(--strong);font-weight:800;font-size:.85rem;text-align:left;padding:2px 2px 2px;cursor:pointer}
+.wcard-h::first-letter{text-transform:uppercase}
+.wcard.today .wcard-h{color:var(--accent)}
+.chip-ev{display:block;width:100%;border:none;border-left:3px solid var(--c);border-radius:6px;background:color-mix(in srgb,var(--c) 18%,transparent);color:var(--text);font-size:.78rem;line-height:1.3;text-align:left;padding:4px 6px;cursor:pointer;overflow-wrap:anywhere}
+.chip-ev i{font-style:normal;color:var(--muted);font-size:.72rem}
+.wfree{color:var(--muted);font-size:.78rem;padding:2px}
+.wsum{border:1px dashed var(--line2);background:transparent;font-size:.8rem;color:var(--muted);gap:3px}
+.wsum b{color:var(--text)}.wsum span::first-letter{text-transform:uppercase}
+.mgrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;margin:4px 0 8px}
+.mgrid .mh{text-align:center;font-size:.7rem;color:var(--muted);padding:2px 0}
+.mcell{min-width:0;min-height:66px;display:flex;flex-direction:column;align-items:stretch;gap:2px;padding:3px 2px;border:2px solid transparent;border-radius:9px;background:var(--surface);color:var(--text);cursor:pointer;overflow:hidden}
+.mcell b{font-size:.78rem;text-align:center}
+.mcell span{display:block;font-size:.6rem;line-height:1.25;padding:1px 2px;border-radius:3px;background:color-mix(in srgb,var(--c) 30%,transparent);white-space:nowrap;overflow:hidden;text-overflow:clip;text-align:left}
+.mcell small{font-size:.6rem;color:var(--muted)}
+.mcell.out{opacity:.4}.mcell.today b{color:var(--accent)}
+.mcell.on{border-color:var(--accent)}
