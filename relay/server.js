@@ -826,7 +826,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.10.0';
+const RELAY_V = '4.10.2';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */

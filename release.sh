@@ -9,7 +9,7 @@ if [ -x tests/run.sh ] && [ -z "$SKIP_TESTS" ]; then tests/run.sh || { echo "Tes
 sed -i "s/^const APP_VERSION = '.*';/const APP_VERSION = '$V';/; s#^const APP_DATE = '.*';#const APP_DATE = '$D';#" js/core.js
 sed -i -E "s/(styles\.css|js\/[a-z-]+\.js)\?v=[^\"]*/\1?v=$V/g" index.html
 sed -i -E "s/const V = 'ml-[^']*'/const V = 'ml-$V'/" sw.js
-[ -n "$RELAY" ] && sed -i "s/^const RELAY_V = '.*';/const RELAY_V = '$V';/" relay/server.js
+[ -n "$BUMP_RELAY" ] && sed -i "s/^const RELAY_V = '.*';/const RELAY_V = '$V';/" relay/server.js
 ASSETS=$(grep -oE '(js/[a-z-]+\.js|styles\.css)\?v=[^"]*' index.html | sed 's/.*/"&"/' | paste -sd, -)
 printf '{"version":"%s","date":"%s","assets":[%s]}\n' "$V" "$D" "$ASSETS" > version.json
 echo "Version $V"

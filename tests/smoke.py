@@ -30,6 +30,9 @@ async def main():
         await pg.click('.home-seg a >> nth=0'); await pg.wait_for_timeout(3500)
         check(await pg.locator('#td').count() == 1, 'accueil Aujourd’hui')
         check('Claire' in await pg.inner_text('#td-mails'), 'À traiter contient le mail de Claire')
+        for _ in range(8):
+            if 'Piscine' in await pg.inner_text('#td-ag'): break
+            await pg.wait_for_timeout(1000); await pg.evaluate("renderToday(true)"); await pg.wait_for_timeout(1500)
         check('Piscine' in await pg.inner_text('#td-ag'), 'agenda du jour avec TimeTree')
         await pg.click('.home-seg a >> nth=1'); await pg.wait_for_timeout(4000)
         check('#/list/INBOX' in pg.url and await pg.locator('#list a.item').count() >= 2, 'Aujourd’hui puis Tous les mails : reste sur la réception')

@@ -626,8 +626,10 @@ body.no-tabbar #offline-bar,body.no-tabbar #outbox-bar{bottom:calc(env(safe-area
 /* Bandeau « Annuler » : seul le bouton capte le doigt, le reste laisse passer vers la page ; place réservée en bas */
 #toast.has-act{pointer-events:none}
 #toast.has-act button{pointer-events:auto;padding:8px 6px;margin:-8px -6px}
-body.toast-act #view{padding-bottom:90px}
 #relay-old{position:fixed;left:12px;right:12px;top:calc(env(safe-area-inset-top) + 8px);z-index:70;background:var(--surface);border:1.5px solid var(--accent-fill);border-radius:14px;padding:10px 12px;font-size:.85rem;box-shadow:0 6px 20px rgba(0,0,0,.35)}
 #relay-old div{display:flex;gap:8px;margin-top:8px}
 #relay-old button{flex:1;height:38px;border-radius:10px;border:1px solid var(--line2);background:var(--accent-fill);color:var(--on-accent);font-weight:700}
 #relay-old #ro-x{flex:none;width:44px;background:transparent;color:var(--text)}
+/* Bandeau (Annuler…) en haut de l'écran : il ne gêne plus les boutons du bas */
+#toast{top:calc(env(safe-area-inset-top) + 10px);bottom:auto;transform:translateX(-50%) translateY(-20px);box-shadow:0 8px 24px rgba(0,0,0,.35)}
+#toast.show{transform:translateX(-50%)}
