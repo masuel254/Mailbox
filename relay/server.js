@@ -564,6 +564,29 @@ async function freeSend(o) {
   return { ok: true, id: info.messageId };
 }
 
+async function senderPurge(email, dry) {
+  email = email.trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+$/.test(email)) throw Object.assign(new Error('Adresse invalide'), { code: 400 });
+  const out = { gmail: 0, free: 0 };
+  if (S.gmail) {
+    let ids = [], tok = null;
+    do { const r = await gapi('messages?' + new URLSearchParams(Object.assign({ q: 'from:' + email + ' -in:trash', maxResults: 500 }, tok ? { pageToken: tok } : {}))); ids = ids.concat(((r && r.messages) || []).map(m => m.id)); tok = r && r.nextPageToken; } while (tok && ids.length < 5000);
+    out.gmail = ids.length;
+    if (!dry) for (let i = 0; i < ids.length; i += 1000) await gapi('messages/batchModify', { method: 'POST', body: { ids: ids.slice(i, i + 1000), addLabelIds: ['TRASH'], removeLabelIds: ['INBOX', 'UNREAD'] } });
+  }
+  if (S.free) await withImap(async client => {
+    const f = await folders(client), list = await client.list();
+    for (const m of list) {
+      if (m.flags && m.flags.has('\\Noselect')) continue;
+      if ([f.trash, f.sent, f.drafts].includes(m.path)) continue;
+      let lock = null;
+      try { lock = await client.getMailboxLock(m.path); const uids = (await client.search({ from: email }, { uid: true })) || []; out.free += uids.length; if (!dry && uids.length) await client.messageMove(uids, f.trash, { uid: true }); }
+      catch (e) { log('nettoyage ' + m.path, e.message); } finally { if (lock) lock.release(); }
+    }
+  });
+  if (!dry) { log('Nettoyage ' + email + ' : Gmail ' + out.gmail + ', Free ' + out.free); poll().catch(() => {}); }
+  return out;
+}
 /* ---------- Blocage : règles Gmail « Indésirables », appliquées aussi à Free ---------- */
 let blockedCache = { at: 0, list: [] };
 /* Liste des expéditeurs bloqués gardée sur le serveur : elle survit aux redémarrages et aux pauses de Gmail */
@@ -792,13 +815,63 @@ async function pollFree() {
         await client.messageFlagsAdd(toBlock, ['\\Seen'], { uid: true });
         await client.messageMove(toBlock, await blockPath(client), { uid: true });
       }
-      const st = await client.status('INBOX', { unseen: true });
+      const st = await client.status('INBOX', { unseen: true, messages: true, uidNext: true, highestModseq: true });
       S.badge.free = st.unseen || 0;
+      freeSig = [st.messages, st.uidNext, st.unseen, st.highestModseq].join(':');
     } finally { lock.release(); }
     try { const n = await sweepJunk(client); if (n) log('Free : ' + n + ' spam(s) regroupé(s) dans ' + BLOCK_LABEL); } catch (e) { log('spam Free', e.message); }
     return out;
   });
 }
+/* ---------- Index de la réception : source unique pour l'appli ----------
+   Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
+   (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
+const IX = { v: 1, at: 0, g: [], gNext: null, gHist: null, f: [], fMore: false, fBefore: 0, fSig: '', badge: '', err: {} };
+let ixWaiters = [], freeSig = '';
+const gMeta = new Map();
+const trimThread = t => ({ id: t.id, historyId: t.historyId, messages: (t.messages || []).map((m, i, a) => ({ id: m.id, threadId: m.threadId, labelIds: m.labelIds || [], internalDate: m.internalDate, sizeEstimate: m.sizeEstimate,
+  snippet: i === a.length - 1 ? m.snippet : '', payload: { mimeType: (m.payload || {}).mimeType, headers: ((m.payload || {}).headers || []).filter(h => /^(from|to|subject|cc|date)$/i.test(h.name)) } })) });
+async function ixGmail(force) {
+  if (!S.gmail || gPaused()) return false;
+  const prof = await gapi('profile');
+  if (!force && prof && prof.historyId === IX.gHist && IX.g.length) return false;
+  const primary = !!(S.prefs && S.prefs.primaryOnly);
+  const p1 = new URLSearchParams({ maxResults: 30 }); if (primary) p1.set('q', 'in:inbox category:primary'); else p1.set('labelIds', 'INBOX');
+  const p2 = new URLSearchParams({ q: 'in:inbox is:unread' + (primary ? ' category:primary' : ''), maxResults: 50 });
+  const [a, b] = await Promise.all([gapi('threads?' + p1), gapi('threads?' + p2)]);
+  const list = [], seen = new Set();
+  for (const t of ((a && a.threads) || []).concat((b && b.threads) || [])) if (!seen.has(t.id)) { seen.add(t.id); list.push(t); }
+  const out = [];
+  for (let i = 0; i < list.length; i += 6) await Promise.all(list.slice(i, i + 6).map(async t => {
+    const c = gMeta.get(t.id);
+    if (c && c.h === t.historyId) { out.push(c.t); return; }
+    const full = await gapi('threads/' + t.id + '?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Cc&metadataHeaders=Date');
+    if (!full) return;
+    const tr = trimThread(full); gMeta.set(t.id, { h: t.historyId, t: tr }); out.push(tr);
+  }));
+  if (gMeta.size > 2000) [...gMeta.keys()].slice(0, 500).forEach(k => gMeta.delete(k));
+  IX.g = out; IX.gNext = (a && a.nextPageToken) || null; IX.gHist = prof && prof.historyId;
+  return true;
+}
+async function ixFree(force) {
+  if (!S.free) { if (IX.f.length) { IX.f = []; return true; } return false; }
+  if (!force && freeSig && freeSig === IX.fSig && IX.f.length) return false;
+  const [r, u] = await Promise.all([freeList('INBOX', false, 0, 30), freeList('INBOX', true, 0, 40)]);
+  const m = new Map(); r.items.concat(u.items).forEach(x => m.set(x.uid, x));
+  IX.f = [...m.values()].sort((x, y) => y.date - x.date);
+  IX.fMore = r.more; IX.fBefore = r.items.length ? Math.min(...r.items.map(x => x.uid)) : 0; IX.fSig = freeSig;
+  return true;
+}
+async function ixRefresh(force) {
+  let ch = false;
+  try { if (await ixGmail(force)) ch = true; delete IX.err.gmail; } catch (e) { IX.err.gmail = e.message; }
+  try { if (await ixFree(force)) ch = true; delete IX.err.free; } catch (e) { IX.err.free = e.message; }
+  const bs = S.badge.gmail + '/' + S.badge.free;
+  if (bs !== IX.badge) { IX.badge = bs; ch = true; }
+  if (ch) { IX.v++; IX.at = Date.now(); const w = ixWaiters; ixWaiters = []; w.forEach(f => f()); }
+  return ch;
+}
+const ixOut = () => ({ v: IX.v, at: IX.at, g: IX.g, gNext: IX.gNext, f: IX.f, fMore: IX.fMore, fBefore: IX.fBefore, badge: { gmail: S.badge.gmail, free: S.badge.free, total: total() }, err: IX.err, gmail: !!S.gmail, free: !!S.free });
 let polling = false;
 let pollP = null, badgeTimer = null;
 /* Pastille seule : quand des mails sont lus ailleurs (PC, Gmail web…), on remet le chiffre de l'iPhone à jour */
@@ -941,8 +1014,64 @@ async function unsnooze(item) {
     });
   }
 }
+/* ---------- Envoi programmé et rappel « pas de réponse » ---------- */
+const SCHED_DIR = path.join(C.dataDir, 'sched');
+async function gSendRaw(rawB64u, threadId) {
+  if (rawB64u.length < 4500000) return gapi('messages/send', { method: 'POST', body: threadId ? { raw: rawB64u, threadId } : { raw: rawB64u } });
+  const t = await gmailToken(), bd = 'mb' + crypto.randomBytes(8).toString('hex');
+  const mime = Buffer.from(rawB64u.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+  const body = Buffer.concat([Buffer.from('--' + bd + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + JSON.stringify(threadId ? { threadId } : {}) + '\r\n--' + bd + '\r\nContent-Type: message/rfc822\r\n\r\n'), mime, Buffer.from('\r\n--' + bd + '--')]);
+  const r = await fetch('https://gmail.googleapis.com/upload/gmail/v1/users/me/messages/send?uploadType=multipart', { method: 'POST', headers: { Authorization: 'Bearer ' + t.access_token, 'Content-Type': 'multipart/related; boundary=' + bd }, body });
+  if (!r.ok) throw new Error('Gmail ' + r.status);
+  return r.json();
+}
+function addFollow(f) {
+  const days = Math.min(Math.max(+f.days || 0, 0), 60);
+  if (!days) return null;
+  const it = { id: crypto.randomBytes(6).toString('hex'), acc: f.acc === 'free' ? 'free' : 'gmail', sentAt: +f.sentAt || Date.now(), due: (+f.sentAt || Date.now()) + days * 864e5, days,
+    to: String(f.to || '').slice(0, 300), toEmail: String(f.toEmail || '').toLowerCase().slice(0, 200), subject: String(f.subject || '').slice(0, 200), threadId: f.threadId || null, messageId: f.messageId || null };
+  S.follows = (S.follows || []).concat(it); save();
+  return it;
+}
+async function sendScheduled(it) {
+  const job = JSON.parse(dec(fs.readFileSync(path.join(SCHED_DIR, it.id), 'utf8')));
+  let threadId = null, messageId = null;
+  if (it.acc === 'gmail') { const r = await gSendRaw(job.raw, job.threadId); threadId = r && r.threadId; }
+  else { const r = await freeSend(job.free); messageId = r.id; }
+  try { fs.unlinkSync(path.join(SCHED_DIR, it.id)); } catch (e) {}
+  if (it.followDays) addFollow({ acc: it.acc, days: it.followDays, sentAt: Date.now(), to: it.to, toEmail: it.toEmail, subject: it.subject, threadId, messageId });
+  log('Envoi programmé parti : ' + it.subject);
+}
+// A-t-on reçu une réponse depuis l'envoi ?
+async function hasReply(f) {
+  if (f.acc === 'gmail' && f.threadId) {
+    const t = await gapi('threads/' + encodeURIComponent(f.threadId) + '?format=metadata&metadataHeaders=From');
+    const me = (S.gmail.email || '').toLowerCase();
+    return ((t && t.messages) || []).some(m => +m.internalDate > f.sentAt + 1000 && !(((m.payload.headers || []).find(h => h.name.toLowerCase() === 'from') || {}).value || '').toLowerCase().includes(me));
+  }
+  if (f.acc === 'free') return withImap(async client => {
+    const lock = await client.getMailboxLock('INBOX');
+    try {
+      const crit = f.messageId ? { or: [{ header: { 'in-reply-to': f.messageId } }, { header: { references: f.messageId } }] } : { from: f.toEmail };
+      const uids = (await client.search(Object.assign({ since: new Date(f.sentAt - 864e5) }, crit), { uid: true })) || [];
+      return uids.length > 0;
+    } finally { lock.release(); }
+  });
+  return true;
+}
 async function checkTimers() {
   const now = Date.now();
+  for (const it of (S.scheduled || []).filter(x => x.at <= now && !x.failed)) {
+    try { await sendScheduled(it); S.scheduled = S.scheduled.filter(x => x.id !== it.id); save(); }
+    catch (e) { it.tries = (it.tries || 0) + 1; log('envoi programmé', e.message); if (it.tries >= 5) { it.failed = e.message; if (S.subs.length) await push({ title: '⚠️ Envoi programmé échoué', body: it.subject + ' : ' + e.message, url: C.appUrl + '#/scheduled', tag: 'mailbox-sched-' + it.id, badge: total() }).catch(() => {}); } save(); }
+  }
+  for (const f of (S.follows || []).filter(x => x.due <= now && !x.done)) {
+    let replied = false;
+    try { replied = await hasReply(f); } catch (e) { log('rappel sans réponse', e.message); continue; }
+    f.done = true; f.replied = replied; f.checkedAt = now; save();
+    if (!replied && S.subs.length) await push({ title: '⏳ Pas de réponse de ' + (f.to || f.toEmail || 'ton destinataire'), body: f.subject + ' · envoyé il y a ' + f.days + ' j', url: C.appUrl + (f.acc === 'gmail' && f.threadId ? '#/thread/' + f.threadId : '#/waiting'), tag: 'mailbox-follow-' + f.id, badge: total() }).catch(() => {});
+  }
+  S.follows = (S.follows || []).filter(x => !x.done || now - x.checkedAt < 14 * 864e5);
   for (const it of (S.snoozed || []).filter(x => x.until <= now)) {
     try { await unsnooze(it); } catch (e) { log('remise en réception', e.message); }
     S.snoozed = S.snoozed.filter(x => x.id !== it.id); save();
@@ -961,6 +1090,7 @@ async function pollOnce() {
     const news = [];
     try { news.push(...await pollGmail()); } catch (e) { log('poll Gmail', e.message); }
     try { news.push(...await pollFree()); } catch (e) { log('poll Free', e.message); }
+    await ixRefresh().catch(e => log('index réception', e.message));
     save();
     if (news.length) log('nouveaux mails', news.length, 'pastille', total());
     if (news.length && isQuiet()) {
@@ -1070,6 +1200,14 @@ const routes = {
     if (Number.isInteger(b.quietEnd) && b.quietEnd >= 0 && b.quietEnd < 24) p.quietEnd = b.quietEnd;
     if (typeof b.tz === 'string' && b.tz.length < 60) { try { new Intl.DateTimeFormat('fr', { timeZone: b.tz }); p.tz = b.tz; } catch (e) {} }
     S.prefs = p; save(); return p;
+  },
+  // Réception complète (Gmail + Free) ; avec v=… et wait=1, on attend (25 s max) qu'elle change avant de répondre
+  'GET /inbox': async q => {
+    if (q.get('fresh')) { await Promise.race([poll().catch(() => {}), new Promise(r => setTimeout(r, 6000))]); }
+    else if (!IX.at) { await Promise.race([ixRefresh(true).catch(() => {}), new Promise(r => setTimeout(r, 15000))]); }
+    if (q.get('wait') && +q.get('v') === IX.v) await new Promise(r => { ixWaiters.push(r); setTimeout(() => { ixWaiters = ixWaiters.filter(f => f !== r); r(); }, 25000); });
+    if (+q.get('v') === IX.v) return { v: IX.v, same: true, badge: { gmail: S.badge.gmail, free: S.badge.free, total: total() } };
+    return ixOut();
   },
   'GET /badge': async q => {
     // fresh=1 : l'appli vient de lire/supprimer, on attend un relevé à jour (5 s max)
@@ -1200,11 +1338,36 @@ const routes = {
   },
   'POST /tasks/delete': async (q, b) => { S.tasks = (S.tasks || []).filter(x => x.id !== b.id); save(); return { ok: true }; },
   'GET /snoozed': async () => ({ items: S.snoozed || [] }),
+  // Envoi programmé : le mail (chiffré) attend sur le serveur et part à l'heure dite, même iPhone éteint
+  'POST /schedule': async (q, b) => {
+    const at = +b.at;
+    if (!at || at < Date.now() + 30000) throw Object.assign(new Error('Choisis un moment dans le futur'), { code: 400 });
+    const acc = b.acc === 'free' ? 'free' : 'gmail';
+    if (acc === 'gmail' && !b.raw) throw Object.assign(new Error('Mail vide'), { code: 400 });
+    if (acc === 'free' && !b.free) throw Object.assign(new Error('Mail vide'), { code: 400 });
+    const it = { id: crypto.randomBytes(8).toString('hex'), acc, at, to: String(b.to || '').slice(0, 300), toEmail: String(b.toEmail || '').toLowerCase(), subject: String(b.subject || '(sans objet)').slice(0, 200), followDays: Math.min(Math.max(+b.followDays || 0, 0), 60) };
+    fs.mkdirSync(SCHED_DIR, { recursive: true });
+    fs.writeFileSync(path.join(SCHED_DIR, it.id), enc(JSON.stringify(acc === 'gmail' ? { raw: b.raw, threadId: b.threadId || null } : { free: b.free })));
+    S.scheduled = (S.scheduled || []).concat(it); save();
+    log('Envoi programmé le ' + new Date(at).toISOString() + ' : ' + it.subject);
+    return { ok: true, id: it.id };
+  },
+  'GET /scheduled': async () => ({ items: (S.scheduled || []).slice().sort((a, b) => a.at - b.at), follows: (S.follows || []).filter(f => !f.done || !f.replied).slice().sort((a, b) => a.due - b.due) }),
+  'POST /schedule/cancel': async (q, b) => { S.scheduled = (S.scheduled || []).filter(x => x.id !== b.id); try { fs.unlinkSync(path.join(SCHED_DIR, String(b.id).replace(/[^a-f0-9]/g, ''))); } catch (e) {} save(); return { ok: true }; },
+  'POST /schedule/now': async (q, b) => { const it = (S.scheduled || []).find(x => x.id === b.id); if (!it) throw Object.assign(new Error('Introuvable'), { code: 404 }); await sendScheduled(it); S.scheduled = S.scheduled.filter(x => x.id !== it.id); save(); return { ok: true }; },
+  'POST /follow': async (q, b) => { const it = addFollow(b); return { ok: true, id: it && it.id }; },
+  'POST /follow/cancel': async (q, b) => { S.follows = (S.follows || []).filter(x => x.id !== b.id); save(); return { ok: true }; },
+  // Nettoyage par expéditeur : combien de mails, puis tout à la corbeille (Gmail + Free, récupérable 30 jours)
+  'GET /sender/count': async q => senderPurge(String(q.get('email') || ''), true),
+  'POST /sender/purge': async (q, b) => senderPurge(String(b.email || ''), false),
   'POST /snooze': async (q, b) => snooze(b),
   'POST /snooze/cancel': async (q, b) => { const it = (S.snoozed || []).find(x => x.id === b.id); if (!it) return { ok: true }; await unsnooze(it); S.snoozed = S.snoozed.filter(x => x.id !== it.id); save(); return { ok: true }; },
   'POST /free/rule': async (q, b) => { const from = String(b.from || '').toLowerCase().trim(), folder = String(b.folder || '').trim(); if (!from || !folder) throw Object.assign(new Error('Règle incomplète'), { code: 400 }); S.rules = (S.rules || []).filter(r => r.from !== from).concat({ from, folder }); save(); return { ok: true }; },
   'POST /ai/task': async (q, b) => aiCall('Tu transformes un mail en tâche à faire pour son destinataire (Samuel). Date du jour : ' + (b.today || new Date().toISOString().slice(0, 16)) + '. Réponds UNIQUEMENT en JSON {"title":"verbe à l’infinitif + objet, 8 mots max","due":"AAAA-MM-JJTHH:MM ou null"}. Si le mail fixe une échéance, mets la veille ou le jour même à 9:00 ; sinon null.', 'Objet : ' + (b.subject || '') + '\nDe : ' + (b.from || '') + '\n\n' + String(b.text || '').slice(0, 6000), 400),
   'POST /ai/agenda': async (q, b) => aiCall('Tu es l’assistant de Samuel. Tu fais la synthèse de son agenda pour ' + (b.scope === 'week' ? 'la semaine' : b.scope === 'weekend' ? 'le week-end (samedi et dimanche)' : 'la journée') + ' indiquée, en français, ton direct et utile, phrases courtes, sans tirets cadratins, sans rien inventer (n’utilise que les événements fournis). Chaque ligne numérotée est un événement réel à prendre en compte, y compris les événements sur plusieurs jours (voyage, vacances, déplacement) qui couvrent toute la période et les événements [TimeTree] (agenda familial) : ne dis jamais qu’il n’y a aucun événement si la liste en contient. Repère : les moments chargés, les enchaînements serrés ou chevauchements, les déplacements (lieux différents proches dans le temps), les créneaux libres utiles, ce qu’il faut préparer, et les événements familiaux (calendrier TimeTree). Date et heure actuelles : ' + (b.now || '') + '. Réponds UNIQUEMENT en JSON {"titre":"une phrase d’accroche","resume":"2 à 3 phrases","jours":[{"jour":"lundi 23","points":["…"]}],"attention":["conflits, enchaînements serrés, oublis possibles"],"libre":["créneaux libres notables"],"preparer":["choses à préparer"]}. Pour une journée, jours contient un seul élément. Listes vides si rien.', String(b.text || '').slice(0, 9000), 1400),
+  // Accueil « Aujourd'hui » : tri des mails non lus qui demandent une action + résumé de la journée
+  'POST /ai/today': async (q, b) => aiCall('Tu prépares l’écran d’accueil du matin de Samuel. Date et heure : ' + String(b.now || '') + '. Parmi les mails non lus fournis, garde UNIQUEMENT ceux qui attendent vraiment une action ou une réponse de Samuel (question, devis, rendez-vous, document à fournir, message personnel d’un proche ou d’un professionnel) ; écarte publicités, newsletters, notifications automatiques, reçus et alertes. 6 au maximum, du plus important au moins important, avec une étiquette courte (1 à 2 mots : Devis, Famille, Rendez-vous, Facture, Travail, Question…). Puis écris un résumé « En bref » de 2 phrases maximum, concret, qui cite les éléments les plus importants de la journée (mails retenus, agenda, relances), sans formule creuse ni tiret cadratin. Si rien d’important, dis-le simplement. Réponds UNIQUEMENT en JSON {"resume":"…","mails":[{"i":numéro,"tag":"…"}]}.',
+    'MAILS NON LUS :\n' + (b.mails || []).slice(0, 40).map(x => x.i + '. ' + x.from + (x.email ? ' <' + x.email + '>' : '') + ' · ' + x.subject + ' · ' + String(x.snippet || '').slice(0, 160)).join('\n') + '\n\nAGENDA DU JOUR :\n' + ((b.agenda || []).join('\n') || 'rien') + '\n\nSANS RÉPONSE :\n' + ((b.waiting || []).join('\n') || 'rien'), 900),
   'POST /ai/summary': async (q, b) => aiCall('Tu résumes un mail ou un échange de mails pour Samuel, en français, de façon factuelle (n’invente rien). Date du jour : ' + (b.today || '') + '. Réponds UNIQUEMENT en JSON {"resume":"2 à 3 phrases","points":["…"],"chronologie":[{"date":"JJ/MM","qui":"…","fait":"…"}],"engagements":[{"qui":"…","quoi":"…","quand":"… ou vide"}],"echeances":[{"quoi":"…","date":"AAAA-MM-JJ"}]}. Listes vides si rien. Chronologie seulement s’il y a plusieurs messages.', String(b.text || '').slice(0, 14000), 1800),
   'POST /ai/reply': async (q, b) => aiCall('Tu rédiges des propositions de réponse pour Samuel à ce mail, en français, ton naturel et courtois, phrases courtes, sans formules creuses ni tirets cadratins. Signe « Samuel ». ' + (b.intent ? 'Consigne de Samuel : ' + String(b.intent).slice(0, 300) + '. Donne 2 variantes de longueur différente. ' : 'Donne 3 variantes : une qui accepte ou confirme, une qui décline ou reporte poliment, une qui demande une précision. ') + 'Réponds UNIQUEMENT en JSON {"variants":[{"label":"2 à 3 mots","body":"texte complet"}]}.', 'Objet : ' + (b.subject || '') + '\n\n' + String(b.text || '').slice(0, 8000), 1800),
   'POST /ai/classify': async (q, b) => aiCall('Tu choisis le dossier le plus adapté pour ranger un mail parmi une liste fournie. Réponds UNIQUEMENT en JSON {"folder":"chemin exact recopié depuis la liste, ou vide si aucun ne convient","why":"8 mots max"}.', 'Dossiers :\n' + (b.folders || []).slice(0, 300).join('\n') + '\n\nMail — De : ' + (b.from || '') + '\nObjet : ' + (b.subject || '') + '\n' + String(b.text || '').slice(0, 2500), 300),

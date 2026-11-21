@@ -13,13 +13,13 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="apple-touch-icon-v2.png">
 <link rel="icon" href="icon-192.png?v=2">
-<link rel="stylesheet" href="styles.css?v=4.7.2">
+<link rel="stylesheet" href="styles.css?v=4.8.0">
 </head>
 <body>
 <div id="app">
   <main id="view" tabindex="-1"></main>
   <nav id="tabbar" aria-label="Navigation principale">
-    <a href="#/list/INBOX" data-tab="INBOX"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 13l3-8h12l3 8v6H3v-6z"/><path d="M3 13h5l1 2h6l1-2h5"/></svg><span>Reçus</span><b class="badge" id="badge-inbox" hidden></b></a>
+    <a href="#/today" data-tab="INBOX"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 13l3-8h12l3 8v6H3v-6z"/><path d="M3 13h5l1 2h6l1-2h5"/></svg><span>Reçus</span><b class="badge" id="badge-inbox" hidden></b></a>
     <a href="#/agenda" data-tab="agenda"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><span>Agenda</span></a>
     <a href="#/compose" class="compose-btn" aria-label="Écrire un mail"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/></svg><span>Écrire</span></a>
     <a href="#/contacts" data-tab="contacts"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4.5-6 8-6s7 2 8 6"/></svg><span>Contacts</span></a>
@@ -28,6 +28,16 @@
 </div>
 <div id="sheet" hidden></div>
 <div id="toast" role="status" aria-live="polite"></div>
-<script src="app.js?v=4.7.2"></script>
+<script src="js/core.js?v=4.8.0"></script>
+<script src="js/list.js?v=4.8.0"></script>
+<script src="js/thread.js?v=4.8.0"></script>
+<script src="js/folders.js?v=4.8.0"></script>
+<script src="js/reading.js?v=4.8.0"></script>
+<script src="js/compose.js?v=4.8.0"></script>
+<script src="js/settings.js?v=4.8.0"></script>
+<script src="js/agenda.js?v=4.8.0"></script>
+<script src="js/relevance.js?v=4.8.0"></script>
+<script src="js/today.js?v=4.8.0"></script>
+<script src="js/main.js?v=4.8.0"></script>
 </body>
 </html>

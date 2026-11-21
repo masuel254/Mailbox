@@ -1,0 +1,7 @@
+window.__w=[];const _fg=window.fetch;window.fetch=(u,o)=>{u=String(u);const J=x=>Promise.resolve(new Response(JSON.stringify(x),{status:200,headers:{'Content-Type':'application/json'}}));
+if(u.includes('people.googleapis.com/v1/people/me/connections'))return J({connections:[{resourceName:'people/c1',names:[{displayName:'Claire Dubois'}],emailAddresses:[{value:'claire@cabinet-dubois.fr'}],phoneNumbers:[{value:'06 12 34 56 78'}],organizations:[{name:'Cabinet Dubois'}]},{resourceName:'people/c2',names:[{displayName:'Antoine Martin'}],emailAddresses:[{value:'a.martin@gmail.com'}]},{resourceName:'people/c3',names:[{displayName:'Plomberie Côte'}],emailAddresses:[{value:'contact@plomberie-cote.fr'}]}]});
+if(u.includes('people:createContact')||u.includes(':updateContact')){window.__w.push(u+' '+o.body);return J({});}
+if(u.includes('people.googleapis.com/v1/people/c'))return J({etag:'e1'});
+if(u.includes('calendar/v3/calendars/primary/events?')){const d=new Date();d.setHours(9,0,0,0);const e=new Date(d.getTime()+3600e3);const d2=new Date(d.getTime()+864e5+3*3600e3);return J({items:[{id:'e1',summary:'Comité produit',location:'Visio',start:{dateTime:d.toISOString()},end:{dateTime:e.toISOString()}},{id:'e2',summary:'Déjeuner Antoine',location:'Boulogne-sur-Mer',colorId:'5',start:{dateTime:d2.toISOString()},end:{dateTime:new Date(d2.getTime()+5400e3).toISOString()}}]});}
+if(u.includes('calendar/v3/calendars/primary/events')){window.__w.push((o&&o.method)+' '+u.split('/events')[1]+' '+(o&&o.body||''));return J({id:'n'});}
+return _fg(u,o);};

@@ -1,0 +1,1 @@
+{ "name": "mailbox-tests", "private": true, "dependencies": { "hoodiecrow-imap": "^3.3.1" } }
