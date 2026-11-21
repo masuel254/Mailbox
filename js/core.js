@@ -2,7 +2,7 @@
    Le code est découpé par domaine ; les fichiers sont chargés dans l'ordre de index.html et partagent la même portée. */
 'use strict';
 
-const APP_VERSION = '4.9.7';
+const APP_VERSION = '4.9.8';
 const APP_DATE = '21/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -69,8 +69,9 @@ const cleanSnippet = s => fixMojibake(decodeEntities(decodeEntities(s || ''))).r
 let toastTimer;
 function toast(msg, action) {
   const t = $('#toast'); t.textContent = msg; t.classList.toggle('has-act', !!action);
-  if (action) { const b = document.createElement('button'); b.type = 'button'; b.textContent = action.label; b.onclick = () => { t.classList.remove('show'); clearTimeout(toastTimer); action.run(); }; t.appendChild(b); }
-  t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), action ? 6000 : 2600);
+  if (action) { const b = document.createElement('button'); b.type = 'button'; b.textContent = action.label; b.onclick = () => { t.classList.remove('show'); document.body.classList.remove('toast-act'); clearTimeout(toastTimer); action.run(); }; t.appendChild(b); }
+  // Bandeau avec bouton (Annuler…) : la page gagne de la place en bas pour que rien ne reste caché dessous
+  t.classList.add('show'); document.body.classList.toggle('toast-act', !!action); clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.classList.remove('show'); document.body.classList.remove('toast-act'); }, action ? 6000 : 2600);
 }
 const undoToast = (msg, undo) => toast(msg, { label: 'Annuler', run: async () => { try { await undo(); gone.clear(); toast('Action annulée'); } catch (e) { toast('Annulation impossible : ' + e.message); } Object.keys(state.lists).forEach(k => delete state.lists[k]); route(); badgeNow(0); } });
 const ICON = {

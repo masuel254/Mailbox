@@ -623,3 +623,7 @@ body.no-tabbar #offline-bar,body.no-tabbar #outbox-bar{bottom:calc(env(safe-area
 .home-seg{display:flex;gap:22px;margin:2px 6px 8px;padding:0;background:transparent;border-bottom:1px solid var(--line);border-radius:0}
 .home-seg a{flex:none;height:auto;padding:4px 0 8px;background:transparent!important;border:none!important;border-radius:0;color:var(--muted);font-weight:600;font-size:.92rem;margin-bottom:-1px}
 .home-seg a.on{background:transparent!important;color:var(--strong);font-weight:750;border-bottom:2.5px solid var(--accent-fill)!important}
+/* Bandeau « Annuler » : seul le bouton capte le doigt, le reste laisse passer vers la page ; place réservée en bas */
+#toast.has-act{pointer-events:none}
+#toast.has-act button{pointer-events:auto;padding:8px 6px;margin:-8px -6px}
+body.toast-act #view{padding-bottom:90px}
