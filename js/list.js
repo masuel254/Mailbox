@@ -13,7 +13,7 @@ async function renderList(key, q) {
   const acc = isFreeDir ? 'free' : freeOn() && (isSearch || freeFolderOf(key)) ? curAcc() : 'gmail';
   const cacheKey = (acc !== 'gmail' ? acc + '|' : '') + (isSearch ? 'S:' + q : key);
   state.current = cacheKey;
-  const showTitle = key === 'INBOX' ? 'Réception' : String(title).split(/\//).pop();
+  const showTitle = key === 'INBOX' ? 'Reçus' : String(title).split(/\//).pop();
   const backTo = key === 'UNREAD' ? ['#/list/INBOX', 'Toute la réception'] : ['INBOX', 'SENT'].includes(key) ? null : isSearch ? ['#/list/INBOX', 'Réception'] : ['#/labels', 'Dossiers'];
   v.innerHTML = `<div class="sticky-head">
     ${backTo ? `<a class="back back-sm" href="${backTo[0]}">${ICON.back}${backTo[1]}</a>` : ''}
@@ -21,7 +21,7 @@ async function renderList(key, q) {
       <h1>${esc(showTitle)}</h1>
       <button class="icon-btn" id="btn-select" aria-label="Sélectionner plusieurs mails">${ICON.check}</button>
       <button class="icon-btn" id="btn-search" aria-label="Rechercher">${ICON.search}</button>
-      <button class="icon-btn" id="btn-refresh" aria-label="Actualiser">${ICON.refresh}</button>
+      ${['INBOX', 'UNREAD'].includes(key) ? FS_CTL : `<button class="icon-btn" id="btn-refresh" aria-label="Actualiser">${ICON.refresh}</button>`}
       ${['INBOX', 'UNREAD'].includes(key) ? `<a class="icon-btn" href="#/settings" aria-label="Réglages">${ICON.gear}</a>` : ''}
     </div>
     ${['INBOX', 'UNREAD'].includes(key) ? `<div class="home-seg" role="tablist"><a role="tab" aria-selected="false" href="#/today">Aujourd’hui</a><a role="tab" aria-selected="true" class="on" href="#/list/INBOX">Tous les mails<span id="seg-n">${state.counts && state.counts.own ? ' · ' + state.counts.own : ''}</span></a></div>` : ''}
@@ -56,7 +56,7 @@ async function renderList(key, q) {
   }
   $('#btn-search').onclick = () => { const s = $('#searchbar'); s.hidden = !s.hidden; if (!s.hidden) $('#q').focus(); };
   $('#searchbar').onsubmit = e => { e.preventDefault(); const val = $('#q').value.trim(); $('#q').blur(); if (val) runSearch(val); };
-  $('#btn-refresh').onclick = () => loadList(key, q, cacheKey, plain, 'fresh');
+  const brf = $('#btn-refresh'); if (brf) brf.onclick = () => loadList(key, q, cacheKey, plain, 'fresh');
   const hg = $('#hist-go'); if (hg) hg.onclick = () => contactHistory(contactQ, cacheKey, hg);
   if (isSearch && !contactQ && q) bestMatches(q).catch(() => { const b = $('#best'); if (b) b.innerHTML = ''; });
   $('#btn-select').onclick = () => state.sel ? exitSelect() : enterSelect();

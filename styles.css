@@ -612,3 +612,10 @@ body.no-tabbar #offline-bar,body.no-tabbar #outbox-bar{bottom:calc(env(safe-area
 /* Lignes de réglages/dossiers : titre sur une ligne, sous-titre raccourci si besoin */
 .set-link .set-t{white-space:nowrap;flex:none}
 .set-link .set-s{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* A− / A+ dans l'en-tête de la réception : un seul bloc compact */
+.sticky-head .top .fs-ctl{margin-left:0;gap:0;border:1px solid var(--line2);border-radius:22px;overflow:hidden;background:var(--surface)}
+.sticky-head .top .fs-ctl button{width:42px;height:44px;border:none;border-radius:0;background:transparent;font-size:.85rem}
+.sticky-head .top .fs-ctl button+button{border-left:1px solid var(--line2)}
+.sticky-head .top{gap:8px}
+.sticky-head .top .icon-btn{width:42px;height:42px}
+.sticky-head .top .fs-ctl button{width:38px;height:42px}
