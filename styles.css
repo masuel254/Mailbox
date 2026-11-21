@@ -512,3 +512,6 @@ body.selecting .item .mark{display:flex}
 .mcell small{font-size:.6rem;color:var(--muted)}
 .mcell.out{opacity:.4}.mcell.today b{color:var(--accent)}
 .mcell.on{border-color:var(--accent)}
+.ag-syn-nav{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:-4px -4px 6px}
+.ag-syn-nav span{font-size:.82rem;color:var(--muted);text-align:center}.ag-syn-nav span::first-letter{text-transform:uppercase}
+.ag-syn-nav .icon-btn{width:36px;height:36px;font-size:1.3rem;line-height:1}

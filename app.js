@@ -1,7 +1,7 @@
 /* Mail lisible : client Gmail PWA. Aucun identifiant n'est stocké dans ce code. */
 'use strict';
 
-const APP_VERSION = '4.7.0';
+const APP_VERSION = '4.7.1';
 const APP_DATE = '21/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -3179,7 +3179,8 @@ async function renderAgenda() {
       <div class="wcard wsum"><b>${total} événement${total > 1 ? 's' : ''}</b>${total ? `<span>${esc(wk[busy].toLocaleDateString('fr-FR', { weekday: 'long' }))} le plus chargé</span>` : ''}${free.length ? `<span>Libre : ${esc(free.map(d => d.toLocaleDateString('fr-FR', { weekday: 'short' }).replace('.', '')).join(', '))}</span>` : ''}</div></div>`;
   } else if (mode === 'month') {
     const f = new Date(d0.getFullYear(), d0.getMonth(), 1), st = monday(f);
-    head(f.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }), new Date(d0.getFullYear(), d0.getMonth() - 1, 1), new Date(d0.getFullYear(), d0.getMonth() + 1, 1), 'Mois précédent', 'Mois suivant');
+    const mFirst = (y, mo) => { const x = new Date(y, mo, 1), n = new Date(); return x.getFullYear() === n.getFullYear() && x.getMonth() === n.getMonth() ? startOfDay(n) : x; };
+    head(f.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }), mFirst(d0.getFullYear(), d0.getMonth() - 1), mFirst(d0.getFullYear(), d0.getMonth() + 1), 'Mois précédent', 'Mois suivant');
     // cases hautes avec le début des titres ; la dernière ligne n'est affichée que si elle contient des jours du mois
     const n = addDays(st, 35).getMonth() === f.getMonth() ? 42 : 35;
     pre = `<div class="mgrid">${['L', 'M', 'M', 'J', 'V', 'S', 'D'].map(x => `<span class="mh">${x}</span>`).join('')}${[...Array(n)].map((_, i) => { const d = addDays(st, i), k = dayKey(d), its = byDay.get(k) || [];
@@ -3226,9 +3227,13 @@ async function renderAgenda() {
   agendaSuggestions();
 }
 /* Synthèse IA du jour ou de la semaine (jour choisi / semaine qui le contient), Google Agenda + TimeTree + tâches */
-async function agendaSynthesis(scope, btn) {
+async function agendaSynthesis(scope, btn, base) {
   const out = $('#ag-ai-out'); if (!out) return;
-  const d0 = startOfDay(state.agDay || new Date());
+  const d0 = startOfDay(base || state.agDay || new Date());
+  // ‹ › : période précédente / suivante, sans quitter la synthèse
+  const step = scope === 'day' ? 1 : 7;
+  const navBar = lbl => `<div class="ag-syn-nav"><button class="icon-btn" data-sh="-1" aria-label="Période précédente">‹</button><span>${esc(lbl)}</span><button class="icon-btn" data-sh="1" aria-label="Période suivante">›</button></div>`;
+  const bindNav = () => $$('[data-sh]', out).forEach(b => b.onclick = () => agendaSynthesis(scope, btn, addDays(d0, step * +b.dataset.sh)));
   // week-end : samedi et dimanche de la semaine du jour choisi
   const from = scope === 'week' ? monday(d0) : scope === 'weekend' ? addDays(monday(d0), 5) : d0;
   const to = scope === 'week' || scope === 'weekend' ? addDays(monday(d0), 7) : addDays(d0, 1);
@@ -3257,16 +3262,16 @@ async function agendaSynthesis(scope, btn) {
     for (let i = lines.length - 1; i >= 0; i--) { const [s, , e] = lines[i]; if (s >= to || Math.max(+e, +s + 1) <= +from) lines.splice(i, 1); }
     lines.sort((a, b) => a[0] - b[0]);
     const label = scope === 'week' ? 'semaine du ' + fmtD(from) : scope === 'weekend' ? 'week-end du ' + fmtD(from) : fmtD(from);
-    if (!lines.length) { out.innerHTML = `<div class="ai-note"><b>Rien de prévu</b><span>Aucun événement ${scope === 'week' ? 'cette semaine' : scope === 'weekend' ? 'ce week-end' : 'ce jour-là'} : ${esc(label)}.</span></div>`; return; }
+    if (!lines.length) { out.innerHTML = `<div class="ag-syn">${navBar(label)}<div class="ag-syn-h"><b>Rien de prévu</b><button class="linkish" id="ag-syn-x" aria-label="Fermer">✕</button></div><p>Aucun événement sur cette période.</p></div>`; bindNav(); $('#ag-syn-x').onclick = () => { out.innerHTML = ''; }; return; }
     const cnt = { g: 0, t: 0, k: 0 }; lines.forEach(l => { if (/\[Google\]$/.test(l[1])) cnt.g++; else if (/\[TimeTree/.test(l[1])) cnt.t++; else cnt.k++; });
     const r = await rapi('/ai/agenda', { method: 'POST', body: { scope, now: new Date().toLocaleString('fr-FR'), text: 'PÉRIODE : ' + label + '\nNOMBRE D’ÉVÉNEMENTS : ' + lines.length + '\nÉVÉNEMENTS (un par ligne) :\n' + lines.map((l, i) => (i + 1) + '. ' + l[1]).join('\n') } });
     const ul = (h, a) => a && a.length ? `<h4>${h}</h4><ul>${a.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '';
-    out.innerHTML = `<div class="ag-syn"><div class="ag-syn-h"><b>✦ ${esc(r.titre || 'Synthèse')}</b><button class="linkish" id="ag-syn-x" aria-label="Fermer">✕</button></div>
+    out.innerHTML = `<div class="ag-syn">${navBar(label)}<div class="ag-syn-h"><b>✦ ${esc(r.titre || 'Synthèse')}</b><button class="linkish" id="ag-syn-x" aria-label="Fermer">✕</button></div>
       ${r.resume ? `<p>${esc(r.resume)}</p>` : ''}
       ${scope !== 'day' ? (r.jours || []).map(j => j.points && j.points.length ? `<h4>${esc(j.jour)}</h4><ul>${j.points.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '').join('') : ''}
       ${ul('⚠️ Attention', r.attention)}${ul('🕒 Créneaux libres', r.libre)}${ul('📋 À préparer', r.preparer)}
       <p class="fhint" style="margin:6px 0 0">${esc(label)} · Google ${cnt.g} · TimeTree ${cnt.t}${cnt.k ? ' · tâches ' + cnt.k : ''}${errs.length ? '<br>⚠️ ' + errs.map(esc).join(' · ') : ''}</p></div>`;
-    $('#ag-syn-x').onclick = () => { out.innerHTML = ''; };
+    $('#ag-syn-x').onclick = () => { out.innerHTML = ''; }; bindNav();
   } catch (e) { if (e.message !== 'auth') toast('Synthèse impossible : ' + e.message); }
   finally { btn.disabled = false; btn.textContent = old; }
 }
