@@ -272,14 +272,30 @@ async function renderMenage() {
   // Choix des boîtes à analyser (seulement si Free est relié)
   const accSeg = () => freeOn() ? `<p class="fhint" style="margin:12px 0 4px">Boîtes à analyser</p><div class="home-seg mj-acc" style="grid-template-columns:1fr 1fr 1fr">${[['both', 'Les deux'], ['gmail', 'Gmail'], ['free', 'Free']].map(([k, t]) => `<a href="#" data-mjacc="${k}" class="${LS.get('mjAcc', 'both') === k ? 'on' : ''}">${t}</a>`).join('')}</div>` : '';
   const bindAcc = root => $$('[data-mjacc]', root).forEach(a => a.onclick = e => { e.preventDefault(); LS.set('mjAcc', a.dataset.mjacc); $$('[data-mjacc]', root).forEach(x => x.classList.toggle('on', x === a)); });
+  const autoRow = () => `<label class="mj-auto card"><input type="checkbox" id="mj-auto" ${r.autoOn ? 'checked' : ''}><span><b>Analyse automatique chaque mois</b><small>La nuit, sur ton serveur. Tu reçois une notification s’il y a de nouvelles pubs à valider.</small></span></label>`;
+  const bindAuto = () => { const c = $('#mj-auto'); if (c) c.onchange = async () => { try { await rapi('/menage/auto', { method: 'POST', body: { on: c.checked, acc: freeOn() ? LS.get('mjAcc', 'both') : 'gmail' } }); toast(c.checked ? 'Analyse mensuelle activée' : 'Analyse mensuelle désactivée'); } catch (e) { c.checked = !c.checked; toast(e.message); } }; };
   const startScan = async () => { LS.del('mjSel'); try { await rapi('/menage/start', { method: 'POST', body: { acc: freeOn() ? LS.get('mjAcc', 'both') : 'gmail' } }); } catch (e) { toast(e.message); } renderMenage(); };
   if (r.status !== 'done') {
     box.innerHTML = `<p class="fhint">L’IA lit l’en-tête de tous tes mails (expéditeur et objet, jamais le contenu), les regroupe par expéditeur et te propose ceux qui ne sont que de la pub. Rien n’est supprimé : tu vérifies, puis les mails choisis partent dans le dossier « Ménage IA ».</p>
       ${r.status === 'error' ? `<p style="color:var(--danger)">Dernière analyse interrompue : ${esc(r.error || '')}</p>` : ''}${guards}${accSeg()}
-      <button class="btn primary" id="mj-go" style="width:100%;margin-top:12px">Lancer l’analyse</button><p class="fhint" style="text-align:center">Compte 20 à 30 minutes pour une grosse boîte Gmail.</p>`;
+      <button class="btn primary" id="mj-go" style="width:100%;margin-top:12px">Lancer l’analyse</button><p class="fhint" style="text-align:center">${r.indexAt ? 'Ton index Gmail est prêt : l’analyse prend 1 à 3 minutes.' : 'La première fois, ton serveur lit les expéditeurs de toute ta boîte Gmail (environ 40 min pour 47 000 mails). Les analyses suivantes prennent 1 à 3 minutes.'}</p>${autoRow()}`;
+    bindAuto();
     bindAcc(box);
     $('#mj-go').onclick = () => { $('#mj-go').disabled = true; startScan(); };
     return;
+  }
+  // Rangement en cours sur le serveur
+  const ap0 = r.applying;
+  if (ap0 && ap0.running) {
+    const pct = ap0.total ? Math.round(ap0.done / ap0.total * 100) : 0;
+    box.innerHTML = `<div class="card mj-run"><b>Rangement dans « Ménage IA »…</b><div class="mj-bar"><span style="width:${pct}%"></span></div><small>${fmt(ap0.done)} / ${fmt(ap0.total)} mails rangés</small><p class="fhint" style="margin:6px 0 0">Tu peux fermer l’appli : le rangement continue sur ton serveur.</p></div>`;
+    menageT = setTimeout(() => { if ((location.hash || '').startsWith('#/menage')) renderMenage(); }, 3000);
+    return;
+  }
+  if (ap0 && ap0.end && LS.get('mjApplySeen', 0) !== ap0.end) {
+    LS.set('mjApplySeen', ap0.end);
+    if (ap0.error) toast('Rangement interrompu : ' + ap0.error);
+    else if (ap0.result) { const o = ap0.result; Object.keys(state.lists).forEach(k => delete state.lists[k]); toast(fmt(o.gmail + o.free) + ' mails rangés' + (o.rulesErr ? ' (règles Gmail non créées : ' + o.rulesErr + ')' : ', leurs prochains mails iront directement dans « Ménage IA »')); }
   }
   const groups = r.groups || [], vir = groups.filter(g => g.v === 'virer' && !g.applied), kept = groups.filter(g => g.v !== 'virer'), done = groups.filter(g => g.applied);
   // Expéditeurs mixtes (pubs + commandes/factures) : décochés par défaut, leurs factures restent de toute façon
@@ -298,14 +314,16 @@ async function renderMenage() {
       ${done.length ? `<p class="fhint">${fmt(r.applied)} mails déjà rangés dans « Ménage IA ».</p>` : ''}
       <div class="mj-foot">${vir.length ? `<button class="btn primary" id="mj-apply">Ranger ${fmt(total())} mails dans « Ménage IA »</button>` : ''}
         <div class="mj-2"><button class="btn" id="mj-open">Ouvrir le dossier</button><button class="btn danger" id="mj-empty">Vider le dossier</button></div>
-        <button class="btn" id="mj-again">Relancer une analyse</button></div>`;
+        <button class="btn" id="mj-again">Relancer une analyse</button></div>${autoRow()}
+      ${r.rulesN ? `<p class="fhint">Règles actives : les nouveaux mails de ${fmt(r.rulesN)} expéditeurs rangés partent directement dans « Ménage IA ».</p>` : ''}`;
+    bindAuto();
     $$('[data-k]', box).forEach(c => c.onchange = () => { c.checked ? sel.add(c.dataset.k) : sel.delete(c.dataset.k); LS.set('mjSel', [...sel]); const b = $('#mj-apply'); if (b) b.textContent = 'Ranger ' + fmt(total()) + ' mails dans « Ménage IA »'; });
     const all = $('#mj-all'); if (all) all.onclick = () => { if (sel.size) sel.clear(); else vir.forEach(g => sel.add(g.key)); LS.set('mjSel', [...sel]); draw(); };
     const more = $('#mj-more'); if (more) more.onclick = () => { showAll = true; draw(); };
     const ap = $('#mj-apply'); if (ap) ap.onclick = async () => {
       const keys = vir.filter(g => sel.has(g.key)).map(g => g.key); if (!keys.length) { toast('Coche au moins un expéditeur'); return; }
       ap.disabled = true; ap.textContent = 'Rangement en cours…';
-      try { const o = await rapi('/menage/apply', { method: 'POST', body: { keys } }); LS.del('mjSel'); Object.keys(state.lists).forEach(k => delete state.lists[k]); badgeNow(0); toast(fmt(o.gmail + o.free) + ' mails rangés dans « Ménage IA »'); renderMenage(); }
+      try { await rapi('/menage/apply', { method: 'POST', body: { keys } }); LS.del('mjSel'); renderMenage(); }
       catch (e) { ap.disabled = false; toast('Échec : ' + e.message); draw(); }
     };
     $('#mj-open').onclick = async () => { try { const ls = await getLabels(true); const l = ls.find(x => x.name === 'Ménage IA'); if (l) location.hash = '#/list/' + encodeURIComponent(l.id); else if (freeOn() && r.applied) location.hash = '#/list/F:MENAGE'; else toast('Le dossier est encore vide : clique d’abord sur « Ranger »'); } catch (e) { toast(e.message); } };

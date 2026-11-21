@@ -23,6 +23,8 @@ const C = {
   vapidPriv: process.env.VAPID_PRIVATE || '',
   vapidSubject: process.env.VAPID_SUBJECT || 'mailto:admin@example.com',
   dataDir: process.env.DATA_DIR || '/data',
+  gBase: process.env.GAPI_BASE || 'https://gmail.googleapis.com',
+  oauthUrl: process.env.GOAUTH_URL || 'https://oauth2.googleapis.com/token',
   pollMs: +(process.env.POLL_SECONDS || 60) * 1000,
   aiUrl: process.env.AI_URL || 'https://api.groq.com/openai/v1/chat/completions',
   aiModel: process.env.AI_MODEL || 'openai/gpt-oss-20b',
@@ -78,7 +80,7 @@ const oauthStates = new Map();
 async function gmailToken() {
   if (!S.gmail) throw Object.assign(new Error('Gmail non relié au relais'), { code: 409 });
   if (gTok && gTok.exp > Date.now() + 60000) return gTok;
-  const r = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  const r = await fetch(C.oauthUrl, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ client_id: C.gClientId, client_secret: C.gClientSecret, refresh_token: dec(S.gmail.refresh), grant_type: 'refresh_token' }) });
   const j = await r.json();
   if (!r.ok) { if (j.error === 'invalid_grant') { S.gmail = null; save(); } throw Object.assign(new Error('Google : ' + (j.error_description || j.error)), { code: 401 }); }
@@ -94,7 +96,7 @@ const gRateHit = (msg) => {
 const gPaused = () => Date.now() < gBackoff.until;
 async function gapi(p, opt = {}) {
   const t = await gmailToken();
-  const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/' + p, { method: opt.method || 'GET', headers: Object.assign({ Authorization: 'Bearer ' + t.access_token }, opt.body ? { 'Content-Type': 'application/json' } : {}), body: opt.body ? JSON.stringify(opt.body) : undefined });
+  const r = await fetch(C.gBase + '/gmail/v1/users/me/' + p, { method: opt.method || 'GET', headers: Object.assign({ Authorization: 'Bearer ' + t.access_token }, opt.body ? { 'Content-Type': 'application/json' } : {}), body: opt.body ? JSON.stringify(opt.body) : undefined });
   if (!r.ok) { let why = '', msg = ''; try { const j = await r.json(); msg = (j.error && j.error.message) || ''; why = (j.error && ((j.error.errors && j.error.errors[0] && j.error.errors[0].reason) || j.error.status || j.error.message)) || ''; } catch (e) {} if (r.status === 429 || /rate|quota/i.test(why)) { if (!gPaused()) gRateHit(msg); } throw new Error('Gmail ' + r.status + (why ? ' ' + why : '')); }
   if (gBackoff.ms && !gPaused()) gBackoff.ms = 0;
   return r.status === 204 ? null : r.json().catch(() => null);
@@ -824,17 +826,19 @@ async function pollFree() {
           if (n) log('Free : ' + n + ' mail(s) d’expéditeurs bloqués rangés dans ' + BLOCK_LABEL);
         } catch (e) { log('nettoyage Free', e.message); }
       }
-      const toBlock = [], toFile = {};
+      const toBlock = [], toFile = {}, toMenage = [], mjSet = new Set(S.mjSenders || []);
       if (fresh.length) {
-        for await (const m of client.fetch(fresh, { envelope: true }, { uid: true })) {
+        for await (const m of client.fetch(fresh, { envelope: true, bodyStructure: true }, { uid: true })) {
           const f = addr(m.envelope.from);
           if (isBlocked(f.email, targets, f.name)) { toBlock.push(m.uid); continue; }
+          if (f.email && mjSet.has(f.email) && !KEEP_RE.test(m.envelope.subject || '') && !/"disposition":"attachment"|"type":"application\/pdf"/i.test(JSON.stringify(m.bodyStructure || {}))) { toMenage.push(m.uid); continue; }
           const rule = (S.rules || []).find(r => f.email && isBlocked(f.email, [r.from]));
           if (rule) { (toFile[rule.folder] = toFile[rule.folder] || []).push(m.uid); }
           out.push({ acc: 'free', from: f.name || f.email, subject: m.envelope.subject || '(sans objet)', url: C.appUrl + '#/free/INBOX/' + m.uid });
         }
       }
       for (const [folder, uids] of Object.entries(toFile)) { try { await ensureFolder(client, folder); await client.messageMove(uids, folder, { uid: true }); } catch (e) { log('règle Free', folder, e.message); } }
+      if (toMenage.length) { try { await client.messageFlagsAdd(toMenage, ['\\Seen'], { uid: true }); await client.messageMove(toMenage, await menagePath(client), { uid: true }); } catch (e) { log('Ménage IA Free', e.message); } }
       if (toBlock.length) {
         await client.messageFlagsAdd(toBlock, ['\\Seen'], { uid: true });
         await client.messageMove(toBlock, await blockPath(client), { uid: true });
@@ -847,7 +851,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.12.1';
+const RELAY_V = '4.13.0';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -856,8 +860,12 @@ let ixWaiters = [], freeSig = '';
 const gMeta = new Map();
 const trimThread = t => ({ id: t.id, historyId: t.historyId, messages: (t.messages || []).map((m, i, a) => ({ id: m.id, threadId: m.threadId, labelIds: m.labelIds || [], internalDate: m.internalDate, sizeEstimate: m.sizeEstimate,
   snippet: i === a.length - 1 ? m.snippet : '', payload: { mimeType: (m.payload || {}).mimeType, headers: ((m.payload || {}).headers || []).filter(h => /^(from|to|subject|cc|date)$/i.test(h.name)) } })) });
+let ixLast = 0;
 async function ixGmail(force) {
   if (!S.gmail || gPaused()) return false;
+  // pendant la lecture complète de l'index, la réception est rafraîchie toutes les 2 min seulement (moins de demandes simultanées)
+  if (sxBusy && !force && Date.now() - ixLast < 120000) return false;
+  ixLast = Date.now();
   const prof = await gapi('profile');
   if (!force && prof && prof.historyId === IX.gHist && IX.g.length) return false;
   const primary = !!(S.prefs && S.prefs.primaryOnly);
@@ -1100,7 +1108,7 @@ const hAddr = v => { v = String(v || '').trim(); const m = /^\s*"?([^"<]*?)"?\s*
 let MJ = { status: 'idle' };
 try { MJ = JSON.parse(dec(fs.readFileSync(MENAGE_FILE, 'utf8'))); if (MJ.status === 'running') MJ.status = 'idle'; } catch (e) {}
 const mjSave = () => { try { fs.writeFileSync(MENAGE_FILE, enc(JSON.stringify(MJ))); } catch (e) { log('ménage IA : sauvegarde', e.message); } };
-const mjPublic = () => { const o = Object.assign({}, MJ); delete o.refs; if (o.status === 'running' && gPaused()) o.waitUntil = gBackoff.until; return o; };
+const mjPublic = () => { const o = Object.assign({}, MJ); delete o.refs; if (o.status === 'running' && gPaused()) o.waitUntil = gBackoff.until; o.autoOn = !!S.mjAuto; o.indexAt = (sxLoad(), SX.at) || 0; o.rulesN = (S.mjSenders || []).length; if (mjApply) o.applying = mjApply; return o; };
 async function gWait() { while (gPaused()) await pause(5000); }
 // Appel Gmail qui patiente pendant les pauses imposées par Google au lieu d'abandonner (jusqu'à 6 essais)
 async function gTry(p) {
@@ -1110,13 +1118,94 @@ async function gTry(p) {
   }
   throw new Error('Gmail indisponible');
 }
-async function menageScan(acc) {
-  acc = ["gmail", "free"].includes(acc) ? acc : "both";
-  const useG = !!S.gmail && acc !== "free", useF = !!S.free && acc !== "gmail";
-  MJ = { status: 'running', phase: 'Préparation', at: Date.now(), g: { done: 0, total: 0 }, f: { done: 0, total: 0 }, scanned: 0, excluded: 0, acc };
-  const groups = new Map(), sentThreads = new Set();
-  const BASEQ_G = '-in:sent -in:drafts -in:trash -in:spam -is:starred -has:attachment -label:"' + MENAGE + '" -label:"' + BLOCK_LABEL + '" -subject:(facture OR invoice OR contrat OR devis OR relevé OR impôts OR attestation OR remboursement OR sinistre OR ordonnance OR échéancier)';
-  const TRANSQ = ' -subject:(commande OR reçu OR billet OR receipt OR order OR réservation OR booking OR livraison OR expédition OR confirmation OR rendez-vous)';
+/* ---------- Index des expéditeurs Gmail ----------
+   Lu une seule fois en entier (requêtes groupées par 50, débit régulé), puis complété à chaque analyse :
+   seuls les mails nouveaux sont lus. Gardé chiffré sur le serveur (expéditeur, objet, date, désabonnement). */
+const SX_FILE = path.join(C.dataDir, 'senders.json');
+let SX = { m: {}, s: {}, at: 0 }, sxBusy = false, sxLoaded = false;
+function sxLoad() { if (sxLoaded) return; sxLoaded = true; try { SX = Object.assign(SX, JSON.parse(dec(fs.readFileSync(SX_FILE, 'utf8')))); } catch (e) {} }
+function sxSave() { try { fs.writeFileSync(SX_FILE + '.tmp', enc(JSON.stringify(SX))); fs.renameSync(SX_FILE + '.tmp', SX_FILE); } catch (e) { log('index expéditeurs', e.message); } }
+// Jusqu'à 100 lectures Gmail dans une seule requête HTTP (API « batch »)
+async function gBatch(paths) {
+  const t = await gmailToken(), b = 'mbx' + crypto.randomBytes(8).toString('hex');
+  const body = paths.map((p, i) => '--' + b + '\r\nContent-Type: application/http\r\nContent-ID: <i' + i + '>\r\n\r\nGET /gmail/v1/users/me/' + p + '\r\n\r\n').join('') + '--' + b + '--\r\n';
+  const r = await fetch(C.gBase + '/batch/gmail/v1', { method: 'POST', headers: { Authorization: 'Bearer ' + t.access_token, 'Content-Type': 'multipart/mixed; boundary=' + b }, body });
+  const txt = await r.text();
+  if (!r.ok) { if (r.status === 429 || /rate|quota/i.test(txt)) { if (!gPaused()) gRateHit(txt); } throw new Error('Gmail ' + r.status + ' ' + txt.slice(0, 80)); }
+  const rb = ((/boundary=("?)([^";]+)\1/.exec(r.headers.get('content-type') || '') || [])[2]) || '';
+  const out = new Array(paths.length).fill(undefined);
+  let limited = 0, lastMsg = '';
+  for (const part of txt.split('--' + rb)) {
+    const id = /Content-ID:\s*<response-i(\d+)>/i.exec(part); if (!id) continue;
+    const code = +((/HTTP\/1\.[01] (\d{3})/.exec(part) || [])[1] || 0);
+    const a = part.indexOf('{'), z = part.lastIndexOf('}');
+    if (code === 200 && a >= 0) { try { out[+id[1]] = JSON.parse(part.slice(a, z + 1)); } catch (e) {} }
+    else if (code === 404) out[+id[1]] = null;               // mail supprimé entre-temps
+    else if (code === 429 || code === 403) { limited++; lastMsg = part.slice(a, z + 1); }
+  }
+  return { out, limited, lastMsg };
+}
+// Lit les ids manquants par lots de 50 en visant ~20 mails/s ; ralentit tout seul si Google proteste
+async function sxFetch(ids, pathOf, onItem, onProgress) {
+  let delay = 2500, i = 0, queue = ids.slice(), done = 0;
+  while (queue.length) {
+    await gWait();
+    const part = queue.splice(0, 50), t0 = Date.now();
+    let res;
+    try { res = await gBatch(part.map(pathOf)); }
+    catch (e) { queue.unshift(...part); delay = Math.min(30000, delay * 2); if (!/ 429| 403|rate|quota| 5\d\d/i.test(e.message) && ++i > 8) throw e; await pause(delay); continue; }
+    const retry = [];
+    res.out.forEach((m, k) => { if (m === undefined) retry.push(part[k]); else { if (m) onItem(part[k], m); done++; } });
+    // Quelques refus isolés sont normaux : on ne ralentit franchement que si Google refuse une bonne partie du lot
+    const ratio = res.limited / part.length;
+    if (ratio > 0.5) { delay = Math.min(30000, delay * 2); if (ratio === 1 && !gPaused()) gRateHit(res.lastMsg); }
+    else if (ratio > 0.2) delay = Math.min(30000, delay * 1.3);
+    else delay = Math.max(2500, delay * 0.9);
+    queue.push(...retry);
+    if (onProgress) onProgress(done);
+    if (done && done % 2000 < 50) sxSave();
+    await pause(Math.max(0, delay - (Date.now() - t0)));
+  }
+}
+async function gListAll(q, max) {
+  const ids = []; let page = null;
+  do { const r = (await gTry('messages?' + new URLSearchParams(Object.assign({ q, maxResults: 500 }, page ? { pageToken: page } : {})))) || {}; (r.messages || []).forEach(m => ids.push(m)); page = r.nextPageToken; } while (page && ids.length < (max || 200000));
+  return ids;
+}
+// Met l'index à jour : liste tous les mails reçus et envoyés, lit seulement ceux qu'on ne connaît pas encore
+async function sxSync(progress) {
+  sxLoad();
+  if (sxBusy) throw Object.assign(new Error('Index Gmail déjà en cours de mise à jour'), { code: 409 });
+  sxBusy = true;
+  try {
+    const all = await gListAll('-in:sent -in:drafts -in:trash -in:spam -in:chats');
+    const sent = await gListAll('in:sent');
+    const keepM = new Set(all.map(m => m.id)), keepS = new Set(sent.map(m => m.id));
+    Object.keys(SX.m).forEach(id => { if (!keepM.has(id)) delete SX.m[id]; });
+    Object.keys(SX.s).forEach(id => { if (!keepS.has(id)) delete SX.s[id]; });
+    const missM = all.filter(m => !SX.m[m.id]).map(m => m.id), missS = sent.filter(m => !SX.s[m.id]).map(m => m.id);
+    const total = missM.length + missS.length, known = all.length - missM.length;
+    if (progress) progress(0, total, known);
+    const H = (m, n) => (((m.payload || {}).headers || []).find(x => x.name.toLowerCase() === n) || {}).value || '';
+    await sxFetch(missS, id => 'messages/' + id + '?format=metadata&metadataHeaders=To&metadataHeaders=Cc&fields=id,payload/headers',
+      (id, m) => { SX.s[id] = (H(m, 'to') + ',' + H(m, 'cc')).split(',').map(a => hAddr(a).email).filter(Boolean).join(','); },
+      n => progress && progress(n, total, known));
+    await sxFetch(missM, id => 'messages/' + id + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=List-Unsubscribe&fields=id,threadId,internalDate,payload/headers',
+      (id, m) => { const f = hAddr(H(m, 'from')); SX.m[id] = [f.name, f.email, H(m, 'subject').slice(0, 120), Number(m.internalDate) || 0, H(m, 'list-unsubscribe') ? 1 : 0, m.threadId]; },
+      n => progress && progress(missS.length + n, total, known));
+    SX.at = Date.now(); sxSave();
+    log('Index Gmail : ' + Object.keys(SX.m).length + ' mails reçus, ' + Object.keys(SX.s).length + ' envoyés (' + total + ' lus cette fois)');
+    return { read: total, size: Object.keys(SX.m).length };
+  } finally { sxBusy = false; }
+}
+
+async function menageScan(acc, opts) {
+  opts = opts || {};
+  acc = ['gmail', 'free'].includes(acc) ? acc : 'both';
+  const useG = !!S.gmail && acc !== 'free', useF = !!S.free && acc !== 'gmail';
+  MJ = { status: 'running', phase: 'Préparation', at: Date.now(), g: { done: 0, total: 0 }, f: { done: 0, total: 0 }, scanned: 0, excluded: 0, acc, auto: !!opts.auto, applied: MJ.applied || 0 };
+  const groups = new Map();
+  const BASEQ_G = '-in:sent -in:drafts -in:trash -in:spam -in:chats -is:starred -has:attachment -label:"' + MENAGE + '" -label:"' + BLOCK_LABEL + '" -subject:(facture OR invoice OR contrat OR devis OR relevé OR impôts OR attestation OR remboursement OR sinistre OR ordonnance OR échéancier)';
   const keyOf = (name, email) => { const n = normName(name); return n && n.length >= 3 && !n.includes('@') ? 'n:' + n : 'e:' + email; };
   const add = (name, email, subject, unsub, ref, date) => {
     email = String(email || '').toLowerCase(); if (!email) return;
@@ -1126,45 +1215,30 @@ async function menageScan(acc) {
     if (KEEP_RE.test(subject || '') || (TRANS_RE.test(subject || '') && (!date || Date.now() - date < TRANS_DAYS * 864e5))) { g.kept++; MJ.excluded++; return; }
     g.count++; if (unsub) g.unsub = true;
     if (g.subjects.length < 6 && subject && !g.subjects.includes(subject)) g.subjects.push(String(subject).slice(0, 90));
-    if (ref.gs) g.gs = (g.gs || 0) + 1; else if (ref.g) g.g.push(ref.g); else (g.f[ref.folder] = g.f[ref.folder] || []).push(ref.uid);
+    if (ref.g) g.g.push(ref.g); else (g.f[ref.folder] = g.f[ref.folder] || []).push(ref.uid);
   };
   try {
+    // Tes correspondants : toutes les adresses à qui tu as écrit (index des envois, Gmail)
+    sxLoad();
+    const sentTo = new Set();
+    const fillSent = () => Object.values(SX.s).forEach(l => l && l.split(',').forEach(e => sentTo.add(e)));
     if (useG) {
-      MJ.phase = 'Gmail : mes envois';
-      let page = null, sentIds = [];
-      do { await gWait(); const r = (await gTry('messages?' + new URLSearchParams(Object.assign({ q: 'in:sent', maxResults: 500 }, page ? { pageToken: page } : {})))) || {}; (r.messages || []).forEach(m => { sentThreads.add(m.threadId); sentIds.push(m.id); }); page = r.nextPageToken; } while (page && sentIds.length < 20000);
-      // Gmail limite fortement la lecture mail par mail : on lit un échantillon (les 2 500 plus récents) pour découvrir les expéditeurs,
-      // puis, pour ceux que l'IA juge sans intérêt, on récupère tous leurs mails d'un coup par une recherche « from: » (très rapide)
-      MJ.phase = 'Gmail : liste des mails (' + sentThreads.size + ' conversations envoyées)';
-      const BASEQ = BASEQ_G;
-      const ids = []; page = null;
-      do {
-        await gWait();
-        const r = (await gTry('messages?' + new URLSearchParams(Object.assign({ q: BASEQ, maxResults: 500 }, page ? { pageToken: page } : {})))) || {};
-        (r.messages || []).forEach(m => { if (sentThreads.has(m.threadId)) MJ.excluded++; else ids.push(m.id); });
-        page = r.nextPageToken; MJ.gAll = ids.length;
-      } while (page && ids.length < 80000);
-      let sample = ids.slice(0, 1800);
-      try {
-        const promo = []; let pp = null;
-        do { await gWait(); const r = (await gTry('messages?' + new URLSearchParams(Object.assign({ q: BASEQ + ' category:promotions', maxResults: 500 }, pp ? { pageToken: pp } : {})))) || {}; (r.messages || []).forEach(m => { if (!sentThreads.has(m.threadId)) promo.push(m.id); }); pp = r.nextPageToken; } while (pp && promo.length < 30000);
-        const inS = new Set(sample), rest = promo.filter(id => !inS.has(id)), step = Math.max(1, rest.length / 1200);
-        for (let x = 0; x < rest.length && sample.length < 3000; x += step) sample.push(rest[Math.floor(x)]);
-      } catch (e) { log('ménage IA : promotions', e.message); }
-      if (sample.length < 3000) { const inS = new Set(sample); for (const id of ids) { if (sample.length >= 3000) break; if (!inS.has(id)) sample.push(id); } }
-      MJ.g.total = sample.length; MJ.phase = 'Gmail : expéditeurs (échantillon des ' + sample.length + ' plus récents)';
-      for (let i = 0; i < sample.length; i += 4) {
-        await gWait();
-        await Promise.all(sample.slice(i, i + 4).map(id => gTry('messages/' + id + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=List-Unsubscribe').then(m => {
-          if (!m) return;
-          const h = n => ((m.payload.headers || []).find(x => x.name.toLowerCase() === n) || {}).value || '';
-          const f = hAddr(h('from'));
-          add(f.name, f.email, h('subject'), !!h('list-unsubscribe'), { gs: m.id }, Number(m.internalDate) || 0);
-        }).catch(() => { MJ.gFail = (MJ.gFail || 0) + 1; })));
-        MJ.g.done = Math.min(i + 4, sample.length); MJ.scanned = MJ.g.done + MJ.f.done;
-        await pause(260);
+      MJ.phase = 'Gmail : liste des mails';
+      await sxSync((n, total, known) => {
+        MJ.g.total = total; MJ.g.done = n; MJ.known = known; MJ.scanned = known + n + MJ.f.done;
+        MJ.phase = total > 200 ? 'Gmail : lecture des expéditeurs, une seule fois (' + n.toLocaleString('fr-FR') + ' / ' + total.toLocaleString('fr-FR') + ')' : 'Gmail : mise à jour de l’index';
+      });
+      fillSent();
+      MJ.phase = 'Gmail : garde-fous';
+      const sentThreads = new Set((await gListAll('in:sent')).map(m => m.threadId));
+      const elig = await gListAll(BASEQ_G);
+      MJ.gAll = Object.keys(SX.m).length; MJ.scanned = MJ.gAll + MJ.f.done; MJ.excluded += Math.max(0, MJ.gAll - elig.length);
+      for (const { id, threadId } of elig) {
+        const x = SX.m[id]; if (!x) continue;
+        if (sentThreads.has(threadId) || sentTo.has(x[1])) { MJ.excluded++; continue; }
+        add(x[0], x[1], x[2], !!x[4], { g: id }, x[3]);
       }
-    }
+    } else if (S.gmail) fillSent();
     if (useF) {
       MJ.phase = 'Free : lecture des dossiers';
       await withImap(async client => {
@@ -1177,90 +1251,85 @@ async function menageScan(acc) {
             if (!client.mailbox.exists) continue;
             MJ.f.total += client.mailbox.exists;
             for await (const m of client.fetch('1:*', { uid: true, envelope: true, flags: true, bodyStructure: true, headers: ['list-unsubscribe'] }, { uid: true })) {
-              MJ.f.done++; MJ.scanned = MJ.g.done + MJ.f.done;
+              MJ.f.done++; MJ.scanned = (MJ.gAll || 0) + MJ.f.done;
               const f = addr(m.envelope.from), fl = m.flags || new Set();
               const att = JSON.stringify(m.bodyStructure || {}).match(/"disposition":"attachment"|"type":"application\/pdf"|"type":"image\//i);
-              if (fl.has('\\Flagged') || fl.has('\\Answered') || att) { MJ.excluded++; continue; }
+              if (fl.has('\\Flagged') || fl.has('\\Answered') || att || sentTo.has(String(f.email).toLowerCase())) { MJ.excluded++; continue; }
               add(f.name, f.email, m.envelope.subject, /list-unsubscribe/i.test(String(m.headers || '')), { folder: b.path, uid: m.uid }, m.envelope.date ? new Date(m.envelope.date).getTime() : 0);
             }
           } catch (e) { log('ménage IA ' + b.path, e.message); } finally { if (lock) lock.release(); }
         }
       });
     }
-    // Les expéditeurs rares (moins de 3 mails) sont souvent des personnes : on ne les propose pas
-    const cands = [...groups.values()].filter(g => g.count >= 2 && (g.count >= 3 || (g.gs || 0) >= 2 || g.unsub)).sort((a, b) => (b.count + (b.gs || 0) * 10) - (a.count + (a.gs || 0) * 10)).slice(0, 600);
-    // count : mails Free + mails Gmail de l'échantillon, en attendant le décompte complet Gmail ci-dessous
+    // Les expéditeurs rares (moins de 3 mails) sont souvent des personnes : on ne les propose pas, sauf lien de désabonnement
+    const cands = [...groups.values()].filter(g => g.count >= 3 || (g.count >= 2 && g.unsub)).sort((a, b) => b.count - a.count).slice(0, 800);
     MJ.phase = 'L’IA examine ' + cands.length + ' expéditeurs';
     const verdict = new Map();
     for (let i = 0; i < cands.length; i += 25) {
       const part = cands.slice(i, i + 25);
-      try {
-        const r = await aiCall('Tu fais le ménage dans la messagerie personnelle de Samuel. Pour chaque expéditeur (nom, adresse, nombre de mails, lien de désabonnement, objets récents), réponds "virer" si ce sont des publicités, promotions, newsletters commerciales ou notifications sans valeur durable ; "garder" si cela peut avoir une utilité : banque, assurance, administration, impôts, santé, travail, école, association, personnes, voyages, services dont il est client et qui envoient des informations utiles. Les confirmations de commande, d’expédition, de livraison ou de réservation (Amazon, sites marchands, transporteurs) sont jetables : les récentes et celles avec pièce jointe sont déjà protégées à part. En cas de doute : garder. Réponds UNIQUEMENT en JSON {"items":[{"i":numéro,"v":"virer"|"garder","why":"6 mots max"}]}.',
-          part.map((g, j) => j + '. ' + g.name + ' <' + [...g.emails].slice(0, 2).join(', ') + '> · ' + g.count + ' mails' + (g.unsub ? ' · désabonnement' : '') + ' · objets : ' + g.subjects.slice(0, 5).join(' | ')).join('\n'), 1800);
-        (r.items || []).forEach(x => { const g = part[x.i]; if (g) verdict.set(g.key, { v: x.v === 'virer' ? 'virer' : 'garder', why: String(x.why || '').slice(0, 60) }); });
-      } catch (e) { log('ménage IA : avis', e.message); }
+      for (let t = 0; t < 3; t++) {
+        try {
+          const r = await aiCall('Tu fais le ménage dans la messagerie personnelle de Samuel. Pour chaque expéditeur (nom, adresse, nombre de mails, lien de désabonnement, objets récents), réponds "virer" si ce sont des publicités, promotions, newsletters commerciales ou notifications sans valeur durable ; "garder" si cela peut avoir une utilité : banque, assurance, administration, impôts, santé, travail, école, association, personnes, voyages, services dont il est client et qui envoient des informations utiles. Les confirmations de commande, d’expédition, de livraison ou de réservation (Amazon, sites marchands, transporteurs) sont jetables : les récentes et celles avec pièce jointe sont déjà protégées à part. En cas de doute : garder. Réponds UNIQUEMENT en JSON {"items":[{"i":numéro,"v":"virer"|"garder","why":"6 mots max"}]}.',
+            part.map((g, j) => j + '. ' + g.name + ' <' + [...g.emails].slice(0, 2).join(', ') + '> · ' + g.count + ' mails' + (g.unsub ? ' · désabonnement' : '') + ' · objets : ' + g.subjects.slice(0, 5).join(' | ')).join('\n'), 1800);
+          (r.items || []).forEach(x => { const g = part[x.i]; if (g) verdict.set(g.key, { v: x.v === 'virer' ? 'virer' : 'garder', why: String(x.why || '').slice(0, 60) }); });
+          break;
+        } catch (e) { log('ménage IA : avis', e.message); await pause(4000 * (t + 1)); }
+      }
       MJ.phase = 'L’IA examine ' + cands.length + ' expéditeurs (' + Math.min(i + 25, cands.length) + ')';
-    }
-    // Tes correspondants : une recherche « in:sent to: » par expéditeur à virer, au lieu de relire tous tes envois
-    if (S.gmail) {
-      const vir0 = cands.filter(g => (verdict.get(g.key) || {}).v === 'virer');
-      let k = 0;
-      for (const g of vir0) {
-        MJ.phase = 'Gmail : tes correspondants (' + (++k) + ' / ' + vir0.length + ')';
-        await gWait();
-        const em = [...g.emails].slice(0, 6);
-        const r = await gTry('messages?' + new URLSearchParams({ q: 'in:sent to:(' + em.join(' OR ') + ')', maxResults: 1 })).catch(() => ({ messages: [1] }));  // en cas de doute (Gmail injoignable), on garde
-        if (r && r.messages && r.messages.length) { verdict.set(g.key, { v: 'garder', why: 'tu lui as déjà écrit' }); MJ.excluded += g.count; }
-        await pause(120);
-      }
-    }
-    // Décompte complet Gmail des expéditeurs à virer : une recherche par adresse, mêmes garde-fous que plus haut
-    if (useG) {
-      const vir = cands.filter(g => (verdict.get(g.key) || {}).v === 'virer');
-      let k = 0;
-      for (const g of vir) {
-        MJ.phase = 'Gmail : décompte complet (' + (++k) + ' / ' + vir.length + ' expéditeurs)';
-        const before = g.count; g.count -= g.gs || 0;
-        for (const em of [...g.emails].slice(0, 8)) for (const pass of [0, 1]) {
-          let pg = null;
-          do {
-            await gWait();
-            const q = 'from:' + em + ' ' + BASEQ_G + (pass ? ' newer_than:' + TRANS_DAYS + 'd' + TRANSQ : ' older_than:' + TRANS_DAYS + 'd');
-            const r = (await gTry('messages?' + new URLSearchParams(Object.assign({ q, maxResults: 500 }, pg ? { pageToken: pg } : {}))).catch(() => { MJ.gFail = (MJ.gFail || 0) + 1; return null; })) || {};
-            (r.messages || []).forEach(m => { if (!sentThreads.has(m.threadId)) g.g.push(m.id); });
-            pg = r.nextPageToken;
-          } while (pg && g.g.length < 20000);
-        }
-        g.g = [...new Set(g.g)]; g.count += g.g.length;
-        if (!g.count) g.count = before;
-        await pause(150);
-      }
     }
     MJ.refs = {};
     MJ.groups = cands.map(g => { const v = verdict.get(g.key) || { v: 'garder', why: 'non examiné' }; MJ.refs[g.key] = { g: g.g, f: g.f };
-      return { key: g.key, name: g.name, emails: [...g.emails].slice(0, 5), count: g.count, kept: g.kept, unsub: g.unsub, subjects: g.subjects.slice(0, 3), v: v.v, why: v.why, gCount: g.g.length, fCount: Object.values(g.f).reduce((a, x) => a + x.length, 0) }; });
+      return { key: g.key, name: g.name, emails: [...g.emails].slice(0, 8), count: g.count, kept: g.kept, unsub: g.unsub, subjects: g.subjects.slice(0, 3), v: v.v, why: v.why, gCount: g.g.length, fCount: Object.values(g.f).reduce((a, x) => a + x.length, 0) }; });
     MJ.status = 'done'; MJ.end = Date.now(); MJ.phase = 'Terminé';
-    const n = MJ.groups.filter(g => g.v === 'virer').reduce((a, g) => a + g.count, 0);
+    const vir = MJ.groups.filter(g => g.v === 'virer'), n = vir.reduce((a, g) => a + g.count, 0);
     log('Ménage IA : ' + MJ.scanned + ' mails lus, ' + n + ' proposés au ménage');
-    if (S.subs.length) push({ title: '✦ Ménage IA terminé', body: n + ' mails de pub proposés au ménage. Ouvre l’appli pour vérifier.', url: C.appUrl + '#/menage', tag: 'mailbox-menage', badge: total() }).catch(() => {});
+    if (S.subs.length && (!opts.auto || n)) push({ title: '✦ Ménage IA ' + (opts.auto ? 'du mois' : 'terminé'), body: vir.length + ' expéditeurs de pub, ' + n + ' mails proposés au ménage. Ouvre l’appli pour valider.', url: C.appUrl + '#/menage', tag: 'mailbox-menage', badge: total() }).catch(() => {});
   } catch (e) { MJ.status = 'error'; MJ.error = e.message; log('Ménage IA', e.message); }
   mjSave();
 }
+/* Règles automatiques après « Ranger » : Gmail (règles natives, groupées) et Free (le relais range les nouveaux mails) */
+async function menageRules(emails) {
+  emails = [...new Set(emails.map(e => String(e).toLowerCase()).filter(e => e.includes('@')))];
+  if (!emails.length) return 0;
+  S.mjSenders = [...new Set((S.mjSenders || []).concat(emails))]; save();
+  if (!S.gmail) return 0;
+  const labels = ((await gTry('labels')) || {}).labels || [];
+  const lab = labels.find(l => l.name === MENAGE); if (!lab) return 0;
+  const existing = (((await gTry('settings/filters')) || {}).filter || []).filter(f => f.action && (f.action.addLabelIds || []).includes(lab.id) && f.criteria && f.criteria.from);
+  const covered = new Set([].concat(...existing.map(f => f.criteria.from.toLowerCase().split(/\s+or\s+/).map(x => x.trim()))));
+  const todo = emails.filter(e => !covered.has(e));
+  let made = 0, cur = [];
+  const flush = async () => { if (!cur.length) return; await gTry0(() => gapi('settings/filters', { method: 'POST', body: { criteria: { from: cur.join(' OR '), negatedQuery: 'has:attachment OR facture OR invoice OR contrat OR devis OR relevé OR impôts OR attestation OR remboursement OR sinistre' }, action: { addLabelIds: [lab.id], removeLabelIds: ['INBOX', 'UNREAD'] } } })); made++; cur = []; };
+  for (const e of todo) { if ((cur.join(' OR ') + ' OR ' + e).length > 900) await flush(); cur.push(e); }
+  await flush();
+  return made;
+}
+async function gTry0(fn) { for (let t = 0; t < 5; t++) { await gWait(); try { return await fn(); } catch (e) { if (!/ 429| 403|rate|quota| 5\d\d/i.test(e.message) || /insufficient|scope|PERMISSION/i.test(e.message)) throw e; await pause(3000 * (t + 1)); } } throw new Error('Gmail indisponible'); }
+/* Analyse automatique chaque mois, la nuit (3 h – 5 h, heure de Paris) ; l'index Gmail est aussi rafraîchi chaque nuit */
+function menageNightly() {
+  const h = +new Date().toLocaleString('fr-FR', { timeZone: (S.prefs && S.prefs.tz) || 'Europe/Paris', hour: '2-digit', hour12: false }).slice(0, 2);
+  if (h < 3 || h >= 5 || MJ.status === 'running' || sxBusy) return;
+  if (S.mjAuto && S.ai && Date.now() - (S.mjAutoAt || 0) > 28 * 864e5) { S.mjAutoAt = Date.now(); save(); log('Ménage IA : analyse mensuelle automatique'); menageScan(S.mjAutoAcc || 'both', { auto: true }); return; }
+  sxLoad();
+  if (S.gmail && SX.at && Date.now() - SX.at > 20 * 3600e3) sxSync().catch(e => log('index Gmail (nuit)', e.message));
+}
+let mjApply = null;
 async function menageApply(keys) {
   const out = { gmail: 0, free: 0 };
+  mjApply = { running: true, done: 0, total: 0, at: Date.now() };
   const sel = (MJ.groups || []).filter(g => keys.includes(g.key));
   const gIds = [].concat(...sel.map(g => (MJ.refs[g.key] || {}).g || []));
+  mjApply.total = gIds.length + sel.reduce((a, g) => a + Object.values((MJ.refs[g.key] || {}).f || {}).reduce((x, u) => x + u.length, 0), 0);
   if (S.gmail && gIds.length) {
-    const labels = ((await gapi('labels')) || {}).labels || [];
+    const labels = ((await gTry('labels')) || {}).labels || [];
     let lab = labels.find(l => l.name === MENAGE);
-    if (!lab) lab = await gapi('labels', { method: 'POST', body: { name: MENAGE, labelListVisibility: 'labelShow', messageListVisibility: 'show' } });
+    if (!lab) lab = await gTry0(() => gapi('labels', { method: 'POST', body: { name: MENAGE, labelListVisibility: 'labelShow', messageListVisibility: 'show' } }));
     const userLabs = labels.filter(l => l.type === 'user' && l.id !== lab.id).map(l => l.id);
     for (let i = 0; i < gIds.length; i += 1000) {
       const ids = gIds.slice(i, i + 1000);
-      await gWait();
-      await gapi('messages/batchModify', { method: 'POST', body: { ids, addLabelIds: [lab.id], removeLabelIds: ['INBOX', 'UNREAD'] } });
-      for (let j = 0; j < userLabs.length; j += 40) await gapi('messages/batchModify', { method: 'POST', body: { ids, removeLabelIds: userLabs.slice(j, j + 40) } });
-      out.gmail += ids.length;
+      await gTry0(() => gapi('messages/batchModify', { method: 'POST', body: { ids, addLabelIds: [lab.id], removeLabelIds: ['INBOX', 'UNREAD'] } }));
+      for (let j = 0; j < userLabs.length; j += 40) await gTry0(() => gapi('messages/batchModify', { method: 'POST', body: { ids, removeLabelIds: userLabs.slice(j, j + 40) } }));
+      out.gmail += ids.length; mjApply.done = out.gmail;
     }
   }
   if (S.free) await withImap(async client => {
@@ -1269,10 +1338,11 @@ async function menageApply(keys) {
     sel.forEach(g => Object.entries((MJ.refs[g.key] || {}).f || {}).forEach(([fd, uids]) => { byFolder[fd] = (byFolder[fd] || []).concat(uids); }));
     for (const [fd, uids] of Object.entries(byFolder)) {
       let lock = null;
-      try { lock = await client.getMailboxLock(fd); for (let i = 0; i < uids.length; i += 500) { await client.messageFlagsAdd(uids.slice(i, i + 500), ['\\Seen'], { uid: true }); await client.messageMove(uids.slice(i, i + 500), mPath, { uid: true }); } out.free += uids.length; }
+      try { lock = await client.getMailboxLock(fd); for (let i = 0; i < uids.length; i += 500) { await client.messageFlagsAdd(uids.slice(i, i + 500), ['\\Seen'], { uid: true }); await client.messageMove(uids.slice(i, i + 500), mPath, { uid: true }); } out.free += uids.length; mjApply.done = out.gmail + out.free; }
       catch (e) { log('Ménage IA : déplacement ' + fd, e.message); } finally { if (lock) lock.release(); }
     }
   });
+  try { out.rules = await menageRules([].concat(...sel.map(g => g.emails || []))); } catch (e) { out.rulesErr = e.message; log('Ménage IA : règles', e.message); }
   sel.forEach(g => { g.applied = true; delete MJ.refs[g.key]; });
   MJ.applied = (MJ.applied || 0) + out.gmail + out.free; mjSave();
   log('Ménage IA : ' + (out.gmail + out.free) + ' mails rangés dans « ' + MENAGE + ' »');
@@ -1661,8 +1731,16 @@ const routes = {
   },
   'GET /free/resweep': async () => resweep,
   'GET /menage': async () => mjPublic(),
+  'POST /menage/auto': async (q, b) => { S.mjAuto = !!b.on; if (b.acc) S.mjAutoAcc = String(b.acc); if (S.mjAuto && !S.mjAutoAt) S.mjAutoAt = Date.now(); save(); return { auto: S.mjAuto }; },
   'POST /menage/start': async (q, b) => { if (!S.ai) throw Object.assign(new Error('Assistant IA non configuré (Réglages)'), { code: 400 }); if (MJ.status !== 'running') menageScan(b && b.acc); await pause(300); return mjPublic(); },
-  'POST /menage/apply': async (q, b) => { if (MJ.status !== 'done') throw Object.assign(new Error('Aucune analyse terminée'), { code: 400 }); return menageApply((b.keys || []).map(String)); },
+  // Rangement en tâche de fond : l'appli suit l'avancement, rien n'est perdu si le téléphone se met en veille
+  'POST /menage/apply': async (q, b) => {
+    if (MJ.status !== 'done') throw Object.assign(new Error('Aucune analyse terminée'), { code: 400 });
+    if (mjApply && mjApply.running) return { started: false, applying: mjApply };
+    menageApply((b.keys || []).map(String)).then(o => { mjApply = Object.assign(mjApply || {}, { running: false, result: o, end: Date.now() }); })
+      .catch(e => { mjApply = Object.assign(mjApply || {}, { running: false, error: e.message }); log('Ménage IA : rangement', e.message); });
+    await pause(300); return { started: true, applying: mjApply };
+  },
   'POST /menage/empty': async () => menageEmpty(),
   // Nombre de mails par dossier Free (et total)
   'GET /free/stats': async () => {
@@ -1759,6 +1837,7 @@ server.listen(C.port, () => {
   setTimeout(() => poll().catch(() => {}), 3000);
   setInterval(() => poll().catch(() => {}), C.pollMs);
   setInterval(() => { if (S.timetree) ttSync().catch(() => {}); }, 15 * 60000);
+  setInterval(() => { try { menageNightly(); } catch (e) { log('ménage nuit', e.message); } }, 20 * 60000);
   setTimeout(() => startIdle().catch(() => {}), 5000);
   setTimeout(() => { if (!S.contacts || !S.contacts.at || Date.now() - S.contacts.at > 7 * 864e5) buildContacts(); }, 20000);
   // reprise d'un transfert interrompu par un redémarrage
