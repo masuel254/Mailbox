@@ -71,3 +71,5 @@ document.addEventListener('click', e => { const b = e.target.closest && e.target
 // Astuce affichée une seule fois : les gestes ne se devinent pas
 setTimeout(() => { if (!LS.get('tipGestures', false) && (location.hash || '').match(/#\/(list|today)/)) { LS.set('tipGestures', true); toast('Astuce : appui long sur un mail ou un dossier pour voir toutes ses actions', { label: 'OK', run: () => {} }); } }, 2500);
 onNetChange();
+// Bouton « Plus » d'un mail : déplie les autres actions sur place, sans nouvelle fenêtre
+document.addEventListener('click', e => { const b = e.target.closest && e.target.closest('#t-more'); if (!b) return; const m = $('#tb-more'); if (!m) return; m.hidden = !m.hidden; b.setAttribute('aria-expanded', String(!m.hidden)); b.lastChild.textContent = m.hidden ? 'Plus' : 'Moins'; });

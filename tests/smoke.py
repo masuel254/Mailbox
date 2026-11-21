@@ -39,7 +39,7 @@ async def main():
         await go('#/thread/t1', 2000)
         check(await pg.locator('.msg-body').count() >= 1, 'conversation ouverte')
         await pg.click('[data-fs="1"]'); check(await pg.evaluate('settings.fontSize') == 19, 'A+ agrandit le texte')
-        await pg.click('#t-clean'); await pg.wait_for_timeout(1500)
+        await pg.click('#t-more'); await pg.click('#t-clean'); await pg.wait_for_timeout(1500)
         check(await pg.locator('.sc-n, #sheet .empty').count() >= 1, 'nettoyage par expéditeur : comptage')
         await pg.evaluate("closeSheet()")
         await go('#/compose', 1200)

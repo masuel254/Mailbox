@@ -604,3 +604,9 @@ body.no-tabbar #offline-bar,body.no-tabbar #outbox-bar{bottom:calc(env(safe-area
 .sender-top .date{font-size:.78rem;color:var(--muted);flex:none;align-self:flex-start;padding-top:4px;text-align:right;max-width:38%}
 #msgs.solo .msg-head{display:none}
 #msgs.solo .msg .content{padding-top:6px}
+.toolbar.tb-more{margin-top:-4px}
+#t-more[aria-expanded="true"]{border-color:var(--accent);color:var(--accent)}
+/* Barre d'actions principale du mail : 5 boutons sur une ligne */
+.toolbar:not(.tb-more){display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px}
+.toolbar:not(.tb-more) button{flex-direction:column;justify-content:center;gap:3px;height:auto;min-height:58px;padding:6px 2px;font-size:.72rem;border-radius:14px}
+.toolbar:not(.tb-more) button svg{margin:0}

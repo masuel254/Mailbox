@@ -40,12 +40,15 @@ async function renderThread(id) {
     ${(() => { const other = msgs.map(m => parseAddr(hdr(m, 'From'))).filter(a => a.email && !isMe(a.email)).pop() || splitAddrs(hdr(lastM, 'To')).map(parseAddr).find(a => a.email && !isMe(a.email)); return other ? contactLink(other.name, other.email.toLowerCase()) : ''; })()}
     ${unsubH ? '<div class="unsub-bar"><span>Mail de liste de diffusion</span><button class="btn" id="t-unsub">Se désabonner</button></div>' : ''}
     <div class="toolbar">
-      <button id="t-archive">${ICON.archive}Archiver</button>
-      <button id="t-label">${ICON.tag}Classer</button>
-      <button id="t-block">${ICON.block}Bloquer</button>
-      <button id="t-clean">${ICON.trash}Tous ses mails</button>
       <button id="t-trash">${ICON.trash}Supprimer</button>
       <button id="t-unread">${ICON.unread}Non lu</button>
+      <button id="t-block">${ICON.block}Bloquer</button>
+      <button id="t-label">${ICON.tag}Classer</button>
+      <button id="t-more" aria-expanded="false" aria-controls="tb-more">${ICON.plus}Plus</button>
+    </div>
+    <div class="toolbar tb-more" id="tb-more" hidden>
+      <button id="t-archive">${ICON.archive}Archiver</button>
+      <button id="t-clean">${ICON.trash}Tous ses mails</button>
       <button id="t-star" aria-pressed="${starred}">${starred ? ICON.starOn : ICON.star}${starred ? 'Suivi' : 'Suivre'}</button>
       <button id="t-todo">${ICON.todo}À faire</button>
       <button id="t-snooze">${ICON.clock}Plus tard</button>
@@ -100,12 +103,15 @@ async function renderFree(folder, uid) {
     ${(() => { if (m.from.email && !isMe(m.from.email)) return contactLink(m.from.name, m.from.email.toLowerCase()); const t = splitAddrs(m.to || '').map(parseAddr).find(a => a.email && !isMe(a.email)); return t ? contactLink(t.name, t.email.toLowerCase()) : ''; })()}
     ${m.unsub ? '<div class="unsub-bar"><span>Mail de liste de diffusion</span><button class="btn" id="t-unsub">Se désabonner</button></div>' : ''}
     <div class="toolbar">
-      <button id="t-archive">${ICON.archive}Archiver</button>
-      <button id="t-fmove">${ICON.tag}Classer</button>
-      <button id="t-block">${ICON.block}Bloquer</button>
-      <button id="t-clean">${ICON.trash}Tous ses mails</button>
       <button id="t-trash">${ICON.trash}Supprimer</button>
       <button id="t-unread">${ICON.unread}Non lu</button>
+      <button id="t-block">${ICON.block}Bloquer</button>
+      <button id="t-fmove">${ICON.tag}Classer</button>
+      <button id="t-more" aria-expanded="false" aria-controls="tb-more">${ICON.plus}Plus</button>
+    </div>
+    <div class="toolbar tb-more" id="tb-more" hidden>
+      <button id="t-archive">${ICON.archive}Archiver</button>
+      <button id="t-clean">${ICON.trash}Tous ses mails</button>
       <button id="t-todo">${ICON.todo}À faire</button>
       <button id="t-snooze">${ICON.clock}Plus tard</button>
       <button id="t-cal">${ICON.cal}Agenda</button>
