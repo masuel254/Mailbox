@@ -827,7 +827,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.11.0';
+const RELAY_V = '4.11.1';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -1079,6 +1079,7 @@ async function gWait() { while (gPaused()) await pause(5000); }
 async function menageScan() {
   MJ = { status: 'running', phase: 'Préparation', at: Date.now(), g: { done: 0, total: 0 }, f: { done: 0, total: 0 }, scanned: 0, excluded: 0 };
   const groups = new Map(), sentTo = new Set(), sentThreads = new Set();
+  const BASEQ_G = '-in:sent -in:drafts -in:trash -in:spam -is:starred -has:attachment -label:"' + MENAGE + '" -label:"' + BLOCK_LABEL + '" -subject:(facture OR reçu OR commande OR billet OR contrat OR devis OR invoice OR receipt OR réservation OR livraison OR relevé OR impôts OR attestation OR remboursement)';
   const keyOf = (name, email) => { const n = normName(name); return n && n.length >= 3 && !n.includes('@') ? 'n:' + n : 'e:' + email; };
   const add = (name, email, subject, unsub, ref) => {
     email = String(email || '').toLowerCase(); if (!email) return;
@@ -1088,38 +1089,42 @@ async function menageScan() {
     if (KEEP_RE.test(subject || '')) { g.kept++; MJ.excluded++; return; }
     g.count++; if (unsub) g.unsub = true;
     if (g.subjects.length < 6 && subject && !g.subjects.includes(subject)) g.subjects.push(String(subject).slice(0, 90));
-    if (ref.g) g.g.push(ref.g); else (g.f[ref.folder] = g.f[ref.folder] || []).push(ref.uid);
+    if (ref.gs) g.gs = (g.gs || 0) + 1; else if (ref.g) g.g.push(ref.g); else (g.f[ref.folder] = g.f[ref.folder] || []).push(ref.uid);
   };
   try {
     if (S.gmail) {
       MJ.phase = 'Gmail : mes envois';
       let page = null, sentIds = [];
       do { await gWait(); const r = (await gapi('messages?' + new URLSearchParams(Object.assign({ q: 'in:sent', maxResults: 500 }, page ? { pageToken: page } : {})))) || {}; (r.messages || []).forEach(m => { sentThreads.add(m.threadId); sentIds.push(m.id); }); page = r.nextPageToken; } while (page && sentIds.length < 20000);
-      for (let i = 0; i < Math.min(sentIds.length, 1500); i += 8) {
-        await gWait();
-        await Promise.all(sentIds.slice(i, i + 8).map(id => gapi('messages/' + id + '?format=metadata&metadataHeaders=To&metadataHeaders=Cc').then(m => ((m && m.payload.headers) || []).forEach(h => String(h.value).split(',').forEach(a => { const x = addr(a.trim()); if (x.email) sentTo.add(x.email.toLowerCase()); }))).catch(() => {})));
-        await pause(120);
+      for (let i = 0; i < Math.min(sentIds.length, 800); i += 4) {
+        await gWait(); MJ.phase = 'Gmail : mes envois (' + i + ' / ' + Math.min(sentIds.length, 800) + ')';
+        await Promise.all(sentIds.slice(i, i + 4).map(id => gapi('messages/' + id + '?format=metadata&metadataHeaders=To&metadataHeaders=Cc').then(m => ((m && m.payload.headers) || []).forEach(h => String(h.value).split(',').forEach(a => { const x = addr(a.trim()); if (x.email) sentTo.add(x.email.toLowerCase()); }))).catch(() => {})));
+        await pause(260);
       }
+      // Gmail limite fortement la lecture mail par mail : on lit un échantillon (les 2 500 plus récents) pour découvrir les expéditeurs,
+      // puis, pour ceux que l'IA juge sans intérêt, on récupère tous leurs mails d'un coup par une recherche « from: » (très rapide)
       MJ.phase = 'Gmail : liste des mails';
+      const BASEQ = BASEQ_G;
       const ids = []; page = null;
       do {
         await gWait();
-        const r = (await gapi('messages?' + new URLSearchParams(Object.assign({ q: '-in:sent -in:drafts -in:trash -in:spam -is:starred -has:attachment -label:"' + MENAGE + '" -label:"' + BLOCK_LABEL + '"', maxResults: 500 }, page ? { pageToken: page } : {})))) || {};
+        const r = (await gapi('messages?' + new URLSearchParams(Object.assign({ q: BASEQ, maxResults: 500 }, page ? { pageToken: page } : {})))) || {};
         (r.messages || []).forEach(m => { if (sentThreads.has(m.threadId)) MJ.excluded++; else ids.push(m.id); });
-        page = r.nextPageToken; MJ.g.total = ids.length;
+        page = r.nextPageToken; MJ.gAll = ids.length;
       } while (page && ids.length < 80000);
-      MJ.phase = 'Gmail : lecture des en-têtes';
-      for (let i = 0; i < ids.length; i += 10) {
+      const sample = ids.slice(0, 2500);
+      MJ.g.total = sample.length; MJ.phase = 'Gmail : expéditeurs (échantillon des ' + sample.length + ' plus récents)';
+      for (let i = 0; i < sample.length; i += 4) {
         await gWait();
-        await Promise.all(ids.slice(i, i + 10).map(id => gapi('messages/' + id + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=List-Unsubscribe').then(m => {
+        await Promise.all(sample.slice(i, i + 4).map(id => gapi('messages/' + id + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=List-Unsubscribe').then(m => {
           if (!m) return;
           const h = n => ((m.payload.headers || []).find(x => x.name.toLowerCase() === n) || {}).value || '';
           const f = addr(h('from'));
-          if ((m.labelIds || []).includes('STARRED') || sentTo.has(String(f.email).toLowerCase())) { MJ.excluded++; return; }
-          add(f.name, f.email, h('subject'), !!h('list-unsubscribe'), { g: m.id });
+          if (sentTo.has(String(f.email).toLowerCase())) { MJ.excluded++; return; }
+          add(f.name, f.email, h('subject'), !!h('list-unsubscribe'), { gs: m.id });
         }).catch(() => {})));
-        MJ.g.done = Math.min(i + 10, ids.length); MJ.scanned = MJ.g.done + MJ.f.done;
-        await pause(180);
+        MJ.g.done = Math.min(i + 4, sample.length); MJ.scanned = MJ.g.done + MJ.f.done;
+        await pause(260);
       }
     }
     if (S.free) {
@@ -1145,7 +1150,9 @@ async function menageScan() {
       });
     }
     // Les expéditeurs rares (moins de 3 mails) sont souvent des personnes : on ne les propose pas
-    const cands = [...groups.values()].filter(g => g.count >= 3).sort((a, b) => b.count - a.count).slice(0, 600);
+    const cands = [...groups.values()].filter(g => g.count + (g.gs || 0) >= 2 && (g.count >= 3 || (g.gs || 0) >= 2 || g.unsub)).sort((a, b) => (b.count + (b.gs || 0) * 10) - (a.count + (a.gs || 0) * 10)).slice(0, 600);
+    // count : mails Free + mails Gmail de l'échantillon, en attendant le décompte complet Gmail ci-dessous
+    cands.forEach(g => { g.count += g.gs || 0; });
     MJ.phase = 'L’IA examine ' + cands.length + ' expéditeurs';
     const verdict = new Map();
     for (let i = 0; i < cands.length; i += 25) {
@@ -1156,6 +1163,27 @@ async function menageScan() {
         (r.items || []).forEach(x => { const g = part[x.i]; if (g) verdict.set(g.key, { v: x.v === 'virer' ? 'virer' : 'garder', why: String(x.why || '').slice(0, 60) }); });
       } catch (e) { log('ménage IA : avis', e.message); }
       MJ.phase = 'L’IA examine ' + cands.length + ' expéditeurs (' + Math.min(i + 25, cands.length) + ')';
+    }
+    // Décompte complet Gmail des expéditeurs à virer : une recherche par adresse, mêmes garde-fous que plus haut
+    if (S.gmail) {
+      const vir = cands.filter(g => (verdict.get(g.key) || {}).v === 'virer');
+      let k = 0;
+      for (const g of vir) {
+        MJ.phase = 'Gmail : décompte complet (' + (++k) + ' / ' + vir.length + ' expéditeurs)';
+        const before = g.count; g.count -= g.gs || 0;
+        for (const em of [...g.emails].slice(0, 8)) {
+          let pg = null;
+          do {
+            await gWait();
+            const r = (await gapi('messages?' + new URLSearchParams(Object.assign({ q: 'from:' + em + ' ' + BASEQ_G, maxResults: 500 }, pg ? { pageToken: pg } : {}))).catch(() => null)) || {};
+            (r.messages || []).forEach(m => { if (!sentThreads.has(m.threadId)) g.g.push(m.id); });
+            pg = r.nextPageToken;
+          } while (pg && g.g.length < 20000);
+        }
+        g.g = [...new Set(g.g)]; g.count += g.g.length;
+        if (!g.count) g.count = before;
+        await pause(150);
+      }
     }
     MJ.refs = {};
     MJ.groups = cands.map(g => { const v = verdict.get(g.key) || { v: 'garder', why: 'non examiné' }; MJ.refs[g.key] = { g: g.g, f: g.f };
