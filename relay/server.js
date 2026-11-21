@@ -847,7 +847,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.11.7';
+const RELAY_V = '4.11.8';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -1104,8 +1104,10 @@ async function gTry(p) {
   }
   throw new Error('Gmail indisponible');
 }
-async function menageScan() {
-  MJ = { status: 'running', phase: 'Préparation', at: Date.now(), g: { done: 0, total: 0 }, f: { done: 0, total: 0 }, scanned: 0, excluded: 0 };
+async function menageScan(acc) {
+  acc = ["gmail", "free"].includes(acc) ? acc : "both";
+  const useG = !!S.gmail && acc !== "free", useF = !!S.free && acc !== "gmail";
+  MJ = { status: 'running', phase: 'Préparation', at: Date.now(), g: { done: 0, total: 0 }, f: { done: 0, total: 0 }, scanned: 0, excluded: 0, acc };
   const groups = new Map(), sentThreads = new Set();
   const BASEQ_G = '-in:sent -in:drafts -in:trash -in:spam -is:starred -has:attachment -label:"' + MENAGE + '" -label:"' + BLOCK_LABEL + '" -subject:(facture OR reçu OR commande OR billet OR contrat OR devis OR invoice OR receipt OR réservation OR livraison OR relevé OR impôts OR attestation OR remboursement)';
   const keyOf = (name, email) => { const n = normName(name); return n && n.length >= 3 && !n.includes('@') ? 'n:' + n : 'e:' + email; };
@@ -1120,7 +1122,7 @@ async function menageScan() {
     if (ref.gs) g.gs = (g.gs || 0) + 1; else if (ref.g) g.g.push(ref.g); else (g.f[ref.folder] = g.f[ref.folder] || []).push(ref.uid);
   };
   try {
-    if (S.gmail) {
+    if (useG) {
       MJ.phase = 'Gmail : mes envois';
       let page = null, sentIds = [];
       do { await gWait(); const r = (await gapi('messages?' + new URLSearchParams(Object.assign({ q: 'in:sent', maxResults: 500 }, page ? { pageToken: page } : {})))) || {}; (r.messages || []).forEach(m => { sentThreads.add(m.threadId); sentIds.push(m.id); }); page = r.nextPageToken; } while (page && sentIds.length < 20000);
@@ -1149,7 +1151,7 @@ async function menageScan() {
         await pause(260);
       }
     }
-    if (S.free) {
+    if (useF) {
       MJ.phase = 'Free : lecture des dossiers';
       await withImap(async client => {
         const fo = await folders(client), dest = await blockPath(client);
@@ -1200,7 +1202,7 @@ async function menageScan() {
       }
     }
     // Décompte complet Gmail des expéditeurs à virer : une recherche par adresse, mêmes garde-fous que plus haut
-    if (S.gmail) {
+    if (useG) {
       const vir = cands.filter(g => (verdict.get(g.key) || {}).v === 'virer');
       let k = 0;
       for (const g of vir) {
@@ -1645,7 +1647,7 @@ const routes = {
   },
   'GET /free/resweep': async () => resweep,
   'GET /menage': async () => mjPublic(),
-  'POST /menage/start': async () => { if (!S.ai) throw Object.assign(new Error('Assistant IA non configuré (Réglages)'), { code: 400 }); if (MJ.status !== 'running') menageScan(); await pause(300); return mjPublic(); },
+  'POST /menage/start': async (q, b) => { if (!S.ai) throw Object.assign(new Error('Assistant IA non configuré (Réglages)'), { code: 400 }); if (MJ.status !== 'running') menageScan(b && b.acc); await pause(300); return mjPublic(); },
   'POST /menage/apply': async (q, b) => { if (MJ.status !== 'done') throw Object.assign(new Error('Aucune analyse terminée'), { code: 400 }); return menageApply((b.keys || []).map(String)); },
   'POST /menage/empty': async () => menageEmpty(),
   // Nombre de mails par dossier Free (et total)

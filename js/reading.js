@@ -269,11 +269,16 @@ async function renderMenage() {
     menageT = setTimeout(() => { if ((location.hash || '').startsWith('#/menage')) renderMenage(); }, 3000);
     return;
   }
+  // Choix des boîtes à analyser (seulement si Free est relié)
+  const accSeg = () => freeOn() ? `<p class="fhint" style="margin:12px 0 4px">Boîtes à analyser</p><div class="home-seg mj-acc" style="grid-template-columns:1fr 1fr 1fr">${[['both', 'Les deux'], ['gmail', 'Gmail'], ['free', 'Free']].map(([k, t]) => `<a href="#" data-mjacc="${k}" class="${LS.get('mjAcc', 'both') === k ? 'on' : ''}">${t}</a>`).join('')}</div>` : '';
+  const bindAcc = root => $$('[data-mjacc]', root).forEach(a => a.onclick = e => { e.preventDefault(); LS.set('mjAcc', a.dataset.mjacc); $$('[data-mjacc]', root).forEach(x => x.classList.toggle('on', x === a)); });
+  const startScan = async () => { LS.del('mjSel'); try { await rapi('/menage/start', { method: 'POST', body: { acc: freeOn() ? LS.get('mjAcc', 'both') : 'gmail' } }); } catch (e) { toast(e.message); } renderMenage(); };
   if (r.status !== 'done') {
     box.innerHTML = `<p class="fhint">L’IA lit l’en-tête de tous tes mails (expéditeur et objet, jamais le contenu), les regroupe par expéditeur et te propose ceux qui ne sont que de la pub. Rien n’est supprimé : tu vérifies, puis les mails choisis partent dans le dossier « Ménage IA ».</p>
-      ${r.status === 'error' ? `<p style="color:var(--danger)">Dernière analyse interrompue : ${esc(r.error || '')}</p>` : ''}${guards}
+      ${r.status === 'error' ? `<p style="color:var(--danger)">Dernière analyse interrompue : ${esc(r.error || '')}</p>` : ''}${guards}${accSeg()}
       <button class="btn primary" id="mj-go" style="width:100%;margin-top:12px">Lancer l’analyse</button><p class="fhint" style="text-align:center">Compte 20 à 30 minutes pour une grosse boîte Gmail.</p>`;
-    $('#mj-go').onclick = async () => { $('#mj-go').disabled = true; try { await rapi('/menage/start', { method: 'POST' }); } catch (e) { toast(e.message); } renderMenage(); };
+    bindAcc(box);
+    $('#mj-go').onclick = () => { $('#mj-go').disabled = true; startScan(); };
     return;
   }
   const groups = r.groups || [], vir = groups.filter(g => g.v === 'virer' && !g.applied), kept = groups.filter(g => g.v !== 'virer'), done = groups.filter(g => g.applied);
@@ -305,7 +310,11 @@ async function renderMenage() {
     };
     $('#mj-open').onclick = async () => { try { const ls = await getLabels(true); const l = ls.find(x => x.name === 'Ménage IA'); if (l) location.hash = '#/list/' + encodeURIComponent(l.id); else if (freeOn() && r.applied) location.hash = '#/list/F:MENAGE'; else toast('Le dossier est encore vide : clique d’abord sur « Ranger »'); } catch (e) { toast(e.message); } };
     $('#mj-empty').onclick = async () => { if (!confirm('Envoyer tout le dossier « Ménage IA » à la corbeille ? (récupérable 30 jours)')) return; try { const o = await rapi('/menage/empty', { method: 'POST' }); toast(fmt(o.gmail + o.free) + ' mails envoyés à la corbeille'); } catch (e) { toast(e.message); } };
-    $('#mj-again').onclick = async () => { if (!confirm('Relancer une analyse complète ?')) return; LS.del('mjSel'); try { await rapi('/menage/start', { method: 'POST' }); } catch (e) { toast(e.message); } renderMenage(); };
+    $('#mj-again').onclick = () => {
+      openSheet(`<span class="grip"></span><h2>Relancer une analyse</h2><p style="margin:0;color:var(--muted);font-size:.85rem;line-height:1.5">Les résultats actuels sont remplacés. Les mails déjà rangés ne sont pas reproposés.</p>${accSeg()}<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="mj-again-ok">Lancer</button></div>`);
+      bindAcc($('#sheet'));
+      $('#mj-again-ok').onclick = () => { closeSheet(); startScan(); };
+    };
   };
   draw();
 }
