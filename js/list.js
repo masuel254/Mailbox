@@ -697,20 +697,27 @@ async function quickBlock(item) {
   const dates = LS.get('blockedDates', {}); dates[t] = Date.now(); LS.set('blockedDates', dates);
   // Free d'abord, indépendamment de Gmail : un Gmail qui freine ne doit pas empêcher le blocage côté Free
   let moved = 0, freeErr = null;
-  if (freeOn()) { try { moved += (await rapi('/free/block', { method: 'POST', body: { target: t } })).moved || 0; } catch (e) { freeErr = e; } }
+  // Nom affiché bloqué aussi : certains expéditeurs (pubs, rachat de crédits…) changent d'adresse à chaque envoi
+  const nm = item.fromName && item.fromName.trim().length >= 3 && !item.fromName.includes('@') && item.fromName.trim().toLowerCase() !== String(item.fromEmail).toLowerCase() ? item.fromName.trim().replace(/"/g, '') : null;
+  if (freeOn()) { try { moved += (await rapi('/free/block', { method: 'POST', body: { target: t, name: nm } })).moved || 0; } catch (e) { freeErr = e; } }
   try {
     const lab = await blockLabelId();
     const froms = (((await api('settings/filters')) || {}).filter || []).map(f => (f.criteria && f.criteria.from || '').toLowerCase());
     let filterId = null;
     if (!isCovered(t, froms)) filterId = (await api('settings/filters', { method: 'POST', body: { criteria: { from: t }, action: { addLabelIds: [lab], removeLabelIds: ['INBOX', 'UNREAD'] } } })).id;
+    let nameFilterId = null;
+    if (nm && !froms.includes('"' + nm.toLowerCase() + '"')) nameFilterId = (await api('settings/filters', { method: 'POST', body: { criteria: { from: '"' + nm + '"' }, action: { addLabelIds: [lab], removeLabelIds: ['INBOX', 'UNREAD'] } } }).catch(() => ({}))).id || null;
     moved += await moveExisting(t, lab);
+    if (nm) moved += await moveExisting('"' + nm + '"', lab).catch(() => 0);
     if (freeErr) toast('Free : ' + freeErr.message);
-    const hit = e => e && (e.toLowerCase() === t || blockTarget(e) === t);
-    $$('#list a.item').forEach(a => { const i = findItem(a.dataset.id); if (i && hit(i.fromEmail)) collapseRow(a); });
-    Object.values(state.lists).forEach(d => { d.items = d.items.filter(i => !hit(i.fromEmail)); });
+    const nz = x => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/["'«»]/g, '').trim().toLowerCase();
+    const hitI = i => (i.fromEmail && (i.fromEmail.toLowerCase() === t || blockTarget(i.fromEmail) === t)) || (nm && nz(i.fromName) === nz(nm));
+    $$('#list a.item').forEach(a => { const i = findItem(a.dataset.id); if (i && hitI(i)) collapseRow(a); });
+    Object.values(state.lists).forEach(d => { d.items = d.items.filter(i => !hitI(i)); });
     reDraw(); badgeNow(0);
     undoToast(names[t] + ' bloqué' + (moved > 1 ? ' · ' + moved + ' mails rangés' : ''), async () => {
       if (filterId) await api('settings/filters/' + filterId, { method: 'DELETE' });
+      if (nameFilterId) await api('settings/filters/' + nameFilterId, { method: 'DELETE' }).catch(() => {});
       let page = null;
       do {
         const p = new URLSearchParams({ q: 'from:' + t, labelIds: lab, maxResults: 500 }); if (page) p.set('pageToken', page);

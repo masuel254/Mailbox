@@ -544,9 +544,9 @@ async function freeEmpty(folderKey) {
 async function sweepInbox(client, targets) {
   const found = new Set();
   for (const t of targets) {
-    const uids = (await client.search({ from: t }, { uid: true })) || [];
+    const uids = (await client.search({ from: t.startsWith('name:') ? t.slice(5) : t }, { uid: true }).catch(() => [])) || [];
     if (!uids.length) continue;
-    for await (const m of client.fetch(uids, { envelope: true }, { uid: true })) { const f = addr(m.envelope.from); if (f.email && isBlocked(f.email, [t])) found.add(m.uid); }
+    for await (const m of client.fetch(uids, { envelope: true }, { uid: true })) { const f = addr(m.envelope.from); if (isBlocked(f.email, [t], f.name)) found.add(m.uid); }
   }
   const uids = [...found];
   if (uids.length) { await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true }); await client.messageMove(uids, await blockPath(client), { uid: true }); }
@@ -599,12 +599,14 @@ async function blockedTargets() {
     const labels = ((await gapi('labels')) || {}).labels || [];
     const l = labels.find(x => x.name === BLOCK_LABEL);
     const fs_ = l ? (((await gapi('settings/filters')) || {}).filter || []).filter(f => f.action && (f.action.addLabelIds || []).includes(l.id) && f.criteria && f.criteria.from) : [];
-    blockedCache = { at: Date.now(), list: fs_.map(f => f.criteria.from.toLowerCase()) };
+    blockedCache = { at: Date.now(), list: fs_.map(f => { const v = f.criteria.from.trim(); return /^".*"$/.test(v) ? 'name:' + v.slice(1, -1) : v.toLowerCase(); }) };
     S.blocked = [...new Set((S.blocked || []).concat(blockedCache.list))]; save();
   } catch (e) { log('règles Gmail illisibles', e.message); }
   return merge(blockedCache.list);
 }
-const isBlocked = (email, targets) => targets.some(t => email === t || (!t.includes('@') && (email.endsWith('@' + t) || email.endsWith('.' + t))));
+// Cibles : adresse, domaine, ou « name:Nom affiché » (pour les expéditeurs qui changent d'adresse à chaque envoi)
+const normName = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/["'«»]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+const isBlocked = (email, targets, name) => targets.some(t => t.startsWith('name:') ? !!name && normName(name) === normName(t.slice(5)) : !!email && (email === t || (!t.includes('@') && (email.endsWith('@' + t) || email.endsWith('.' + t)))));
 
 /* ---------- TimeTree (lecture seule, API web non officielle) ----------
    Connexion par mail + mot de passe (gardé chiffré), relecture des calendriers toutes les 15 min.
@@ -793,7 +795,8 @@ async function pollFree() {
       S.seen.freeUid = Math.max(last, ...unseen, client.mailbox.uidNext ? client.mailbox.uidNext - 1 : 0);
       S.seen.freeInit = true;
       const sig = targets.slice().sort().join(',');
-      if (sig && sig !== S.seen.sweepSig) {
+      if (sig && (sig !== S.seen.sweepSig || Date.now() - (S.seen.sweepAt || 0) > 6 * 3600e3)) {
+        S.seen.sweepAt = Date.now();
         try {
           const n = await sweepInbox(client, targets);
           S.seen.sweepSig = sig;
@@ -804,7 +807,7 @@ async function pollFree() {
       if (fresh.length) {
         for await (const m of client.fetch(fresh, { envelope: true }, { uid: true })) {
           const f = addr(m.envelope.from);
-          if (f.email && isBlocked(f.email, targets)) { toBlock.push(m.uid); continue; }
+          if (isBlocked(f.email, targets, f.name)) { toBlock.push(m.uid); continue; }
           const rule = (S.rules || []).find(r => f.email && isBlocked(f.email, [r.from]));
           if (rule) { (toFile[rule.folder] = toFile[rule.folder] || []).push(m.uid); }
           out.push({ acc: 'free', from: f.name || f.email, subject: m.envelope.subject || '(sans objet)', url: C.appUrl + '#/free/INBOX/' + m.uid });
@@ -1402,8 +1405,10 @@ const routes = {
   'GET /trash/empty': async () => trashJob || { running: false, gmail: 0, free: 0, error: null },
   'POST /free/block': async (q, b) => {
     const t = (b.target || '').toLowerCase(); if (!t) throw Object.assign(new Error('cible manquante'), { code: 400 });
+    const nm = b.name && String(b.name).trim().length >= 3 && !String(b.name).includes('@') ? 'name:' + String(b.name).trim() : null;
     blockedCache.at = 0;
-    if (!(S.blocked || []).includes(t)) { S.blocked = (S.blocked || []).concat(t); save(); }
+    const add = [t].concat(nm ? [nm] : []).filter(x => !(S.blocked || []).includes(x));
+    if (add.length) { S.blocked = (S.blocked || []).concat(add); save(); }
     // Tous ses anciens mails (réception et autres dossiers) rejoignent Indésirables ; corbeille, envoyés, brouillons exclus
     return withImap(async client => {
       const dest = await blockPath(client), f = await folders(client);
@@ -1413,7 +1418,10 @@ const routes = {
         let lock = null;
         try {
           lock = await client.getMailboxLock(m.path);
-          const uids = (await client.search({ from: t }, { uid: true })) || [];
+          // par adresse/domaine, puis par nom affiché (vérifié sur l'enveloppe pour ne pas ratisser large)
+          const set = new Set((await client.search({ from: t }, { uid: true })) || []);
+          if (nm) { const cand = (await client.search({ from: nm.slice(5) }, { uid: true })) || []; if (cand.length) for await (const m of client.fetch(cand, { envelope: true }, { uid: true })) { if (isBlocked('', [nm], addr(m.envelope.from).name)) set.add(m.uid); } }
+          const uids = [...set];
           if (uids.length) { await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true }); await client.messageMove(uids, dest, { uid: true }); moved += uids.length; }
         } catch (e) { log('Free : blocage dans ' + m.path, e.message); } finally { if (lock) lock.release(); }
       }
