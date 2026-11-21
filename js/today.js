@@ -41,9 +41,13 @@ async function todayWaiting(force) {
   return items.slice(0, 8);
 }
 let todayT = null;
-function onIndexChange() { if ((location.hash || '').startsWith('#/today')) { clearTimeout(todayT); todayT = setTimeout(() => renderToday(false, true), 1200); } }
+function onIndexChange() { if ((location.hash || '').startsWith('#/today')) { clearTimeout(todayT); todayT = setTimeout(() => { if ((location.hash || '').startsWith('#/today')) renderToday(false, true); }, 1200); } }
 async function renderToday(force, quiet) {
+  clearTimeout(todayT);
   const v = $('#view');
+  // écran quitté entre-temps : on ne réaffiche surtout pas l'accueil par-dessus
+  const h0 = location.hash || '';
+  if (h0 && !h0.startsWith('#/today') && !(h0 === '' && settings.home === 'today')) return;
   const now = new Date();
   const hello = now.getHours() < 5 ? 'Bonne nuit' : now.getHours() < 18 ? 'Bonjour' : 'Bonsoir';
   const first = String(settings.myName || '').trim();

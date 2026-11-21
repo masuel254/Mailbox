@@ -43,7 +43,7 @@ function renderSettings() {
     <section class="card">
       <label class="f"><span>Taille du texte : <b id="s-fs-v">${settings.fontSize}</b> px</span><input type="range" id="s-fs" min="15" max="26" step="1" value="${settings.fontSize}"></label>
       <label class="f">Ton prénom (accueil)<input id="s-name" autocomplete="given-name" value="${esc(settings.myName || '')}" placeholder="Samuel"></label>
-      <label class="switch">Ouvrir sur « Aujourd’hui »<input type="checkbox" id="s-home" ${settings.home === 'inbox' ? '' : 'checked'}></label>
+      <label class="switch">Ouvrir sur « Aujourd’hui »<input type="checkbox" id="s-home" ${settings.home === 'today' ? 'checked' : ''}></label>
       <label class="f">Signature Gmail<textarea id="s-sig-g" rows="3" placeholder="Samuel">${esc(settings.sigGmail || '')}</textarea></label>
       <label class="f">Signature Free<textarea id="s-sig-f" rows="3" placeholder="Samuel">${esc(settings.sigFree || '')}</textarea></label>
       <p class="sample">Aperçu : Point MRP V3 jeudi 10h</p>

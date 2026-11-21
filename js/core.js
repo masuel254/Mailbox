@@ -2,7 +2,7 @@
    Le code est découpé par domaine ; les fichiers sont chargés dans l'ordre de index.html et partagent la même portée. */
 'use strict';
 
-const APP_VERSION = '4.8.1';
+const APP_VERSION = '4.8.2';
 const APP_DATE = '21/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -299,7 +299,8 @@ async function bgApi(path, g) {
 }
 function route() {
   auth.handleRedirect();
-  const h = location.hash || (settings.home === 'inbox' ? '#/list/INBOX' : '#/today');
+  const h = location.hash || (settings.home === 'today' ? '#/today' : '#/list/INBOX');
+  const rt = document.querySelector('#tabbar a[data-tab="INBOX"]'); if (rt) rt.setAttribute('href', settings.home === 'today' ? '#/today' : '#/list/INBOX');
   if (h !== state.curHash) bgGen++;
   const parts = h.slice(2).split('?')[0].split('/');
   const view = parts[0];
