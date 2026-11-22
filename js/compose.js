@@ -81,7 +81,7 @@ function renderCompose(params) {
     <div class="top"><a class="back" href="#" id="back">${ICON.back}Annuler</a><h1 style="text-align:center;font-size:1.1rem">${esc(title)}</h1><button class="btn primary" id="send" style="height:44px">${ICON.send}Envoyer</button></div>
     <form class="compose card" id="cform" style="gap:0">
       ${freeOn() ? `<div class="row"><label for="c-from">De</label><select id="c-from" style="flex:1;height:50px;border:none;background:transparent;font-size:1rem;color:var(--text)"><option value="gmail" ${fm ? '' : 'selected'}>${esc(settings.email || 'Gmail')}</option><option value="free" ${fm ? 'selected' : ''}>${esc(settings.freeEmail)}</option></select></div>` : ''}
-      <div class="row"><label for="c-to">À</label><input id="c-to" type="text" inputmode="email" autocomplete="email" value="${esc(to)}"><button type="button" class="linkish" id="c-more">Cc</button></div>
+      <div class="row"><label for="c-to">À</label><input id="c-to" type="text" inputmode="email" autocomplete="email" value="${esc(to)}"><button type="button" class="c-book" id="c-book" aria-label="Choisir dans mes contacts"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4.5-6 8-6s7 2 8 6"/></svg></button><button type="button" class="linkish" id="c-more">Cc</button></div>
       <div class="row" id="row-cc" ${cc ? '' : 'hidden'}><label for="c-cc">Cc</label><input id="c-cc" type="text" inputmode="email" value="${esc(cc)}"></div>
       <div class="row" id="row-bcc" hidden><label for="c-bcc">Cci</label><input id="c-bcc" type="text" inputmode="email"></div>
       <div class="row"><label for="c-subj">Objet</label><input id="c-subj" type="text" value="${esc(subject)}"></div>
@@ -139,6 +139,7 @@ function renderCompose(params) {
   setTimeout(() => { if (!to) $('#c-to').focus(); else { ta.focus(); ta.setSelectionRange(0, 0); } }, 50);
   // Retour : le brouillon reste enregistré (pas de question), avec un « Supprimer » dans le bandeau
   $('#back').onclick = e => { e.preventDefault(); if (dirty()) { clearTimeout(dT); LS.set(dKey, snap()); toast('Brouillon enregistré', { label: 'Supprimer', run: () => { dropDraft(); toast('Brouillon supprimé'); } }); } else dropDraft(); goBack(); };
+  $('#c-book').onclick = () => contactPicker($('#c-to'), saveDraft);
   $('#c-more').onclick = () => { $('#row-cc').hidden = false; $('#row-bcc').hidden = false; $('#c-cc').focus(); };
   // Pièces jointes ajoutées depuis l'iPhone (Photothèque, appareil photo, Fichiers)
   const MAX_ATT = 20 * 1048576;
@@ -223,22 +224,75 @@ function addrSuggest(input, onPick) {
   const nz = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const draw = async () => {
     const parts = input.value.split(/[,;]/), cur = nz(parts[parts.length - 1].trim());
-    if (cur.length < 2) { box.hidden = true; return; }
     const got = new Set(parts.slice(0, -1).map(x => (parseAddr(x).email || '').toLowerCase()));
     const res = [];
+    // Champ vide : tes contacts les plus fréquents, à toucher directement
+    if (!cur) {
+      const fav = frequentContacts(await pool(), got, 8);
+      box.hidden = !fav.length || document.activeElement !== input;
+      box.className = 'sugg sugg-fav';
+      box.innerHTML = fav.map((r, i) => `<button type="button" data-i="${i}"><span class="av">${esc(initials(r.name || r.e))}</span><b>${esc(firstName(r.name || r.e))}</b></button>`).join('');
+      bindPick(fav.map(r => ({ p: { name: r.name }, e: r.e })));
+      return;
+    }
+    box.className = 'sugg';
     (await pool()).forEach(p => p.emails.forEach(e => { if (got.has(e)) return; const n = nz(p.name), em = nz(e); const sc = n.startsWith(cur) || em.startsWith(cur) ? 3 : n.split(/\s+/).some(w => w.startsWith(cur)) ? 2 : n.includes(cur) || em.includes(cur) ? 1 : 0; if (sc) res.push({ p, e, sc: sc * 1000 + (p.count || 0) + ((p.last || 0) > Date.now() - 90 * 864e5 ? 50 : 0) }); }));
     res.sort((a, b) => b.sc - a.sc);
     const top = res.slice(0, 6);
     box.hidden = !top.length;
     box.innerHTML = top.map((r, i) => `<button type="button" data-i="${i}"><b>${esc(r.p.name && r.p.name !== r.e ? r.p.name : r.e)}</b><small>${esc(r.e)}</small></button>`).join('');
-    $$('[data-i]', box).forEach(b => b.onmousedown = b.ontouchstart = ev => {
-      ev.preventDefault(); const r = top[+b.dataset.i];
-      parts[parts.length - 1] = (r.p.name && r.p.name !== r.e ? '"' + r.p.name.replace(/"/g, '') + '" <' + r.e + '>' : r.e);
-      input.value = parts.map(x => x.trim()).filter(Boolean).join(', ') + ', '; box.hidden = true; input.focus(); if (onPick) onPick();
-    });
+    bindPick(top);
+    function bindPick(arr) {
+      $$('[data-i]', box).forEach(b => b.onmousedown = b.ontouchstart = ev => {
+        ev.preventDefault(); const r = arr[+b.dataset.i];
+        parts[parts.length - 1] = fmtRecipient(r.p.name, r.e);
+        input.value = parts.map(x => x.trim()).filter(Boolean).join(', ') + ', '; input.focus(); if (onPick) onPick(); draw();
+      });
+    }
   };
   input.addEventListener('input', draw);
+  input.addEventListener('focus', draw);
   input.addEventListener('blur', () => setTimeout(() => { box.hidden = true; }, 200));
+}
+const fmtRecipient = (name, e) => name && name !== e ? '"' + String(name).replace(/"/g, '') + '" <' + e + '>' : e;
+const firstName = n => { n = String(n || ''); return n.includes('@') ? n.split('@')[0] : n.split(/\s+/)[0]; };
+// Contacts les plus utiles : souvent écrits et récemment
+function frequentContacts(list, skip, n) {
+  const now = Date.now(), out = [];
+  list.forEach(p => { const e = (p.emails || [])[0]; if (!e || (skip && skip.has(e)) || isMe(e) || /no-?reply|noreply|notification|newsletter|ne-pas-repondre/i.test(e)) return; out.push({ name: p.name, e, sc: (p.count || 0) + ((p.last || 0) > now - 60 * 864e5 ? 20 : 0) }); });
+  return out.sort((a, b) => b.sc - a.sc).slice(0, n);
+}
+/* Carnet d'adresses : recherche, plusieurs choix, ajout d'un coup dans « À » */
+async function contactPicker(input, onPick) {
+  let list = []; const c = LS.get('gcontacts', null); list = c ? c.list : [];
+  if (!list.length) { try { list = await loadContacts(); } catch (e) { list = []; } }
+  const nz = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const already = new Set(splitAddrs(input.value).map(x => (parseAddr(x).email || '').toLowerCase()));
+  const rows = []; list.forEach(p => (p.emails || []).forEach(e => { if (!isMe(e)) rows.push({ name: p.name && p.name !== e ? p.name : '', e, count: p.count || 0 }); }));
+  rows.sort((a, b) => (a.name || a.e).localeCompare(b.name || b.e, 'fr', { sensitivity: 'base' }));
+  const fav = frequentContacts(list, null, 8);
+  const sel = new Set();
+  openSheet(`<span class="grip"></span><h2>Mes contacts</h2>
+    <input type="search" id="cp-q" class="blk-q" placeholder="Rechercher (${rows.length})" autocomplete="off">
+    ${fav.length ? `<div class="cp-fav">${fav.map(f => `<button type="button" class="cp-chip" data-e="${esc(f.e)}"><span class="av">${esc(initials(f.name || f.e))}</span>${esc(firstName(f.name || f.e))}</button>`).join('')}</div>` : ''}
+    <div class="cp-list" id="cp-list"></div>
+    <button class="btn primary" id="cp-ok" disabled>Ajouter</button>`);
+  const box = $('#cp-list'), ok = $('#cp-ok');
+  const upd = () => { ok.disabled = !sel.size; ok.textContent = sel.size ? 'Ajouter ' + sel.size + ' destinataire' + (sel.size > 1 ? 's' : '') : 'Ajouter'; $$('.cp-chip', $('#sheet')).forEach(b => b.classList.toggle('on', sel.has(b.dataset.e))); };
+  const draw = () => {
+    const q = nz($('#cp-q').value.trim());
+    const res = rows.filter(r => !q || nz(r.name).includes(q) || nz(r.e).includes(q)).slice(0, 200);
+    box.innerHTML = res.length ? res.map(r => `<label class="cp-row"><input type="checkbox" value="${esc(r.e)}" ${sel.has(r.e) || already.has(r.e) ? 'checked' : ''} ${already.has(r.e) ? 'disabled' : ''}><span class="av">${esc(initials(r.name || r.e))}</span><span class="cp-t"><b>${esc(r.name || r.e)}</b>${r.name ? `<small>${esc(r.e)}</small>` : ''}</span></label>`).join('') : '<p class="fhint">Aucun contact. Tu peux taper l’adresse directement dans « À ».</p>';
+    $$('input[type=checkbox]', box).forEach(cb => cb.onchange = () => { cb.checked ? sel.add(cb.value) : sel.delete(cb.value); upd(); });
+  };
+  $('#cp-q').oninput = draw; draw();
+  $$('.cp-chip', $('#sheet')).forEach(b => b.onclick = () => { const e = b.dataset.e; if (already.has(e)) return; sel.has(e) ? sel.delete(e) : sel.add(e); draw(); upd(); });
+  ok.onclick = () => {
+    const byE = new Map(rows.map(r => [r.e, r.name]));
+    const cur = splitAddrs(input.value).map(x => x.trim()).filter(Boolean);
+    sel.forEach(e => cur.push(fmtRecipient(byE.get(e), e)));
+    input.value = cur.join(', ') + ', '; closeSheet(); if (onPick) onPick(); input.dispatchEvent(new Event('input'));
+  };
 }
 /* ---------- Construction du mail (MIME) ---------- */
 const encWord = s => /^[\x20-\x7e]*$/.test(s) ? s : '=?UTF-8?B?' + utf8B64(s) + '?=';
