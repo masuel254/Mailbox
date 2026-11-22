@@ -839,6 +839,8 @@ async function sweepBlocked(froms, lab) {
   if (btn) btn.disabled = false;
   Object.keys(state.lists).forEach(k => delete state.lists[k]); badgeNow(0);
 }
+let blkQuery = '';
+const blkNorm = v => String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 async function renderBlocked(box) {
   getLabels().then(ls => { const l = (ls || []).find(x => x.name === BLOCK_LABEL), a = $('#s-junk'); if (a) { if (l) a.href = '#/list/' + encodeURIComponent(l.id); else a.hidden = true; } }).catch(() => {});
   if (!auth.hasSettingsScope()) { box.innerHTML = '<p>Aucun expéditeur bloqué pour l’instant.</p>'; return; }
@@ -861,14 +863,24 @@ async function renderBlocked(box) {
     const fmtD = t => t ? 'bloqué le ' + new Date(t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) + ' à ' + new Date(t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : 'bloqué avant le ' + new Date(first).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
     const sortBar = `<div class="accounts" role="tablist" style="margin:0 0 8px"><button class="${order === 'date' ? 'on' : ''}" data-bsort="date">Plus récents</button><button class="${order === 'az' ? 'on' : ''}" data-bsort="az">A → Z</button></div>`;
     const nEl = $('#s-blk-n'); if (nEl) nEl.textContent = String(fs.length);
-    box.innerHTML = `<button class="btn" id="blk-sweep" style="width:100%;margin-bottom:8px">🧹 Relancer le ménage : ranger les anciens mails des bloqués</button><p class="fhint" id="blk-sweep-s" style="margin:0 0 8px" hidden></p>` + mergeBtn + sortBar + `<div>` + fs.map(f => `<div class="lab-row" style="padding:6px 0;gap:10px"><span class="nm" style="min-width:0;display:flex;flex-direction:column"><b style="font-size:.95rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label(f.criteria.from))}</b><span style="font-size:.72rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(sub(f.criteria.from))}</span><span style="font-size:.7rem;color:var(--muted);opacity:.8">${esc(fmtD(dOf(f)))}</span></span><button class="btn" style="height:38px;font-size:.75rem" data-fid="${esc(f.id)}">Débloquer</button></div>`).join('') +
+    box.innerHTML = `<button class="btn" id="blk-sweep" style="width:100%;margin-bottom:8px">🧹 Relancer le ménage : ranger les anciens mails des bloqués</button><p class="fhint" id="blk-sweep-s" style="margin:0 0 8px" hidden></p>` + mergeBtn + `<input type="search" id="blk-q" class="blk-q" placeholder="Rechercher un expéditeur (${fs.length})" autocomplete="off" value="${esc(blkQuery)}"><p class="fhint" id="blk-none" style="margin:4px 0" hidden>Aucun expéditeur bloqué ne correspond.</p>` + sortBar + `<div>` + fs.map(f => `<div class="lab-row blk-row" data-q="${esc(blkNorm(label(f.criteria.from) + ' ' + f.criteria.from))}" style="padding:6px 0;gap:10px"><span class="nm" style="min-width:0;display:flex;flex-direction:column"><b style="font-size:.95rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label(f.criteria.from))}</b><span style="font-size:.72rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(sub(f.criteria.from))}</span><span style="font-size:.7rem;color:var(--muted);opacity:.8">${esc(fmtD(dOf(f)))}</span></span><button class="btn" style="height:38px;font-size:.75rem" data-fid="${esc(f.id)}">Débloquer</button></div>`).join('') +
       `</div>`;
+    // Recherche dans la liste : nom ou adresse, sans tenir compte des accents ni des majuscules
+    const q = $('#blk-q'), filt = () => { blkQuery = q.value; const t = blkNorm(q.value.trim()); let n = 0; $$('.blk-row', box).forEach(r => { const on = !t || r.dataset.q.includes(t); r.hidden = !on; if (on) n++; }); $('#blk-none').hidden = n > 0; };
+    q.oninput = filt; filt();
     $('#blk-sweep').onclick = () => sweepBlocked(fs.map(f => f.criteria.from.trim()), l.id);
     $$('[data-bsort]', box).forEach(b => b.onclick = () => { LS.set('blockedSort', b.dataset.bsort); renderBlocked(box); });
     const mb = $('#blk-merge', box);
     if (mb) mb.onclick = async () => { mb.disabled = true; mb.textContent = 'Regroupement…'; try { const r = await mergeBlocked(fs, l.id, box); toast('Règles regroupées : ' + r.removed + ' remplacées'); } catch (e) { toast('Échec : ' + e.message); } renderBlocked(box); };
     $$('button[data-fid]', box).forEach(b => b.onclick = async () => { b.disabled = true; try { await api('settings/filters/' + b.dataset.fid, { method: 'DELETE' }); toast('Débloqué'); await renderBlocked(box); } catch (e) { b.disabled = false; toast('Échec : ' + e.message); } });
-  } catch (e) { box.innerHTML = '<p>Liste indisponible.</p>'; }
+  } catch (e) {
+    // Gmail limite souvent pendant une analyse Ménage IA : on réessaie tout seul, puis on affiche la vraie raison
+    const n = +(box.dataset.retry || 0);
+    if (n < 3 && /429|403|rate|quota|réseau|fetch/i.test(e.message || '')) { box.dataset.retry = n + 1; box.innerHTML = '<p>Gmail est occupé, nouvel essai…</p>'; setTimeout(() => { if (box.isConnected) renderBlocked(box); }, 4000 * (n + 1)); return; }
+    box.dataset.retry = 0;
+    box.innerHTML = `<p>Liste indisponible : ${esc(e.message || 'erreur inconnue')}</p><button class="btn" id="blk-retry" style="width:100%">Réessayer</button>`;
+    $('#blk-retry').onclick = () => renderBlocked(box);
+  }
 }
 
 
