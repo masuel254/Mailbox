@@ -387,7 +387,9 @@ function bindListGestures(list) {
   let timer = null, longDone = false, sx = 0, sy = 0, cur = null, lock = null, dx = 0, bg = null, swiped = false, base = 0;
   // Tiroir ouvert après un glissement à gauche : boutons Bloquer et Supprimer
   let tray = null;
-  const TRAY = 160;
+  // Envoyés et brouillons : bloquer n'a pas de sens (c'est toi l'expéditeur), seulement Supprimer
+  const ownView = () => ['SENT', 'DRAFT'].includes(state.current);
+  const TRAY0 = 160, trayW = () => ownView() ? 90 : TRAY0;
   const full = () => Math.max(230, list.clientWidth * 0.6);
   const closeTray = () => {
     if (!tray) return;
@@ -400,7 +402,7 @@ function bindListGestures(list) {
     const isFull = dx < -full();
     bg.classList.toggle('left', dx < 0); bg.classList.toggle('on', Math.abs(dx) > 70); bg.classList.toggle('full', isFull);
     bg.innerHTML = dx < 0
-      ? `<button type="button" class="tray-b block" data-tray="block">${ICON.block}<small>Bloquer</small></button><button type="button" class="tray-b del" data-tray="trash">${ICON.trash}<small>Supprimer</small></button>`
+      ? `${ownView() ? '' : `<button type="button" class="tray-b block" data-tray="block">${ICON.block}<small>Bloquer</small></button>`}<button type="button" class="tray-b del" data-tray="trash">${ICON.trash}<small>Supprimer</small></button>`
       : `<span>${it && it.unread ? ICON.read + 'Lu' : ICON.unread + 'Non lu'}</span>`;
   };
   list.addEventListener('touchstart', e => {
@@ -445,7 +447,7 @@ function bindListGestures(list) {
       }
       if (dx < -60) {
         // Tiroir ouvert : on attend un tap sur Supprimer ou Bloquer
-        a.style.transition = 'transform .2s'; a.style.transform = 'translateX(' + (-TRAY) + 'px)';
+        a.style.transition = 'transform .2s'; a.style.transform = 'translateX(' + (-trayW()) + 'px)';
         setTimeout(() => { a.style.transition = ''; }, 220);
         const t = { a, bg, it };
         bg.classList.add('tray'); bg.classList.remove('full');
@@ -511,8 +513,8 @@ function mailMenu(a) {
       <span id="am-sug" class="am-wide"></span>
       <button class="btn am-wide" data-a="file">${ICON.tag}Classer dans…</button>
       <button class="btn danger" data-a="trash">${ICON.trash}Supprimer</button>
-      <button class="btn" data-a="block">${ICON.block}Bloquer</button>
-      ${it.fromEmail ? `<button class="btn am-wide" data-a="clean">${ICON.trash}Tous les mails de ${esc(it.fromName || it.fromEmail)}</button>` : ''}
+      ${['SENT', 'DRAFT'].includes(state.current) ? '' : `<button class="btn" data-a="block">${ICON.block}Bloquer</button>`}
+      ${it.fromEmail && !['SENT', 'DRAFT'].includes(state.current) ? `<button class="btn am-wide" data-a="clean">${ICON.trash}Tous les mails de ${esc(it.fromName || it.fromEmail)}</button>` : ''}
       <button class="btn am-wide" data-a="select">${ICON.check}Sélectionner plusieurs mails</button>
     </div>`);
   const go = async k => {
@@ -567,7 +569,7 @@ function enterSelect() {
       <button id="sel-read" disabled>${ICON.read}<span>Lu</span></button>
       <button id="sel-unread" disabled>${ICON.unread}<span>Non lu</span></button>
       <button id="sel-archive" disabled>${ICON.archive}<span>Archiver</span></button>
-      <button id="sel-block" disabled>${ICON.block}<span>Bloquer</span></button>
+      ${['SENT', 'DRAFT'].includes(state.current) ? '' : `<button id="sel-block" disabled>${ICON.block}<span>Bloquer</span></button>`}
       <button id="sel-trash" disabled>${ICON.trash}<span>Supprimer</span></button>
     </div>`;
   $('#sel-cancel').onclick = () => exitSelect();
@@ -581,7 +583,7 @@ function enterSelect() {
   $('#sel-unread').onclick = () => bulk({ addLabelIds: ['UNREAD'] }, i => Object.assign({}, i, { unread: true }), 'marqué(s) comme non lu(s)');
   $('#sel-archive').onclick = () => bulk({ removeLabelIds: ['INBOX'] }, (i, k) => ['INBOX', 'UNREAD'].includes(keyOf(k)) ? null : i, 'archivé(s)');
   $('#sel-trash').onclick = () => bulk('trash', () => null, 'placé(s) dans la corbeille');
-  $('#sel-block').onclick = () => blockSheet([...state.sel]);
+  const sb = $('#sel-block'); if (sb) sb.onclick = () => blockSheet([...state.sel]);
   const b = $('#btn-select'); if (b) b.classList.add('on');
   updateSelBar();
 }
