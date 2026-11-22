@@ -2,7 +2,7 @@
    Le code est découpé par domaine ; les fichiers sont chargés dans l'ordre de index.html et partagent la même portée. */
 'use strict';
 
-const APP_VERSION = '4.14.1';
+const APP_VERSION = '4.14.2';
 const APP_DATE = '22/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -327,7 +327,7 @@ function route() {
   exitSelect(true);
   document.body.classList.toggle('no-tabbar', view === 'thread' || view === 'compose' || view === 'free');
   const lk = parts[1] === 'UNREAD' ? 'INBOX' : (parts[1] || 'INBOX');
-  $$('#tabbar a').forEach(a => a.classList.toggle('on', a.dataset.tab === (view === 'list' ? (lk === 'INBOX' ? 'INBOX' : 'labels') : ['waiting', 'tasks', 'scheduled', 'outbox', 'blocked', 'menage'].includes(view) ? 'labels' : view === 'today' ? 'INBOX' : ['guide', 'settings'].includes(view) ? 'INBOX' : view)));
+  $$('#tabbar a').forEach(a => a.classList.toggle('on', a.dataset.tab === (view === 'list' ? (lk === 'INBOX' ? 'INBOX' : lk === 'SENT' ? 'SENT' : 'labels') : ['waiting', 'tasks', 'scheduled', 'outbox', 'blocked', 'menage'].includes(view) ? 'labels' : view === 'today' ? 'INBOX' : ['guide', 'settings'].includes(view) ? 'INBOX' : view)));
   $('#view').scrollTop = 0;
   if (!settings.clientId && !relayGmailOn() && view !== 'settings') return renderWelcome();
   if (view === 'thread') return renderThread(decodeURIComponent(parts[1]));

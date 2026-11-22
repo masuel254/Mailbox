@@ -34,7 +34,7 @@ body.no-tabbar #view{padding-bottom:calc(110px + var(--safe-bot))}
 body.no-tabbar #tabbar{display:none}
 
 /* Barre du bas */
-#tabbar{position:fixed;left:0;right:0;bottom:0;z-index:20;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));align-items:center;padding:6px 6px calc(6px + var(--safe-bot));background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-top:1px solid var(--line)}
+#tabbar{position:fixed;left:0;right:0;bottom:0;z-index:20;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));align-items:center;padding:6px 4px calc(6px + var(--safe-bot));background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-top:1px solid var(--line)}
 #tabbar a{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:52px;text-decoration:none;color:var(--dim);font-size:.66rem}
 #tabbar a.on{color:var(--on-accent);background:var(--accent-fill);border-radius:14px;margin:0 3px}
 #tabbar a.on span{font-weight:700}
@@ -673,3 +673,6 @@ a.set-link .set-s{flex:1 1 auto;min-width:0;text-align:right;overflow:hidden;tex
 .cp-row{display:flex;align-items:center;gap:12px;padding:8px 2px;border-bottom:1px solid var(--line)}
 .cp-row input{width:22px;height:22px;accent-color:var(--accent-fill);flex:none}
 .cp-t{display:flex;flex-direction:column;min-width:0}.cp-t b{font-size:.95rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cp-t small{font-size:.78rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#tabbar a{font-size:.62rem;letter-spacing:-.01em}
+#tabbar a.on{margin:0 2px}
+#tabbar a svg{width:1.35rem;height:1.35rem}

@@ -80,7 +80,7 @@ const GUIDE = [
     <p>Écrire : destinataires proposés dès 2 lettres, brouillon enregistré à chaque frappe, signature (Réglages), <b>Envoyer plus tard</b> et <b>Relance si pas de réponse</b>. Tout ce qui est programmé : Dossiers › Programmés et relances.</p>`],
   ['👋', 'Prise en main', `
     <p>MailBox réunit <b>Gmail</b> (pastille bleue) et <b>Free</b> (pastille rose) dans une seule appli, plus lisible que Gmail.</p>
-    <p>En bas : <b>Reçus</b>, <b>Agenda</b>, <b>Écrire</b>, <b>Contacts</b>, <b>Dossiers</b>. Les <b>Envoyés</b> sont dans Dossiers, les <b>Réglages</b> derrière la roue dentée en haut de Reçus. Le chiffre sur Reçus et sur l'icône de l'iPhone est le nombre de mails non lus.</p>
+    <p>En bas : <b>Reçus</b>, <b>Envoyés</b>, <b>Agenda</b>, <b>Écrire</b>, <b>Contacts</b>, <b>Dossiers</b>. Les envois Gmail et Free sont réunis dans Envoyés, les <b>Réglages</b> derrière la roue dentée en haut de Reçus. Le chiffre sur Reçus et sur l'icône de l'iPhone est le nombre de mails non lus.</p>
     <p>Un mail <b>non lu</b> a un cadre jaune et un rond jaune plein. Les mails sont groupés par jour (Aujourd’hui, Hier, Mardi 17 novembre…), avec l’heure à droite. Un mail <b>lu</b> est simplement en gris. L'étiquette <b>Gmail</b> ou <b>Free</b> en bas à droite indique la boîte.</p>
     <div class="tip">Les mots de passe ne sont jamais dans l'appli ni sur GitHub : Gmail passe par Google, Free par ton serveur, chiffré.</div>`],
   ['👆', 'Les gestes', `

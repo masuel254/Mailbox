@@ -488,7 +488,6 @@ async function renderLabels() {
     <div class="searchbar"><input type="search" id="fq" placeholder="Chercher un dossier" autocomplete="off" enterkeyhint="search"></div></div>
     <div id="xfer-bar" hidden></div>
     <a class="set-link" href="#/tasks"><span class="set-t">✅ Tâches</span><span class="set-s" id="tk-count">À faire et rappels</span><span class="chev-r" aria-hidden="true"></span></a>
-    <a class="set-link" href="#/list/SENT"><span class="set-t">📤 Envoyés</span><span class="set-s">Gmail + Free</span><span class="chev-r" aria-hidden="true"></span></a>
     <a class="set-link" href="#/waiting"><span class="set-t">⏳ En attente</span><span class="set-s">Sans réponse</span><span class="chev-r" aria-hidden="true"></span></a>
     <div id="labs"><div class="loading">Chargement…</div></div>`;
   $('#btn-refresh').onclick = () => { state.folders = null; LS.del('foldersCache'); renderLabels(); };
