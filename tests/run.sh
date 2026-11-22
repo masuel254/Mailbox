@@ -23,6 +23,6 @@ curl -s -X POST localhost:8899/free/account -H 'Authorization: Bearer s' -H 'Con
 curl -s -X POST localhost:8899/timetree/account -H 'Authorization: Bearer s' -H 'Content-Type: application/json' -d '{"email":"a@b.c","password":"ok"}' >/dev/null
 curl -s -X POST localhost:8899/ai/key -H 'Authorization: Bearer s' -H 'Content-Type: application/json' -d '{"key":"gsk_test"}' >/dev/null
 sleep 2
-python3 tests/smoke.py; R=$?
+python3 tests/${TEST:-smoke.py}; R=$?
 kill $PIDS 2>/dev/null; rm -rf "$T"
 exit $R

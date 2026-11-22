@@ -26,7 +26,7 @@ async function renderThread(id) {
   state.thread = { id, msgs, labels, subject };
   if (labels.has('UNREAD') || localPatch.has(id)) setLocal([id], { unread: false });
   if (labels.has('UNREAD')) {
-    api('threads/' + id + '/modify', { method: 'POST', body: { removeLabelIds: ['UNREAD'] } }).then(() => badgeNow(1)).catch(e => { if (isNetErr(e)) queueAction({ t: 'gmodify', id, body: { removeLabelIds: ['UNREAD'] } }); });
+    api('threads/' + id + '/modify', { method: 'POST', body: { removeLabelIds: ['UNREAD'] } }).then(() => { ixTell([id], 'read'); badgeNow(1); }).catch(e => { if (isNetErr(e)) queueAction({ t: 'gmodify', id, body: { removeLabelIds: ['UNREAD'] } }); });
     patchCached(id, i => Object.assign({}, i, { unread: false }));
   }
   const lastM = msgs[msgs.length - 1] || {};
@@ -72,7 +72,7 @@ async function renderThread(id) {
   $('#t-archive').onclick = () => threadAction(id, { removeLabelIds: ['INBOX'] }, 'Archivé', true);
   $('#t-trash').onclick = async () => {
     hideGone([id]); patchCached(id, () => null); goBack();
-    try { await api('threads/' + id + '/trash', { method: 'POST' }); undoToast('Mail supprimé', () => api('threads/' + id + '/untrash', { method: 'POST' })); badgeNow(0); }
+    try { await api('threads/' + id + '/trash', { method: 'POST' }); ixTell([id], 'trash'); undoToast('Mail supprimé', () => api('threads/' + id + '/untrash', { method: 'POST' })); badgeNow(0); }
     catch (e) { if (isNetErr(e)) { queueAction({ t: 'act', ids: [id], kind: 'trash' }); toast('Hors connexion : supprimé au retour du réseau'); } else { gone.delete(id); if (e.message !== 'auth') toast(e.message); refreshVisibleList(); } }
   };
   $('#t-unread').onclick = () => { setLocal([id], { unread: true }); patchCached(id, i => Object.assign({}, i, { unread: true })); threadAction(id, { addLabelIds: ['UNREAD'] }, 'Marqué non lu', true); };
@@ -99,7 +99,7 @@ async function renderFree(folder, uid) {
   catch (e) { v.querySelector('.loading').outerHTML = `<div class="empty">Impossible d'ouvrir : ${esc(e.message)}</div>`; return; }
   const id = 'f:' + uid + ':' + folder;
   setLocal([id], { unread: false });
-  if (!m.seen) { rapi('/free/flags', { method: 'POST', body: { folder, uids: [uid], seen: true } }).then(() => badgeNow(1)).catch(e => { if (isNetErr(e)) queueAction({ t: 'fflags', body: { folder, uids: [uid], seen: true } }); }); patchCached(id, i => Object.assign({}, i, { unread: false })); }
+  if (!m.seen) { rapi('/free/flags', { method: 'POST', body: { folder, uids: [uid], seen: true } }).then(() => { ixTell([id], 'read'); badgeNow(1); }).catch(e => { if (isNetErr(e)) queueAction({ t: 'fflags', body: { folder, uids: [uid], seen: true } }); }); patchCached(id, i => Object.assign({}, i, { unread: false })); }
   state.freeMsg = m;
   v.innerHTML = `
     <div class="top"><a class="back" href="#" id="back">${ICON.back}Retour</a>${FS_CTL}</div>
@@ -138,7 +138,7 @@ async function renderFree(folder, uid) {
   const move = async (to, label) => { hideGone([id]); patchCached(id, () => null); goBack(); toast(label); try { await rapi('/free/move', { method: 'POST', body: { folder, uids: [uid], to } }); badgeNow(0); } catch (e) { if (isNetErr(e)) queueAction({ t: 'act', ids: [id], kind: to === 'TRASH' ? 'trash' : 'archive' }); else { gone.delete(id); toast('Free : ' + e.message); refreshVisibleList(); } } };
   $('#t-archive').onclick = () => move('ARCHIVE', 'Archivé');
   $('#t-trash').onclick = () => move('TRASH', 'Placé dans la corbeille');
-  $('#t-unread').onclick = async () => { setLocal([id], { unread: true }); patchCached(id, i => Object.assign({}, i, { unread: true })); goBack(); toast('Marqué non lu'); try { await rapi('/free/flags', { method: 'POST', body: { folder, uids: [uid], seen: false } }); badgeNow(0); } catch (e) { toast(e.message); } };
+  $('#t-unread').onclick = async () => { setLocal([id], { unread: true }); patchCached(id, i => Object.assign({}, i, { unread: true })); goBack(); toast('Marqué non lu'); try { await rapi('/free/flags', { method: 'POST', body: { folder, uids: [uid], seen: false } }); ixTell([id], 'unread'); badgeNow(0); } catch (e) { localPatch.delete(id); toast(e.message); } };
   $('#t-block').onclick = () => { goBack(); quickBlock({ id, fromEmail: m.from.email, fromName: m.from.name }); };
   $('#t-fmove').onclick = () => freeMoveSheet(id, folder, uid);
   state.thread = null; state.freeCtx = { id, folder, uid };
@@ -220,7 +220,7 @@ async function threadAction(id, body, msg, leave) {
   // Retour immédiat à la liste : Gmail est prévenu en arrière-plan, en cas d'échec on le signale
   if (leave) { if (body.removeLabelIds && body.removeLabelIds.includes('INBOX')) hideGone([id]); goBack(); toast(msg); msg = null; }
   try {
-    try { await api('threads/' + id + '/modify', { method: 'POST', body }); }
+    try { await api('threads/' + id + '/modify', { method: 'POST', body }); ixTell([id], (body.removeLabelIds || []).includes('INBOX') ? 'archive' : (body.addLabelIds || []).includes('UNREAD') ? 'unread' : (body.removeLabelIds || []).includes('UNREAD') ? 'read' : ''); }
     catch (e) { if (!isNetErr(e)) throw e; queueAction({ t: 'gmodify', id, body }); msg += ' (appliqué au retour du réseau)'; }
     if (body.removeLabelIds && body.removeLabelIds.includes('INBOX')) Object.entries(state.lists).forEach(([k, c]) => { if (['INBOX', 'UNREAD'].includes(keyOf(k))) c.items = c.items.filter(i => i.id !== id); });
     if (msg) toast(msg); badgeNow(0);

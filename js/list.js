@@ -175,6 +175,7 @@ function applyIndex(ix, direct) {
   state.ixV = ix.v;
   const g = (ix.g || []).map(t => Object.assign(summarize(t), { acc: 'gmail' }));
   const f = (ix.f || []).map(freeItem);
+  confirmLocal(g.concat(f), ix.at || 0);
   const accs = freeOn() ? ['all', 'gmail', 'free'] : ['gmail'];
   accs.forEach(a => ['INBOX', 'UNREAD'].forEach(k => {
     const ck = (a !== 'gmail' ? a + '|' : '') + k;
@@ -262,7 +263,13 @@ const isGone = id => { const t = gone.get(id); if (!t) return false; if (t < Dat
 /* Changements faits dans l'appli (lu, non lu…) : appliqués tout de suite à l'écran et gardés 45 s,
    le temps que Gmail/Free les confirment, pour qu'une actualisation arrivée entre-temps ne les annule pas à l'écran */
 const localPatch = new Map();
-function setLocal(ids, p) { const t = Date.now() + 45000; ids.forEach(id => localPatch.set(id, { p: Object.assign({}, (localPatch.get(id) || {}).p, p), t })); }
+function setLocal(ids, p) { const t = Date.now() + 600000; ids.forEach(id => localPatch.set(id, { p: Object.assign({}, (localPatch.get(id) || {}).p, p), t, at: Date.now() })); }
+// Un changement local est oublié dès que la liste du serveur, plus récente que lui, montre le même état
+function confirmLocal(items, since) {
+  if (!localPatch.size) return;
+  const byId = new Map(items.map(i => [i.id, i]));
+  for (const [id, x] of localPatch) { const i = byId.get(id); if (i && since > x.at + 1500 && Object.keys(x.p).every(k => i[k] === x.p[k])) localPatch.delete(id); }
+}
 function withLocal(items) {
   if (!localPatch.size) return items;
   const now = Date.now();
@@ -328,7 +335,7 @@ async function readAll(btn) {
   const undo = () => Promise.all(gDone.map(ids => api('messages/batchModify', { method: 'POST', body: { ids, addLabelIds: ['UNREAD'] } })).concat(fDone.map(d => rapi('/free/flags', { method: 'POST', body: { folder: d.folder, uids: d.uids, seen: false } }))));
   if (errs.length) toast(errs.join(' · '));
   else if (total) undoToast(total + ' mail' + (total > 1 ? 's' : '') + ' marqué' + (total > 1 ? 's' : '') + ' comme lu' + (total > 1 ? 's' : ''), undo);
-  if (errs.length) { shown.forEach(id => localPatch.delete(id)); refreshVisibleList(); }
+  if (errs.length) { shown.forEach(id => localPatch.delete(id)); refreshVisibleList(); } else ixTell(shown, 'read');
   badgeNow(0);
 }
 
@@ -540,9 +547,10 @@ function mailMenu(a) {
 }
 async function swipeAct(id, kind) {
   let r;
-  if (kind === 'trash') hideGone([id]);
-  try { r = await act([id], kind); } catch (e) { gone.delete(id); reDraw(); return; }
-  if (!r.ok) { gone.delete(id); toast('Action impossible'); reDraw(); return; }
+  if (kind === 'trash' || kind === 'archive') hideGone([id]);
+  if (kind === 'read' || kind === 'unread') { setLocal([id], { unread: kind === 'unread' }); reDraw(); }
+  try { r = await act([id], kind); } catch (e) { gone.delete(id); localPatch.delete(id); reDraw(); return; }
+  if (!r.ok) { gone.delete(id); localPatch.delete(id); toast('Action impossible : Gmail a refusé, réessaie'); reDraw(); return; }
   Object.entries(state.lists).forEach(([k, d]) => { d.items = d.items.map(i => i.id === id ? ACT_PATCH[kind](i, k) : i).filter(Boolean); });
   reDraw();
   undoToast(kind === 'trash' ? 'Mail supprimé' : kind === 'archive' ? 'Mail archivé' : kind === 'read' ? 'Marqué comme lu' : 'Marqué comme non lu', r.undo);
@@ -599,7 +607,7 @@ function updateSelBar() {
 async function act(ids, kind) {
   // Hors connexion : l'action est notée et rejouée au retour du réseau
   if (!navigator.onLine) { queueAction({ t: 'act', ids, kind }); toast('Hors connexion : fait au retour du réseau'); return { ok: ids.length, undo: async () => { LS.set('pendingActs', LS.get('pendingActs', []).filter(a => !(a.t === 'act' && a.kind === kind && a.ids.join() === ids.join()))); } }; }
-  const undo = []; let ok = 0;
+  const undo = [], done = []; let ok = 0;
   const gIds = ids.filter(i => !i.startsWith('f:')), fIds = ids.filter(i => i.startsWith('f:'));
   const gBody = { read: { removeLabelIds: ['UNREAD'] }, unread: { addLabelIds: ['UNREAD'] }, archive: { removeLabelIds: ['INBOX'] } }[kind];
   const gUndo = { read: { addLabelIds: ['UNREAD'] }, unread: { removeLabelIds: ['UNREAD'] }, archive: { addLabelIds: ['INBOX'] } }[kind];
@@ -607,7 +615,7 @@ async function act(ids, kind) {
     try {
       if (kind === 'trash') { await api('threads/' + id + '/trash', { method: 'POST' }); undo.push(() => api('threads/' + id + '/untrash', { method: 'POST' })); }
       else { await api('threads/' + id + '/modify', { method: 'POST', body: gBody }); undo.push(() => api('threads/' + id + '/modify', { method: 'POST', body: gUndo })); }
-      ok++;
+      ok++; done.push(id);
     } catch (e) { if (e.message === 'auth') throw e; }
   });
   const byFolder = {};
@@ -621,11 +629,15 @@ async function act(ids, kind) {
         await rapi('/free/flags', { method: 'POST', body: { folder, uids, seen: kind === 'read' } });
         undo.push(() => rapi('/free/flags', { method: 'POST', body: { folder, uids, seen: kind !== 'read' } }));
       }
-      ok += uids.length;
+      ok += uids.length; fIds.filter(id => parseFreeId(id).folder === folder).forEach(id => done.push(id));
     } catch (e) { toast('Free : ' + e.message); }
   }
-  return { ok, undo: () => Promise.all(undo.map(f => f())) };
+  ixTell(done, kind);
+  const inv = { read: 'unread', unread: 'read', trash: null, archive: null }[kind];
+  return { ok, undo: () => Promise.all(undo.map(f => f())).then(r => { if (inv) { setLocal(done, { unread: inv === 'unread' }); ixTell(done, inv); } return r; }) };
 }
+// Prévient le relais d'un changement fait ici, pour que sa copie de la réception ne remette pas l'ancien état
+function ixTell(ids, kind) { if (!ids.length || !relayOn()) return; rapi('/inbox/patch', { method: 'POST', body: { ids, kind } }).catch(() => {}); }
 const ACT_LABEL = { trash: ['supprimé', 'supprimés'], archive: ['archivé', 'archivés'], read: ['marqué lu', 'marqués lus'], unread: ['marqué non lu', 'marqués non lus'] };
 const ACT_PATCH = { trash: () => null, archive: (i, k) => ['INBOX', 'UNREAD'].includes(keyOf(k)) ? null : i, read: i => Object.assign({}, i, { unread: false }), unread: i => Object.assign({}, i, { unread: true }) };
 async function bulk(body, patch, label) {
@@ -634,7 +646,10 @@ async function bulk(body, patch, label) {
   $$('#selbar button').forEach(b => b.disabled = true);
   const kind = body === 'trash' ? 'trash' : (body.addLabelIds || []).includes('UNREAD') ? 'unread' : (body.removeLabelIds || []).includes('UNREAD') ? 'read' : 'archive';
   let r;
+  if (kind === 'read' || kind === 'unread') setLocal(ids, { unread: kind === 'unread' });
+  if (kind === 'trash' || kind === 'archive') hideGone(ids);
   try { r = await act(ids, kind); } catch (e) { if (e.message === 'auth') return; r = { ok: 0, undo: async () => {} }; }
+  if (!r.ok) { ids.forEach(id => { localPatch.delete(id); gone.delete(id); }); }
   const set = new Set(ids);
   Object.entries(state.lists).forEach(([k, d]) => { d.items = d.items.map(i => set.has(i.id) ? patch(i, k) : i).filter(Boolean); });
   exitSelect();

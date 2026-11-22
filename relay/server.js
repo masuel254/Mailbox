@@ -851,7 +851,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.13.0';
+const RELAY_V = '4.13.1';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -860,12 +860,13 @@ let ixWaiters = [], freeSig = '';
 const gMeta = new Map();
 const trimThread = t => ({ id: t.id, historyId: t.historyId, messages: (t.messages || []).map((m, i, a) => ({ id: m.id, threadId: m.threadId, labelIds: m.labelIds || [], internalDate: m.internalDate, sizeEstimate: m.sizeEstimate,
   snippet: i === a.length - 1 ? m.snippet : '', payload: { mimeType: (m.payload || {}).mimeType, headers: ((m.payload || {}).headers || []).filter(h => /^(from|to|subject|cc|date)$/i.test(h.name)) } })) });
-let ixLast = 0;
+let ixLast = 0, ixLastBadge = -1;
 async function ixGmail(force) {
   if (!S.gmail || gPaused()) return false;
   // pendant la lecture complète de l'index, la réception est rafraîchie toutes les 2 min seulement (moins de demandes simultanées)
-  if (sxBusy && !force && Date.now() - ixLast < 120000) return false;
-  ixLast = Date.now();
+  // (sauf si le nombre de non-lus a bougé : la liste doit suivre, sinon l'appli recevrait une liste périmée)
+  if (sxBusy && !force && Date.now() - ixLast < 120000 && S.badge.gmail === ixLastBadge) return false;
+  ixLast = Date.now(); ixLastBadge = S.badge.gmail;
   const prof = await gapi('profile');
   if (!force && prof && prof.historyId === IX.gHist && IX.g.length) return false;
   const primary = !!(S.prefs && S.prefs.primaryOnly);
@@ -895,10 +896,41 @@ async function ixFree(force) {
   IX.fMore = r.more; IX.fBefore = r.items.length ? Math.min(...r.items.map(x => x.uid)) : 0; IX.fSig = freeSig;
   return true;
 }
+/* Actions faites dans l'appli (lu, non lu, corbeille, archive) : l'appli prévient le relais, qui corrige sa copie
+   tout de suite (même si Gmail impose une pause) et la recorrige après chaque relecture pendant 3 min, le temps que Gmail/Free suivent */
+const ixPatches = new Map();
+function ixApplyPatches() {
+  const now = Date.now(); let ch = false;
+  for (const [id, p] of ixPatches) {
+    if (p.until < now) { ixPatches.delete(id); continue; }
+    if (id.startsWith('f:')) {
+      const uid = +id.split(':')[1], folder = id.split(':').slice(2).join(':') || 'INBOX', i = IX.f.findIndex(x => x.uid === uid && (x.folder || 'INBOX') === folder);
+      if (i < 0) continue;
+      if (p.kind === 'trash' || p.kind === 'archive') { IX.f.splice(i, 1); ch = true; }
+      else { const seen = p.kind === 'read'; if (IX.f[i].seen !== seen) { IX.f[i] = Object.assign({}, IX.f[i], { seen }); ch = true; } }
+    } else {
+      const i = IX.g.findIndex(t => t.id === id);
+      if (i < 0) continue;
+      if (p.kind === 'trash' || p.kind === 'archive') { IX.g.splice(i, 1); ch = true; continue; }
+      const t = IX.g[i], msgs = t.messages || [], unread = msgs.some(m => (m.labelIds || []).includes('UNREAD'));
+      if (p.kind === 'read' && unread) { IX.g[i] = Object.assign({}, t, { messages: msgs.map(m => Object.assign({}, m, { labelIds: (m.labelIds || []).filter(l => l !== 'UNREAD') })) }); ch = true; }
+      if (p.kind === 'unread' && !unread && msgs.length) { IX.g[i] = Object.assign({}, t, { messages: msgs.map((m, k) => k === msgs.length - 1 ? Object.assign({}, m, { labelIds: (m.labelIds || []).concat('UNREAD') }) : m) }); ch = true; }
+    }
+  }
+  return ch;
+}
+function ixPatch(ids, kind) {
+  if (!['read', 'unread', 'trash', 'archive'].includes(kind)) return false;
+  const until = Date.now() + 180000;
+  ids.map(String).forEach(id => ixPatches.set(id, { kind, until }));
+  if (ixApplyPatches()) { IX.v++; IX.at = Date.now(); const w = ixWaiters; ixWaiters = []; w.forEach(f => f()); }
+  return true;
+}
 async function ixRefresh(force) {
   let ch = false;
   try { if (await ixGmail(force)) ch = true; delete IX.err.gmail; } catch (e) { IX.err.gmail = e.message; }
   try { if (await ixFree(force)) ch = true; delete IX.err.free; } catch (e) { IX.err.free = e.message; }
+  if (ixPatches.size) ixApplyPatches();
   const bs = S.badge.gmail + '/' + S.badge.free;
   if (bs !== IX.badge) { IX.badge = bs; ch = true; }
   if (ch) { IX.v++; IX.at = Date.now(); const w = ixWaiters; ixWaiters = []; w.forEach(f => f()); }
@@ -1512,6 +1544,7 @@ const routes = {
     if (+q.get('v') === IX.v) return { v: IX.v, same: true, badge: { gmail: S.badge.gmail, free: S.badge.free, total: total() } };
     return ixOut();
   },
+  'POST /inbox/patch': async (q, b) => ({ ok: ixPatch(Array.isArray(b.ids) ? b.ids.slice(0, 500) : [], String(b.kind || '')), v: IX.v }),
   'GET /badge': async q => {
     // fresh=1 : l'appli vient de lire/supprimer, on attend un relevé à jour (5 s max)
     if (q.get('fresh')) await Promise.race([poll().catch(() => {}), new Promise(r => setTimeout(r, 5000))]); else poll().catch(() => {});
