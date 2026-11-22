@@ -2,7 +2,7 @@
    Le code est découpé par domaine ; les fichiers sont chargés dans l'ordre de index.html et partagent la même portée. */
 'use strict';
 
-const APP_VERSION = '4.13.2';
+const APP_VERSION = '4.14.0';
 const APP_DATE = '22/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -50,7 +50,7 @@ async function fastFetch(key, fetcher, changed) {
   return cachedFetch(key, fetcher);
 }
 // Version minimale du relais attendue par cette appli (à relever quand le relais change)
-const MIN_RELAY = '4.13.1';
+const MIN_RELAY = '4.14.0';
 const verLt = (a, b) => { const x = String(a || '0').split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) < (y[i] || 0); } return false; };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const settings = Object.assign({ clientId: '', fontSize: 18, theme: 'auto', images: true, readable: true, email: '', relayUrl: 'https://vps-444b360b.vps.ovh.net/mailbox', relayToken: '', relayGmail: false, freeEmail: '', acc: 'all', vapid: '', primaryOnly: false }, LS.get('settings', {}));
@@ -340,7 +340,7 @@ function route() {
   if (view === 'scheduled') return renderScheduled();
   if (view === 'outbox') return renderOutbox();
   if (view === 'menage') return renderMenage();
-  if (view === 'blocked') { $('#view').innerHTML = `<div class="top"><a class="back" href="#/labels">${ICON.back}Dossiers</a></div><h1 class="thread-title">Expéditeurs bloqués</h1><p class="fhint">Leurs mails vont directement dans Indésirables. « Débloquer » les laisse de nouveau arriver dans la réception.</p><section class="card" id="s-blocked"><p>Chargement…</p></section>`; return renderBlocked($('#s-blocked')); }
+  if (view === 'blocked') { $('#view').innerHTML = `<div class="top"><a class="back" href="#/labels">${ICON.back}Dossiers</a></div><h1 class="thread-title">Expéditeurs bloqués</h1><p class="fhint">Leurs mails vont directement dans Indésirables. « Débloquer » les laisse de nouveau arriver dans la réception.</p><section class="card" id="s-blocked"><p>Chargement…</p></section>${freeOn() ? '<h2 class="sec-h" style="margin:22px 4px 6px">Toujours acceptés (Free)</h2><p class="fhint">L’antispam de Free classe parfois à tort des mails en indésirables. Ceux de ces expéditeurs sont remis dans ta réception automatiquement.</p><section class="card" id="s-allow"><p>Chargement…</p></section>' : ''}`; if (freeOn()) renderAllow($('#s-allow')); return renderBlocked($('#s-blocked')); }
   if (view === 'today') return renderToday();
   if (view === 'contacts') return renderContacts();
   if (view === 'agenda') return renderAgenda();

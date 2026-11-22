@@ -805,10 +805,36 @@ async function pollGmail() {
   }
   return out;
 }
+/* Expéditeurs de confiance côté Free : l'antispam de Free classe parfois à tort leurs mails en indésirables
+   (ex. codes de connexion Anthropic). Le relais les remet dans la réception à chaque relève. */
+const FREE_ALLOW_DEFAULT = ['anthropic.com'];
+const freeAllow = () => S.freeAllow || FREE_ALLOW_DEFAULT;
+const allowHit = (email, list) => { email = String(email || '').toLowerCase(); return !!email && list.some(a => { a = a.toLowerCase(); return a.includes('@') ? email === a : email.endsWith('@' + a) || email.endsWith('.' + a); }); };
+async function rescueJunk(client, full) {
+  const list = freeAllow(); if (!list.length) return 0;
+  const fo = await folders(client), all = await client.list();
+  const paths = [...new Set([fo.junk].concat(all.filter(m => /^(junk|spam|ind[ée]sirables|courrier ind)/i.test(nfc(m.name))).map(m => m.path)))].filter(Boolean);
+  let moved = 0;
+  for (const pth of paths) {
+    let lock = null;
+    try {
+      lock = await client.getMailboxLock(pth);
+      if (!client.mailbox.exists) continue;
+      const uids = (await client.search(full ? { all: true } : { since: new Date(Date.now() - 3 * 864e5) }, { uid: true })) || [];
+      if (!uids.length) continue;
+      const hit = [];
+      for await (const m of client.fetch(uids, { envelope: true }, { uid: true })) if (allowHit(addr(m.envelope.from).email, list)) hit.push(m.uid);
+      if (hit.length) { await client.messageFlagsRemove(hit, ['\\Seen'], { uid: true }).catch(() => {}); await client.messageMove(hit, 'INBOX', { uid: true }); moved += hit.length; log('Free : ' + hit.length + ' mail(s) de confiance sortis de « ' + pth + ' »'); }
+    } catch (e) { if (!/not exist|nonexistent|NO /i.test(e.message)) log('Free indésirables ' + pth, e.message); }
+    finally { if (lock) lock.release(); }
+  }
+  return moved;
+}
 async function pollFree() {
   if (!S.free) return [];
   const targets = await blockedTargets();
   return withImap(async client => {
+    try { await rescueJunk(client, false); } catch (e) { log('Free confiance', e.message); }
     const lock = await client.getMailboxLock('INBOX');
     const out = [];
     try {
@@ -851,7 +877,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.13.1';
+const RELAY_V = '4.14.0';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -1786,6 +1812,18 @@ const routes = {
       }
       return { total: out.reduce((a, x) => a + x.messages, 0), folders: out };
     });
+  },
+  'GET /free/allow': async () => ({ list: freeAllow() }),
+  // Ajouter / retirer un expéditeur de confiance, puis récupérer tout de suite ses mails classés en indésirables
+  'POST /free/allow': async (q, b) => {
+    let l = freeAllow().slice();
+    const norm = v => String(v || '').trim().toLowerCase().replace(/^.*<([^>]+)>.*$/, '$1');
+    if (b.add) { const a = norm(b.add); if (a && !l.includes(a)) l.push(a); }
+    if (b.remove) l = l.filter(x => x !== norm(b.remove));
+    S.freeAllow = l; save();
+    const moved = S.free ? await withImap(c => rescueJunk(c, true)).catch(e => { log('Free confiance', e.message); return 0; }) : 0;
+    if (moved) ixRefresh(true).catch(() => {});
+    return { list: l, moved };
   },
   'POST /free/block': async (q, b) => {
     const t = (b.target || '').toLowerCase(); if (!t) throw Object.assign(new Error('cible manquante'), { code: 400 });

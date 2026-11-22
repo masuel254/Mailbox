@@ -839,6 +839,25 @@ async function sweepBlocked(froms, lab) {
   if (btn) btn.disabled = false;
   Object.keys(state.lists).forEach(k => delete state.lists[k]); badgeNow(0);
 }
+/* Expéditeurs de confiance Free : remis dans la réception quand l'antispam de Free les classe en indésirables */
+async function renderAllow(box) {
+  let r; try { r = await rapi('/free/allow'); } catch (e) { box.innerHTML = `<p>Liste indisponible : ${esc(e.message)}</p>`; return; }
+  const rows = (r.list || []).map(a => `<div class="lab-row" style="padding:6px 0;gap:10px"><span class="nm" style="min-width:0"><b style="font-size:.95rem">${esc(a.includes('@') ? a : 'Toutes les adresses @' + a)}</b></span><button class="btn" style="height:38px;font-size:.75rem" data-arm="${esc(a)}">Retirer</button></div>`).join('');
+  box.innerHTML = (rows || '<p>Aucun pour l’instant.</p>') + `<div style="display:flex;gap:8px;margin-top:10px"><input id="allow-in" class="blk-q" style="margin:0;flex:1" placeholder="adresse ou domaine (ex. anthropic.com)" autocapitalize="off" autocomplete="off"><button class="btn primary" id="allow-add" style="height:44px">Ajouter</button></div>`;
+  const send = async body => { try { const o = await rapi('/free/allow', { method: 'POST', body }); toast(o.moved ? o.moved + ' mail(s) remis dans ta réception' : 'Enregistré'); if (o.moved) { Object.keys(state.lists).forEach(k => delete state.lists[k]); } renderAllow(box); } catch (e) { toast(e.message); } };
+  $$('[data-arm]', box).forEach(b => b.onclick = () => send({ remove: b.dataset.arm }));
+  $('#allow-add').onclick = () => { const v = $('#allow-in').value.trim(); if (v) send({ add: v }); };
+}
+// « Pas indésirable » depuis un mail Free classé en spam : cet expéditeur ou tout son domaine
+function notSpamSheet(email) {
+  email = String(email || '').toLowerCase(); const dom = email.split('@')[1] || '';
+  const root = dom.split('.').slice(-2).join('.');
+  openSheet(`<span class="grip"></span><h2>Pas indésirable</h2><p style="margin:0;color:var(--muted);font-size:.85rem;line-height:1.5">Ses mails classés en indésirables par Free reviennent dans ta réception, maintenant et à l’avenir.</p>
+    <button class="btn primary" data-ns="${esc(email)}">Toujours accepter ${esc(email)}</button>
+    ${root ? `<button class="btn" data-ns="${esc(root)}">Toutes les adresses @${esc(root)}</button>` : ''}
+    <button class="btn" data-close>Annuler</button>`);
+  $$('[data-ns]', $('#sheet')).forEach(b => b.onclick = async () => { closeSheet(); try { const o = await rapi('/free/allow', { method: 'POST', body: { add: b.dataset.ns } }); Object.keys(state.lists).forEach(k => delete state.lists[k]); toast((o.moved || 0) + ' mail(s) remis dans ta réception'); goBack(); } catch (e) { toast(e.message); } });
+}
 let blkQuery = '';
 const blkNorm = v => String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 async function renderBlocked(box) {

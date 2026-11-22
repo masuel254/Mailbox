@@ -107,6 +107,7 @@ async function renderFree(folder, uid) {
     <h1 class="thread-title">${esc(m.subject)}</h1>
     <div class="thread-chips"><span class="chip acc-free">Free</span><span class="chip">${esc(folder === 'INBOX' ? 'Réception' : folder)}</span></div>
     ${(() => { if (m.from.email && !isMe(m.from.email)) return contactLink(m.from.name, m.from.email.toLowerCase()); const t = splitAddrs(m.to || '').map(parseAddr).find(a => a.email && !isMe(a.email)); return t ? contactLink(t.name, t.email.toLowerCase()) : ''; })()}
+    ${/^(junk|spam|ind[ée]sirables|courrier ind)/i.test(folder.normalize('NFC').split(/[/.]/).pop()) ? '<div class="unsub-bar"><span>Classé en indésirable</span><button class="btn primary" id="t-notspam">Pas indésirable</button></div>' : ''}
     ${m.unsub ? '<div class="unsub-bar"><span>Mail de liste de diffusion</span><button class="btn" id="t-unsub">Se désabonner</button></div>' : ''}
     <div class="toolbar">
       <button id="t-trash">${ICON.trash}Supprimer</button>
@@ -141,6 +142,7 @@ async function renderFree(folder, uid) {
   $('#t-unread').onclick = async () => { setLocal([id], { unread: true }); patchCached(id, i => Object.assign({}, i, { unread: true })); goBack(); toast('Marqué non lu'); try { await rapi('/free/flags', { method: 'POST', body: { folder, uids: [uid], seen: false } }); ixTell([id], 'unread'); badgeNow(0); } catch (e) { localPatch.delete(id); toast(e.message); } };
   $('#t-block').onclick = () => { goBack(); quickBlock({ id, fromEmail: m.from.email, fromName: m.from.name }); };
   $('#t-fmove').onclick = () => freeMoveSheet(id, folder, uid);
+  const ns = $('#t-notspam'); if (ns) ns.onclick = () => notSpamSheet(m.from.email);
   state.thread = null; state.freeCtx = { id, folder, uid };
   bindReadTools();
   state.unsub = m.unsub ? { h: m.unsub, post: m.unsubPost, acc: 'free' } : null;
