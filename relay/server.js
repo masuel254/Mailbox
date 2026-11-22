@@ -877,7 +877,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.14.0';
+const RELAY_V = '4.15.0';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -1790,6 +1790,13 @@ const routes = {
   },
   'GET /free/resweep': async () => resweep,
   'GET /menage': async () => mjPublic(),
+  // Tu corriges l'IA : un expéditeur gardé passe « à virer » (ou l'inverse). Les garde-fous restent appliqués au rangement.
+  'POST /menage/verdict': async (q, b) => {
+    const g = (MJ.groups || []).find(x => x.key === String(b.key || ''));
+    if (!g) throw Object.assign(new Error('Expéditeur introuvable, relance une analyse'), { code: 404 });
+    g.v = b.v === 'virer' ? 'virer' : 'garder'; g.why = g.v === 'virer' ? 'à virer (ton choix)' : 'gardé (ton choix)'; mjSave();
+    return { ok: true, key: g.key, v: g.v };
+  },
   'POST /menage/auto': async (q, b) => { S.mjAuto = !!b.on; if (b.acc) S.mjAutoAcc = String(b.acc); if (S.mjAuto && !S.mjAutoAt) S.mjAutoAt = Date.now(); save(); return { auto: S.mjAuto }; },
   'POST /menage/start': async (q, b) => { if (!S.ai) throw Object.assign(new Error('Assistant IA non configuré (Réglages)'), { code: 400 }); if (MJ.status !== 'running') menageScan(b && b.acc); await pause(300); return mjPublic(); },
   // Rangement en tâche de fond : l'appli suit l'avancement, rien n'est perdu si le téléphone se met en veille

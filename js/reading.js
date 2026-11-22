@@ -301,8 +301,10 @@ async function renderMenage() {
   // Expéditeurs mixtes (pubs + commandes/factures) : décochés par défaut, leurs factures restent de toute façon
   const sel = new Set(LS.get('mjSel', null) || vir.filter(g => g.kept / (g.count + g.kept) < 0.2).map(g => g.key));
   const total = () => vir.filter(g => sel.has(g.key)).reduce((a, g) => a + g.count, 0);
-  const row = (g, chk) => `<label class="mj-row">${chk ? `<input type="checkbox" data-k="${esc(g.key)}" ${sel.has(g.key) ? 'checked' : ''}>` : ''}<span class="mj-av">${esc(initials(g.name))}</span><span class="mj-nm"><b>${esc(g.name)}</b><small>${esc(g.why || '')}${g.kept ? ' · ' + g.kept + ' commandes/factures gardées' : ''}</small><small class="mj-sub">${esc((g.subjects || []).join(' · '))}</small></span><span class="mj-n">${fmt(g.count)}</span></label>`;
-  let showAll = false;
+  const row = (g, chk) => `<label class="mj-row">${chk ? `<input type="checkbox" data-k="${esc(g.key)}" ${sel.has(g.key) ? 'checked' : ''}>` : ''}<span class="mj-av">${esc(initials(g.name))}</span><span class="mj-nm"><b>${esc(g.name)}</b><small>${esc(g.why || '')}${g.kept ? ' · ' + g.kept + ' commandes/factures gardées' : ''}</small><small class="mj-sub">${esc((g.subjects || []).join(' · '))}</small></span><span class="mj-n">${fmt(g.count)}</span>${chk === 'kept' ? `<button type="button" class="mj-flip" data-vir="${esc(g.key)}">Virer</button>` : ''}</label>`;
+  let showAll = false, keptQ = '';
+  const nzK = v => String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const keptList = () => { const t = nzK(keptQ.trim()); return (t ? kept.filter(g => nzK(g.name + ' ' + (g.emails || []).join(' ') + ' ' + (g.why || '')).includes(t)) : kept).slice(0, t ? 200 : 80); };
   const draw = () => {
     const list = showAll ? vir : vir.slice(0, 25);
     box.innerHTML = `<p class="fhint" style="margin:0 0 8px">Analyse du ${esc(new Date(r.end || r.at).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))} · ${fmt(r.scanned)} mails lus (Gmail ${fmt((r.g || {}).done)}, Free ${fmt((r.f || {}).done)})</p>
@@ -310,7 +312,7 @@ async function renderMenage() {
       <div class="mj-met"><div><b>${fmt(vir.reduce((a, g) => a + g.count, 0))}</b><span>mails de pub proposés</span></div><div><b>${vir.length}</b><span>expéditeurs</span></div></div>
       ${guards}
       ${vir.length ? `<h2 class="sec"><span>Proposés au ménage</span><button class="sec-btn" id="mj-all">${sel.size ? 'Tout décocher' : 'Tout cocher'}</button></h2><div class="card">${list.map(g => row(g, true)).join('')}${vir.length > list.length ? `<button class="mj-more" id="mj-more">Voir les ${vir.length - list.length} autres</button>` : ''}</div>` : '<div class="empty">Rien à virer : ta boîte est propre.</div>'}
-      ${kept.length ? `<details class="mj-kept"><summary>Gardés par l’IA · ${kept.length} expéditeurs</summary><div class="card">${kept.slice(0, 80).map(g => row(g, false)).join('')}</div></details>` : ''}
+      ${kept.length ? `<details class="mj-kept" ${keptQ || LS.get('mjKeptOpen', false) ? 'open' : ''}><summary>Gardés par l’IA · ${kept.length} expéditeurs</summary><p class="fhint" style="margin:6px 2px">L’IA s’est trompée ? « Virer » le fait passer dans la liste à ranger. Ses factures et pièces jointes restent protégées.</p><input type="search" id="mj-kq" class="blk-q" placeholder="Rechercher un expéditeur gardé" value="${esc(keptQ)}" autocomplete="off"><div class="card" id="mj-klist">${keptList().map(g => row(g, 'kept')).join('')}</div></details>` : ''}
       ${done.length ? `<p class="fhint">${fmt(r.applied)} mails déjà rangés dans « Ménage IA ».</p>` : ''}
       <div class="mj-foot">${vir.length ? `<button class="btn primary" id="mj-apply">Ranger ${fmt(total())} mails dans « Ménage IA »</button>` : ''}
         <div class="mj-2"><button class="btn" id="mj-open">Ouvrir le dossier</button><button class="btn danger" id="mj-empty">Vider le dossier</button></div>
@@ -320,6 +322,18 @@ async function renderMenage() {
     $$('[data-k]', box).forEach(c => c.onchange = () => { c.checked ? sel.add(c.dataset.k) : sel.delete(c.dataset.k); LS.set('mjSel', [...sel]); const b = $('#mj-apply'); if (b) b.textContent = 'Ranger ' + fmt(total()) + ' mails dans « Ménage IA »'; });
     const all = $('#mj-all'); if (all) all.onclick = () => { if (sel.size) sel.clear(); else vir.forEach(g => sel.add(g.key)); LS.set('mjSel', [...sel]); draw(); };
     const more = $('#mj-more'); if (more) more.onclick = () => { showAll = true; draw(); };
+    const det = $('.mj-kept', box); if (det) det.ontoggle = () => LS.set('mjKeptOpen', det.open);
+    const kq = $('#mj-kq'); if (kq) kq.oninput = () => { keptQ = kq.value; $('#mj-klist').innerHTML = keptList().map(g => row(g, 'kept')).join(''); bindFlip(); };
+    const bindFlip = () => $$('[data-vir]', box).forEach(b => b.onclick = async ev => {
+      ev.preventDefault(); ev.stopPropagation(); b.disabled = true;
+      try {
+        await rapi('/menage/verdict', { method: 'POST', body: { key: b.dataset.vir, v: 'virer' } });
+        const g = groups.find(x => x.key === b.dataset.vir); g.v = 'virer'; g.why = 'à virer (ton choix)';
+        kept.splice(kept.indexOf(g), 1); vir.unshift(g); sel.add(g.key); LS.set('mjSel', [...sel]);
+        toast(g.name + ' : ' + fmt(g.count) + ' mails ajoutés au ménage'); draw();
+      } catch (e) { b.disabled = false; toast(e.message); }
+    });
+    bindFlip();
     const ap = $('#mj-apply'); if (ap) ap.onclick = async () => {
       const keys = vir.filter(g => sel.has(g.key)).map(g => g.key); if (!keys.length) { toast('Coche au moins un expéditeur'); return; }
       ap.disabled = true; ap.textContent = 'Rangement en cours…';
