@@ -310,7 +310,7 @@ function renderBody(m, container, pre) {
   draw();
   container.appendChild(body);
   container.appendChild(tools);
-  const files = acc.att.filter(a => !(a.cid && acc.html && acc.html.includes('cid:' + a.cid)));
+  const files = acc.att.filter(a => !a.inline && !(a.cid && acc.html && acc.html.includes('cid:' + a.cid)));
   if (files.length) {
     const box = document.createElement('div');
     box.className = 'atts';

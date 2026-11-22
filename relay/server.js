@@ -241,7 +241,8 @@ async function resolveFolder(client, key) {
   throw Object.assign(new Error('Dossier inconnu'), { code: 400 });
 }
 const snip = t => (t || '').replace(/(^|\s)[^\s{}][^{}]{0,300}\{[^{}]*\}/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
-const hasAtt = n => !!n && ((n.disposition === 'attachment') || (n.disposition === 'inline' && !/^text\//.test(n.type || '') && n.parameters && n.dispositionParameters && n.dispositionParameters.filename) || (n.childNodes || []).some(hasAtt));
+// Pièce jointe réelle : les images intégrées au corps d'une newsletter (avec Content-ID) ne comptent pas
+const hasAtt = n => !!n && ((n.disposition === 'attachment' && !(n.id && /^image\//.test(n.type || ''))) || (n.disposition === 'inline' && !/^(text|image)\//.test(n.type || '') && n.parameters && n.dispositionParameters && n.dispositionParameters.filename) || (n.childNodes || []).some(hasAtt));
 function headerText(src, name) {
   const head = src.toString('utf8', 0, Math.min(src.length, 65536)).split(/\r?\n\r?\n/)[0].replace(/\r?\n[ \t]+/g, ' ');
   const m = head.match(new RegExp('^' + name + ':[ \\t]*(.*)$', 'im'));
@@ -439,7 +440,9 @@ async function freeMessage(folderKey, uid) {
         seen: m.flags.has('\\Seen'),
         unsub: headerText(m.source, 'List-Unsubscribe'),
         unsubPost: headerText(m.source, 'List-Unsubscribe-Post'),
-        attachments: (p.attachments || []).map((a, i) => ({ idx: i, name: a.filename || 'piece-jointe-' + (i + 1), mime: a.contentType, size: a.size, cid: a.cid || '', data: a.size < 300000 && a.cid ? a.content.toString('base64') : undefined }))
+        attachments: (p.attachments || []).map((a, i) => ({ idx: i, name: a.filename || 'piece-jointe-' + (i + 1), mime: a.contentType, size: a.size, cid: a.cid || '', data: a.size < 300000 && a.cid ? a.content.toString('base64') : undefined,
+          // Images intégrées au corps HTML (logos, pictos d'une newsletter) : déjà affichées dans le mail, pas de vraies pièces jointes
+          inline: !!(a.related || (a.cid && a.contentDisposition !== 'attachment' && /^image\//i.test(a.contentType || ''))) }))
       };
     } finally { lock.release(); }
   });
@@ -877,7 +880,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.15.0';
+const RELAY_V = '4.15.2';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
