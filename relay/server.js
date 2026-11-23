@@ -1513,7 +1513,7 @@ async function pollOnce() {
     const before = total();
     const news = [];
     try { news.push(...await pollGmail()); } catch (e) { log('poll Gmail', e.message); }
-    try { news.push(...await pollFree()); } catch (e) { log('poll Free', e.message); }
+    try { news.push(...await pollFree()); } catch (e) { log('poll Free', e.message || '', e.code || '', e.responseText || e.response || '', e.authenticationFailed ? 'identifiants refusés' : ''); }
     await ixRefresh().catch(e => log('index réception', e.message));
     save();
     if (news.length) log('nouveaux mails', news.length, 'pastille', total());
