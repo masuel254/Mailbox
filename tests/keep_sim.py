@@ -8,7 +8,7 @@ fails = []
 def check(c, w): print(('ok   ' if c else 'ÉCHEC ') + w); c or fails.append(w)
 subj = lambda f: [m['subject'] for m in req('/free/list?folder=' + f + '&limit=50').get('items', [])]
 time.sleep(5)
-t0 = time.time(); o = req('/sender/keep', {'target': 'chaussea.fr', 'name': 'Chaussea'}); dt = time.time() - t0
+t0 = time.time(); o = req('/sender/keep', {'target': 'chaussea.fr', 'name': 'Chaussea', 'days': 7}); dt = time.time() - t0
 check(o.get('free') == 1, f'Free : 1 mail remis en réception ({o}) en {dt:.1f} s')
 check(any('Soldes' in s for s in subj('INBOX')) and not any('Soldes' in s for s in subj('JUNK')), 'Chaussea est dans la réception, plus dans les indésirables')
 check('chaussea.fr' in req('/free/allow')['list'], 'Chaussea ajouté aux acceptés Free')

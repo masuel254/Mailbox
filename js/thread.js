@@ -20,14 +20,14 @@ function keepBar(places) {
 // Toujours garder : plus de règle Ménage IA ni de blocage, accepté côté Free, ses mails rangés reviennent
 function keepSheet(email, name) {
   email = String(email || '').toLowerCase(); const dom = (email.split('@')[1] || '').split('.').slice(-2).join('.');
-  openSheet(`<span class="grip"></span><h2>Toujours garder</h2><p style="margin:0;color:var(--muted);font-size:.85rem;line-height:1.5">Ses mails ne seront plus rangés par Ménage IA, ni bloqués, ni laissés dans les indésirables de Free. Ceux déjà rangés reviennent dans ta réception.</p>
+  openSheet(`<span class="grip"></span><h2>Toujours garder</h2><p style="margin:0;color:var(--muted);font-size:.85rem;line-height:1.5">Ses prochains mails arriveront dans ta réception : plus rangés par Ménage IA, ni bloqués, ni laissés dans les indésirables de Free. Ceux de la dernière semaine reviennent aussi ; les plus anciens restent où ils sont.</p>
     ${dom ? `<button class="btn primary" data-keep="${esc(dom)}">Tout @${esc(dom)}</button>` : ''}
     <button class="btn" data-keep="${esc(email)}">Seulement ${esc(email)}</button>
     <button class="btn" data-close>Annuler</button>`);
   $$('[data-keep]', $('#sheet')).forEach(b => b.onclick = async () => {
     $$('[data-keep]', $('#sheet')).forEach(x => x.disabled = true); b.textContent = 'En cours…';
     try {
-      const o = await rapi('/sender/keep', { method: 'POST', body: { target: b.dataset.keep, name } });
+      const o = await rapi('/sender/keep', { method: 'POST', body: { target: b.dataset.keep, name, days: 7 } });
       closeSheet(); Object.keys(state.lists).forEach(k => delete state.lists[k]); blockedCacheReset();
       toast(o.pending ? 'C’est noté : Ménage IA ne le range plus. Ses anciens mails reviennent dans ta réception d’ici quelques minutes.' : (o.gmail + o.free) + ' mail(s) remis dans ta réception' + (o.rules ? ', ' + o.rules + ' règle(s) retirée(s)' : '')); goBack();
     } catch (e) { closeSheet(); toast(e.message); }

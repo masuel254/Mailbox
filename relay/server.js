@@ -833,7 +833,8 @@ async function rescueJunk(client, full) {
   }
   return moved;
 }
-async function senderKeep(target, name) {
+async function senderKeep(target, name, days) {
+  days = Math.max(0, Math.min(3650, +days || 0));  // 0 = tout l'historique ; sinon seulement les mails récents
   target = target.trim().toLowerCase().replace(/^@/, '');
   if (!target) throw Object.assign(new Error('Expéditeur manquant'), { code: 400 });
   const isDom = !target.includes('@'), dom = isDom ? target : target.split('@')[1];
@@ -856,7 +857,7 @@ async function senderKeep(target, name) {
       out.rules++;
     }
     // 2. Ses mails déjà rangés reviennent dans la réception
-    const q = 'from:' + (isDom ? dom : target) + ' (label:"' + MENAGE + '" OR label:"' + BLOCK_LABEL + '" OR in:spam)';
+    const q = (days ? 'newer_than:' + days + 'd ' : '') + 'from:' + (isDom ? dom : target) + ' (label:"' + MENAGE + '" OR label:"' + BLOCK_LABEL + '" OR in:spam)';
     const ids = []; let pg = null;
     do { const r = (await gTry('messages?' + new URLSearchParams(Object.assign({ q, maxResults: 500, includeSpamTrash: true }, pg ? { pageToken: pg } : {})))) || {}; (r.messages || []).forEach(m => ids.push(m.id)); pg = r.nextPageToken; } while (pg && ids.length < 5000);
     for (let i = 0; i < ids.length; i += 1000) await gTry0(() => gapi('messages/batchModify', { method: 'POST', body: { ids: ids.slice(i, i + 1000), addLabelIds: ['INBOX'], removeLabelIds: labIds.concat('SPAM') } }));
@@ -879,7 +880,7 @@ async function senderKeep(target, name) {
         try {
           lock = await client.getMailboxLock(pth); if (!client.mailbox.exists) continue;
           // recherche faite par le serveur Free (rapide), au lieu de relire tous les mails du dossier
-          const cand = (await client.search({ from: isDom ? dom : target }, { uid: true })) || [];
+          const cand = (await client.search(Object.assign({ from: isDom ? dom : target }, days ? { since: new Date(Date.now() - days * 864e5) } : {}), { uid: true })) || [];
           const hit = [];
           if (cand.length) for await (const m of client.fetch(cand, { uid: true, envelope: true }, { uid: true })) { const f = addr(m.envelope.from); if (hits(f.email || '')) hit.push(m.uid); }
           if (hit.length) { await client.messageMove(hit, 'INBOX', { uid: true }); n += hit.length; }
@@ -939,7 +940,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.16.2';
+const RELAY_V = '4.16.3';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -1886,7 +1887,7 @@ const routes = {
   // et remet ses mails déjà rangés (Ménage IA, Indésirables, spam) dans la réception
   // réponse sous 8 s au plus ; si c'est plus long (beaucoup de mails, pause Gmail), ça continue sur le serveur
   'POST /sender/keep': async (q, b) => {
-    const job = senderKeep(String(b.target || ''), String(b.name || ''));
+    const job = senderKeep(String(b.target || ''), String(b.name || ''), b.days);
     job.catch(e => log('Toujours garder', e.message));
     return Promise.race([job, pause(8000).then(() => ({ pending: true }))]);
   },
