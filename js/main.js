@@ -7,8 +7,17 @@ if (auth.token() || relayGmailOn()) {
   api('profile').then(p => { if (p && p.emailAddress && p.emailAddress !== settings.email) { settings.email = p.emailAddress; saveSettings(); } }).catch(() => {});
   updateBadge();
 }
+/* Retour dans l'appli après l'avoir quittée : on repart de la réception (sauf mail en cours d'écriture, sauf retour éclair) */
+let hiddenAt = 0;
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') hiddenAt = Date.now(); });
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
+  const away = hiddenAt && Date.now() - hiddenAt > 20000; hiddenAt = 0;
+  if (away && !/^#\/(compose|reply|fwd|list\/INBOX$)/.test(location.hash || '') && !document.querySelector('#sheet.open')) {
+    const home = (settings.home === 'today' ? '#/today' : '#/list/INBOX');
+    if (location.hash !== home) { history.replaceState(null, '', home); window.dispatchEvent(new HashChangeEvent('hashchange')); }
+    window.scrollTo(0, 0);
+  }
   const h = location.hash || '#/list/INBOX';
   if (h.startsWith('#/list/') && state.listCtx) { const c = state.listCtx; const d = state.lists[c.cacheKey]; if (d && Date.now() - d.at > 60000) loadList(c.key, c.q, c.cacheKey, c.plain, true); }
   updateBadge();
@@ -88,3 +97,10 @@ async function checkRelayVersion() {
 }
 setTimeout(checkRelayVersion, 4000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setTimeout(checkRelayVersion, 3000); });
+
+/* Zoom avec deux doigts : sur iPhone, les barres fixes (bas d'écran) restent accrochées à la page non zoomée et
+   finissent au milieu de l'écran. On les masque tant que la page est zoomée, elles reviennent au dézoom. */
+if (window.visualViewport) {
+  const vvFix = () => document.body.classList.toggle('zoomed', window.visualViewport.scale > 1.02);
+  window.visualViewport.addEventListener('resize', vvFix); window.visualViewport.addEventListener('scroll', vvFix);
+}

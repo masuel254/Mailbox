@@ -677,3 +677,8 @@ a.set-link .set-s{flex:1 1 auto;min-width:0;text-align:right;overflow:hidden;tex
 #tabbar a.on{margin:0 2px}
 #tabbar a svg{width:1.35rem;height:1.35rem}
 .mj-flip{flex:none;align-self:center;height:34px;padding:0 12px;border-radius:17px;border:1px solid var(--danger,#f08a7e);background:none;color:var(--danger,#f08a7e);font-weight:700;font-size:.78rem;margin-left:8px;cursor:pointer}
+/* Page zoomée avec deux doigts : barres fixes masquées (sinon iOS les laisse flotter au milieu de l'écran) */
+body.zoomed .reply-bar,body.zoomed #tabbar,body.zoomed #selbar,body.zoomed #toast{opacity:0;pointer-events:none;transition:opacity .15s}
+/* Un mail trop large défile dans son cadre au lieu d'élargir toute la page */
+.msg .content{max-width:100%;overflow-x:auto}
+body{overflow-x:clip}
