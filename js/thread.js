@@ -29,7 +29,7 @@ function keepSheet(email, name) {
     try {
       const o = await rapi('/sender/keep', { method: 'POST', body: { target: b.dataset.keep, name } });
       closeSheet(); Object.keys(state.lists).forEach(k => delete state.lists[k]); blockedCacheReset();
-      toast((o.gmail + o.free) + ' mail(s) remis dans ta réception' + (o.rules ? ', ' + o.rules + ' règle(s) retirée(s)' : '')); goBack();
+      toast(o.pending ? 'C’est noté : Ménage IA ne le range plus. Ses anciens mails reviennent dans ta réception d’ici quelques minutes.' : (o.gmail + o.free) + ' mail(s) remis dans ta réception' + (o.rules ? ', ' + o.rules + ' règle(s) retirée(s)' : '')); goBack();
     } catch (e) { closeSheet(); toast(e.message); }
   });
 }

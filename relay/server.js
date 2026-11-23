@@ -878,8 +878,10 @@ async function senderKeep(target, name) {
         let lock = null;
         try {
           lock = await client.getMailboxLock(pth); if (!client.mailbox.exists) continue;
+          // recherche faite par le serveur Free (rapide), au lieu de relire tous les mails du dossier
+          const cand = (await client.search({ from: isDom ? dom : target }, { uid: true })) || [];
           const hit = [];
-          for await (const m of client.fetch('1:*', { uid: true, envelope: true }, { uid: true })) { const f = addr(m.envelope.from); if (hits(f.email || '') || (name && normName(f.name) === normName(name) && !isDom)) hit.push(m.uid); }
+          if (cand.length) for await (const m of client.fetch(cand, { uid: true, envelope: true }, { uid: true })) { const f = addr(m.envelope.from); if (hits(f.email || '')) hit.push(m.uid); }
           if (hit.length) { await client.messageMove(hit, 'INBOX', { uid: true }); n += hit.length; }
         } catch (e) { log('garder ' + pth, e.message); } finally { if (lock) lock.release(); }
       }
@@ -937,7 +939,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.16.0';
+const RELAY_V = '4.16.2';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -1882,7 +1884,12 @@ const routes = {
   },
   // « Toujours garder cet expéditeur » : retire ses règles (Ménage IA, bloqués), le met en confiance côté Free
   // et remet ses mails déjà rangés (Ménage IA, Indésirables, spam) dans la réception
-  'POST /sender/keep': async (q, b) => senderKeep(String(b.target || ''), String(b.name || '')),
+  // réponse sous 8 s au plus ; si c'est plus long (beaucoup de mails, pause Gmail), ça continue sur le serveur
+  'POST /sender/keep': async (q, b) => {
+    const job = senderKeep(String(b.target || ''), String(b.name || ''));
+    job.catch(e => log('Toujours garder', e.message));
+    return Promise.race([job, pause(8000).then(() => ({ pending: true }))]);
+  },
   'GET /free/allow': async () => ({ list: freeAllow() }),
   // Ajouter / retirer un expéditeur de confiance, puis récupérer tout de suite ses mails classés en indésirables
   'POST /free/allow': async (q, b) => {
