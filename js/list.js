@@ -296,8 +296,10 @@ function drawList(data, plain) {
   state.dayMode = true;
   let h = '';
   const inboxView = ['INBOX', 'UNREAD'].includes(keyOf(state.current)) || isFolderView(keyOf(state.current));
-  if (unread.length) h += `<h2 class="sec unread">Non lus · ${unread.length}${inboxView ? '<button class="sec-btn" id="btn-readall" type="button">Tout marquer lu</button>' : ''}</h2>` + byDay(unread, i => itemHTML(i, 'u'));
-  if (read.length) h += (unread.length ? '<h2 class="sec">Déjà lus</h2>' : '') + byDay(read, i => itemHTML(i, plain ? 'plain' : '', keyOf(state.current) === 'SENT'));
+  // Recherche : résultats du plus récent au plus ancien, lus ou non (sinon un vieux non-lu passe devant le mail cherché)
+  if (keyOf(state.current) === 'SEARCH') h += byDay(data.items, i => itemHTML(i, i.unread ? 'u' : (plain ? 'plain' : '')));
+  else if (unread.length) h += `<h2 class="sec unread">Non lus · ${unread.length}${inboxView ? '<button class="sec-btn" id="btn-readall" type="button">Tout marquer lu</button>' : ''}</h2>` + byDay(unread, i => itemHTML(i, 'u'));
+  if (read.length && keyOf(state.current) !== 'SEARCH') h += (unread.length ? '<h2 class="sec">Déjà lus</h2>' : '') + byDay(read, i => itemHTML(i, plain ? 'plain' : '', keyOf(state.current) === 'SENT'));
   if (data.next || data.freeMore) h += '<button class="more" id="more">Afficher plus</button>';
   l.innerHTML = h;
   const ra = $('#btn-readall'); if (ra) ra.onclick = e => { e.stopPropagation(); readAll(ra); };
