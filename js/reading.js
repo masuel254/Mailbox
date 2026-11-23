@@ -28,6 +28,7 @@ function bindReadTools() {
   $('#t-todo').onclick = () => taskSheet({ ref: { acc: ctx.acc, url: ctx.url, subject: ctx.subject, from: ctx.from } }, ctx);
   $('#t-snooze').onclick = () => snoozeSheet(ctx);
   const tc = $('#t-clean'); if (tc) tc.onclick = () => senderCleanSheet(ctx.fromEmail, ctx.from, state.unsub);
+  $$('#t-keep, #t-keep2').forEach(b => b.onclick = () => keepSheet(ctx.fromEmail, ctx.from));
   const cb = $('#t-cal'); if (cb) cb.onclick = () => eventFromMail(ctx, cb);
   const sb = $('#ai-sum'); if (sb) sb.onclick = () => aiSummary(ctx, sb);
   const rb = $('#ai-rep'); if (rb) rb.onclick = () => aiReplySheet(ctx);

@@ -12,6 +12,28 @@ function walkParts(p, acc) {
   (p.parts || []).forEach(c => walkParts(c, acc));
 }
 
+/* Mail rangé par Ménage IA, bloqué ou classé en spam : bandeau pour le remettre dans la réception */
+function keepBar(places) {
+  const p = places.map(x => String(x || '')), why = p.includes('Ménage IA') ? 'Rangé par Ménage IA' : p.some(x => /^ind[ée]sirables$/i.test(x)) ? 'Expéditeur bloqué' : p.some(x => /^(spam|junk|courrier ind)/i.test(x)) ? 'Classé en indésirable' : '';
+  return why ? `<div class="unsub-bar keep-bar"><span>${why}</span><button class="btn primary" id="t-keep2">Remettre dans la réception</button></div>` : '';
+}
+// Toujours garder : plus de règle Ménage IA ni de blocage, accepté côté Free, ses mails rangés reviennent
+function keepSheet(email, name) {
+  email = String(email || '').toLowerCase(); const dom = (email.split('@')[1] || '').split('.').slice(-2).join('.');
+  openSheet(`<span class="grip"></span><h2>Toujours garder</h2><p style="margin:0;color:var(--muted);font-size:.85rem;line-height:1.5">Ses mails ne seront plus rangés par Ménage IA, ni bloqués, ni laissés dans les indésirables de Free. Ceux déjà rangés reviennent dans ta réception.</p>
+    ${dom ? `<button class="btn primary" data-keep="${esc(dom)}">Tout @${esc(dom)}</button>` : ''}
+    <button class="btn" data-keep="${esc(email)}">Seulement ${esc(email)}</button>
+    <button class="btn" data-close>Annuler</button>`);
+  $$('[data-keep]', $('#sheet')).forEach(b => b.onclick = async () => {
+    $$('[data-keep]', $('#sheet')).forEach(x => x.disabled = true); b.textContent = 'En cours…';
+    try {
+      const o = await rapi('/sender/keep', { method: 'POST', body: { target: b.dataset.keep, name } });
+      closeSheet(); Object.keys(state.lists).forEach(k => delete state.lists[k]); blockedCacheReset();
+      toast((o.gmail + o.free) + ' mail(s) remis dans ta réception' + (o.rules ? ', ' + o.rules + ' règle(s) retirée(s)' : '')); goBack();
+    } catch (e) { closeSheet(); toast(e.message); }
+  });
+}
+const blockedCacheReset = () => { try { LS.del('blockedTargets'); } catch (e) {} };
 async function renderThread(id) {
   const v = $('#view');
   v.innerHTML = `<div class="top"><a class="back" href="#" id="back">${ICON.back}Retour</a></div><div class="loading">Ouverture…</div>`;
@@ -39,6 +61,7 @@ async function renderThread(id) {
     <h1 class="thread-title">${esc(subject)}</h1>
     <div class="thread-chips">${chips}</div>
     ${(() => { const other = msgs.map(m => parseAddr(hdr(m, 'From'))).filter(a => a.email && !isMe(a.email)).pop() || splitAddrs(hdr(lastM, 'To')).map(parseAddr).find(a => a.email && !isMe(a.email)); return other ? contactLink(other.name, other.email.toLowerCase()) : ''; })()}
+    ${keepBar([...labels].map(l => l === 'SPAM' ? 'SPAM' : (labelById(l) || {}).name || ''))}
     ${unsubH ? '<div class="unsub-bar"><span>Mail de liste de diffusion</span><button class="btn" id="t-unsub">Se désabonner</button></div>' : ''}
     <div class="toolbar">
       <button id="t-trash">${ICON.trash}Supprimer</button>
@@ -50,6 +73,7 @@ async function renderThread(id) {
     <div class="toolbar tb-more" id="tb-more" hidden>
       <button id="t-archive">${ICON.archive}Archiver</button>
       <button id="t-clean">${ICON.trash}Tous ses mails</button>
+      <button id="t-keep">${ICON.archive}Toujours garder</button>
       <button id="t-star" aria-pressed="${starred}">${starred ? ICON.starOn : ICON.star}${starred ? 'Suivi' : 'Suivre'}</button>
       <button id="t-todo">${ICON.todo}À faire</button>
       <button id="t-snooze">${ICON.clock}Plus tard</button>
@@ -107,7 +131,7 @@ async function renderFree(folder, uid) {
     <h1 class="thread-title">${esc(m.subject)}</h1>
     <div class="thread-chips"><span class="chip acc-free">Free</span><span class="chip">${esc(folder === 'INBOX' ? 'Réception' : folder)}</span></div>
     ${(() => { if (m.from.email && !isMe(m.from.email)) return contactLink(m.from.name, m.from.email.toLowerCase()); const t = splitAddrs(m.to || '').map(parseAddr).find(a => a.email && !isMe(a.email)); return t ? contactLink(t.name, t.email.toLowerCase()) : ''; })()}
-    ${/^(junk|spam|ind[ée]sirables|courrier ind)/i.test(folder.normalize('NFC').split(/[/.]/).pop()) ? '<div class="unsub-bar"><span>Classé en indésirable</span><button class="btn primary" id="t-notspam">Pas indésirable</button></div>' : ''}
+    ${keepBar([folder.normalize('NFC').split(/[/.]/).pop()])}
     ${m.unsub ? '<div class="unsub-bar"><span>Mail de liste de diffusion</span><button class="btn" id="t-unsub">Se désabonner</button></div>' : ''}
     <div class="toolbar">
       <button id="t-trash">${ICON.trash}Supprimer</button>
@@ -119,6 +143,7 @@ async function renderFree(folder, uid) {
     <div class="toolbar tb-more" id="tb-more" hidden>
       <button id="t-archive">${ICON.archive}Archiver</button>
       <button id="t-clean">${ICON.trash}Tous ses mails</button>
+      <button id="t-keep">${ICON.archive}Toujours garder</button>
       <button id="t-todo">${ICON.todo}À faire</button>
       <button id="t-snooze">${ICON.clock}Plus tard</button>
       <button id="t-cal">${ICON.cal}Agenda</button>
@@ -142,7 +167,6 @@ async function renderFree(folder, uid) {
   $('#t-unread').onclick = async () => { setLocal([id], { unread: true }); patchCached(id, i => Object.assign({}, i, { unread: true })); goBack(); toast('Marqué non lu'); try { await rapi('/free/flags', { method: 'POST', body: { folder, uids: [uid], seen: false } }); ixTell([id], 'unread'); badgeNow(0); } catch (e) { localPatch.delete(id); toast(e.message); } };
   $('#t-block').onclick = () => { goBack(); quickBlock({ id, fromEmail: m.from.email, fromName: m.from.name }); };
   $('#t-fmove').onclick = () => freeMoveSheet(id, folder, uid);
-  const ns = $('#t-notspam'); if (ns) ns.onclick = () => notSpamSheet(m.from.email);
   state.thread = null; state.freeCtx = { id, folder, uid };
   bindReadTools();
   state.unsub = m.unsub ? { h: m.unsub, post: m.unsubPost, acc: 'free' } : null;

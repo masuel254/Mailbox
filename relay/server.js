@@ -833,6 +833,63 @@ async function rescueJunk(client, full) {
   }
   return moved;
 }
+async function senderKeep(target, name) {
+  target = target.trim().toLowerCase().replace(/^@/, '');
+  if (!target) throw Object.assign(new Error('Expéditeur manquant'), { code: 400 });
+  const isDom = !target.includes('@'), dom = isDom ? target : target.split('@')[1];
+  // un terme de règle vise-t-il cet expéditeur ?
+  const hits = t => { t = t.trim().replace(/^\{|\}$/g, '').trim(); const tl = t.toLowerCase().replace(/^"|"$/g, '');
+    if (name && /^".*"$/.test(t)) return normName(tl) === normName(name);
+    const e = tl.replace(/^@/, '');
+    return isDom ? (e === dom || e.endsWith('@' + dom) || e.endsWith('.' + dom)) : (e === target || e === dom); };
+  const out = { rules: 0, gmail: 0, free: 0 };
+  // 1. Règles Gmail (Ménage IA et bloqués) : on retire ce terme, on recrée la règle avec le reste
+  if (S.gmail) {
+    const labels = ((await gTry('labels')) || {}).labels || [];
+    const labIds = labels.filter(l => [MENAGE, BLOCK_LABEL].includes(l.name)).map(l => l.id);
+    const filters = (((await gTry('settings/filters')) || {}).filter || []).filter(f => f.criteria && f.criteria.from && f.action && (f.action.addLabelIds || []).some(id => labIds.includes(id)));
+    for (const f of filters) {
+      const terms = f.criteria.from.split(/\s+OR\s+/i), keep = terms.filter(t => !hits(t));
+      if (keep.length === terms.length) continue;
+      await gTry0(() => gapi('settings/filters/' + f.id, { method: 'DELETE' }));
+      if (keep.length) await gTry0(() => gapi('settings/filters', { method: 'POST', body: { criteria: Object.assign({}, f.criteria, { from: keep.join(' OR ') }), action: f.action } }));
+      out.rules++;
+    }
+    // 2. Ses mails déjà rangés reviennent dans la réception
+    const q = 'from:' + (isDom ? dom : target) + ' (label:"' + MENAGE + '" OR label:"' + BLOCK_LABEL + '" OR in:spam)';
+    const ids = []; let pg = null;
+    do { const r = (await gTry('messages?' + new URLSearchParams(Object.assign({ q, maxResults: 500, includeSpamTrash: true }, pg ? { pageToken: pg } : {})))) || {}; (r.messages || []).forEach(m => ids.push(m.id)); pg = r.nextPageToken; } while (pg && ids.length < 5000);
+    for (let i = 0; i < ids.length; i += 1000) await gTry0(() => gapi('messages/batchModify', { method: 'POST', body: { ids: ids.slice(i, i + 1000), addLabelIds: ['INBOX'], removeLabelIds: labIds.concat('SPAM') } }));
+    out.gmail = ids.length;
+  }
+  // 3. Listes du relais : plus rangé ni bloqué, et accepté même si l'antispam de Free le classe en indésirable
+  S.mjSenders = (S.mjSenders || []).filter(e => !hits(e));
+  S.blocked = (S.blocked || []).filter(t => !(t.startsWith('name:') ? name && normName(t.slice(5)) === normName(name) : hits(t)));
+  blockedCache = { at: 0, list: [] };
+  const al = freeAllow().slice(); if (!al.includes(target)) al.push(target); S.freeAllow = al;
+  save();
+  // 4. Free : retour dans la réception depuis Ménage IA, Indésirables et le spam de Free
+  if (S.free) {
+    out.free = await withImap(async client => {
+      const fo = await folders(client), all = await client.list();
+      const paths = [...new Set([await menagePath(client), await blockPath(client), fo.junk].concat(all.filter(m => /^(junk|spam|ind[ée]sirables)/i.test(nfc(m.name))).map(m => m.path)))].filter(Boolean);
+      let n = 0;
+      for (const pth of paths) {
+        let lock = null;
+        try {
+          lock = await client.getMailboxLock(pth); if (!client.mailbox.exists) continue;
+          const hit = [];
+          for await (const m of client.fetch('1:*', { uid: true, envelope: true }, { uid: true })) { const f = addr(m.envelope.from); if (hits(f.email || '') || (name && normName(f.name) === normName(name) && !isDom)) hit.push(m.uid); }
+          if (hit.length) { await client.messageMove(hit, 'INBOX', { uid: true }); n += hit.length; }
+        } catch (e) { log('garder ' + pth, e.message); } finally { if (lock) lock.release(); }
+      }
+      return n;
+    }).catch(e => { log('garder Free', e.message); return 0; });
+  }
+  ixRefresh(true).catch(() => {});
+  log('Toujours garder ' + target + ' : ' + out.rules + ' règle(s) modifiée(s), ' + out.gmail + ' Gmail + ' + out.free + ' Free remis en réception');
+  return out;
+}
 async function pollFree() {
   if (!S.free) return [];
   const targets = await blockedTargets();
@@ -880,7 +937,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.15.2';
+const RELAY_V = '4.16.0';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -1823,6 +1880,9 @@ const routes = {
       return { total: out.reduce((a, x) => a + x.messages, 0), folders: out };
     });
   },
+  // « Toujours garder cet expéditeur » : retire ses règles (Ménage IA, bloqués), le met en confiance côté Free
+  // et remet ses mails déjà rangés (Ménage IA, Indésirables, spam) dans la réception
+  'POST /sender/keep': async (q, b) => senderKeep(String(b.target || ''), String(b.name || '')),
   'GET /free/allow': async () => ({ list: freeAllow() }),
   // Ajouter / retirer un expéditeur de confiance, puis récupérer tout de suite ses mails classés en indésirables
   'POST /free/allow': async (q, b) => {

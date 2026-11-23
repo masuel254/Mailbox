@@ -1,4 +1,4 @@
-const V = 'ml-4.15.3';
+const V = 'ml-4.16.0';
 const SHELL = ['./', 'index.html', 'styles.css', 'js/core.js', 'js/list.js', 'js/thread.js', 'js/folders.js', 'js/reading.js', 'js/compose.js', 'js/settings.js', 'js/agenda.js', 'js/relevance.js', 'js/today.js', 'js/offline.js', 'js/main.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon-v2.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(V).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== V).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
