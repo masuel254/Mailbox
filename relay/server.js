@@ -940,7 +940,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.17.0';
+const RELAY_V = '4.17.1';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -1484,7 +1484,7 @@ async function menageEmpty() {
   return out;
 }
 /* ---------- Anniversaires ----------
-   Liste chiffrée sur le serveur ; rappel le jour J à 08:00 (heure de Paris), et en option 1 ou 7 jours avant */
+   Liste chiffrée sur le serveur ; rappel le jour J à 07:30 (heure de Paris), et en option 1 ou 7 jours avant */
 const bdGet = () => { try { return S.bdEnc ? JSON.parse(dec(S.bdEnc)) : []; } catch (e) { return []; } };
 const bdSet = l => { S.bdEnc = enc(JSON.stringify(l)); save(); };
 const BD_TYPES = ['anniv', 'mariage', 'autre'];
@@ -1507,10 +1507,10 @@ function bdParse(text) {
   });
   return out;
 }
-function parisNow() { const p = Object.fromEntries(new Intl.DateTimeFormat('fr-FR', { timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false }).formatToParts(new Date()).map(x => [x.type, x.value])); return { y: +p.year, m: +p.month, d: +p.day, h: +p.hour, key: p.year + '-' + p.month + '-' + p.day }; }
+function parisNow() { const p = Object.fromEntries(new Intl.DateTimeFormat('fr-FR', { timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date()).map(x => [x.type, x.value])); return { y: +p.year, m: +p.month, d: +p.day, h: +p.hour, mi: +p.minute, key: p.year + '-' + p.month + '-' + p.day }; }
 const bdLabel = (b, y) => (b.type === 'mariage' ? 'Anniversaire de mariage' : b.type === 'autre' ? 'Date à fêter' : 'Anniversaire') + (/^[aeiouyhàâéèêëîïôöûü]/i.test(b.name) ? ' d’' : ' de ') + b.name + (b.year ? ' (' + (y - b.year) + (b.type === 'mariage' ? ' ans de mariage)' : ' ans)') : '');
 async function bdTick() {
-  const n = parisNow(); if (n.h < 8 || S.bdDone === n.key || !S.subs.length) return;
+  const n = parisNow(); if (n.h * 60 + n.mi < 450 || S.bdDone === n.key || !S.subs.length) return;
   S.bdDone = n.key; save();
   const md = (dd) => { const x = new Date(Date.UTC(n.y, n.m - 1, n.d + dd)); return [x.getUTCFullYear(), String(x.getUTCMonth() + 1).padStart(2, '0') + '-' + String(x.getUTCDate()).padStart(2, '0')]; };
   const leap = (n.y % 4 === 0 && n.y % 100 !== 0) || n.y % 400 === 0;

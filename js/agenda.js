@@ -281,7 +281,7 @@ async function renderAgenda() {
     days = [startOfDay(d0)];
   } else { nav.innerHTML = ''; days = [...Array(60)].map((_, i) => addDays(startOfDay(new Date()), i)).filter(d => byDay.has(dayKey(d))); }
   const evRow = it => {
-    if (it.kind === 'bd') return `<button class="ev bd-ev" style="--c:#f2b84b" data-bd="${esc(it.b.id)}"><span class="t">🎂</span><span class="ev-b"><b>${esc(BD_KIND[it.b.type] || 'Anniversaire')} ${esc(deName(it.b.name))}</b><small>${esc([bdText(it), dayKey(it.s) === tk ? 'rappel envoyé à 08:00' : 'rappel le jour J à 08:00'].filter(Boolean).join(' · '))}</small></span></button>`;
+    if (it.kind === 'bd') return `<button class="ev bd-ev" style="--c:#f2b84b" data-bd="${esc(it.b.id)}"><span class="t">🎂</span><span class="ev-b"><b>${esc(BD_KIND[it.b.type] || 'Anniversaire')} ${esc(deName(it.b.name))}</b><small>${esc([bdText(it), dayKey(it.s) === tk ? 'rappel envoyé à 07:30' : 'rappel le jour J à 07:30'].filter(Boolean).join(' · '))}</small></span></button>`;
     if (it.kind === 'tt') { const x = it.x; return `<button class="ev" style="--c:${esc(x.color || '#4caf8f')}" data-tt="${esc(x.id)}"><span class="t">${it.allDay ? 'Journée' : hhmm(it.s) + (it.e > it.s ? '<br>' + hhmm(it.e) : '')}</span><span class="ev-b"><b>${esc(x.title)}</b><small><span class="tt-tag">TimeTree</span> ${esc(x.cal)}${x.location || mapLinkIn(x.note) ? ' · ' + locChip(x.location || mapLinkIn(x.note)) : ''}</small></span></button>`; }
     if (it.kind === 'task') return `<button class="ev" style="--c:#9be3b4" data-task="${esc(it.t.id)}"><span class="t">${hhmm(it.s)}</span><span class="ev-b"><b>${esc(it.t.title)}</b><small>Tâche MailBox${it.t.ref && it.t.ref.from ? ' · mail de ' + esc(it.t.ref.from) : ''}</small></span></button>`;
     const e = it.ev;
@@ -635,7 +635,7 @@ async function agendaSuggestions() {
     };
   });
 }
-/* ---------- Anniversaires : liste sur le serveur, rappel le jour J à 08:00 ---------- */
+/* ---------- Anniversaires : liste sur le serveur, rappel le jour J à 07:30 ---------- */
 const deName = n => (/^[aeiouyhàâéèêëîïôöûü]/i.test(n) ? 'd’' : 'de ') + n;
 const BD_KIND = { anniv: 'Anniversaire', mariage: 'Anniversaire de mariage', autre: 'Date à fêter' };
 async function bdLoad(force) {
@@ -668,7 +668,7 @@ function bdBanner(list) {
 async function renderBdays() {
   const v = $('#view');
   v.innerHTML = `<div class="top"><a class="back" href="#/agenda">${ICON.back}Agenda</a><button class="icon-btn" id="bd-add" aria-label="Ajouter un anniversaire">${ICON.plus}</button></div><h1 class="thread-title">🎂 Anniversaires</h1>
-    <p class="fhint">Rappel le jour J à 08:00. Toucher une ligne pour modifier ou supprimer.</p><input type="search" id="bd-q" class="blk-q" placeholder="Rechercher" autocomplete="off"><div id="bd-list"><div class="loading">Chargement…</div></div>
+    <p class="fhint">Rappel le jour J à 07:30. Toucher une ligne pour modifier ou supprimer.</p><input type="search" id="bd-q" class="blk-q" placeholder="Rechercher" autocomplete="off"><div id="bd-list"><div class="loading">Chargement…</div></div>
     <button class="btn" id="bd-imp" style="width:100%;margin-top:14px">Importer une liste</button>`;
   $('#bd-add').onclick = () => bdSheet(null);
   $('#bd-imp').onclick = bdImportSheet;
@@ -682,11 +682,32 @@ async function renderBdays() {
     rows.forEach(o => {
       const n = daysTo(o.s), g = n === 0 ? 'Aujourd’hui' : n <= 7 ? 'Cette semaine' : o.s.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
       if (g !== grp) { h += (grp ? '</div>' : '') + `<h2 class="sec">${esc(g)}</h2><div class="card bd-card">`; grp = g; }
-      h += `<button class="bd-row ${n === 0 ? 'today' : ''}" data-bd="${esc(o.b.id)}"><span class="av">${esc(initials(o.b.name))}</span><span class="bd-t"><b>${esc(o.b.name)}</b><small>${[o.b.type === 'mariage' ? 'Mariage' : '', o.age ? (o.b.type === 'mariage' ? o.age + ' ans de mariage' : 'Aura ' + o.age + ' ans') : '', o.s.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })].filter(Boolean).map(esc).join(' · ')}</small></span><span class="bd-n">${n === 0 ? '🎉' : n + ' j'}</span></button>`;
+      h += `<div class="bd-wrap"><button type="button" class="bd-del" data-del="${esc(o.b.id)}">${ICON.trash}<small>Supprimer</small></button><button class="bd-row ${n === 0 ? 'today' : ''}" data-bd="${esc(o.b.id)}"><span class="av">${esc(initials(o.b.name))}</span><span class="bd-t"><b>${esc(o.b.name)}</b><small>${[o.b.type === 'mariage' ? 'Mariage' : '', o.age ? (o.b.type === 'mariage' ? o.age + ' ans de mariage' : 'Aura ' + o.age + ' ans') : '', o.s.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })].filter(Boolean).map(esc).join(' · ')}</small></span><span class="bd-n">${n === 0 ? '🎉' : n + ' j'}</span></button></div>`;
     });
     box.innerHTML = (h ? h + '</div>' : '<p class="fhint">Aucun résultat.</p>') + `<p class="fhint" style="text-align:center">${list.length} date${list.length > 1 ? 's' : ''} enregistrée${list.length > 1 ? 's' : ''}</p>`;
-    $$('[data-bd]', box).forEach(b => b.onclick = () => bdSheet(list.find(x => x.id === b.dataset.bd)));
+    $$('[data-bd]', box).forEach(b => b.onclick = () => { if (b.dataset.open) { bdClose(b); return; } bdSheet(list.find(x => x.id === b.dataset.bd)); });
+    // glisser vers la gauche : bouton Supprimer (annulable)
+    $$('.bd-row', box).forEach(row => {
+      let x0 = 0, y0 = 0, dx = 0, on = false;
+      row.addEventListener('touchstart', e => { x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; dx = 0; on = null; $$('.bd-row[data-open]', box).forEach(r => r !== row && bdClose(r)); }, { passive: true });
+      row.addEventListener('touchmove', e => {
+        const mx = e.touches[0].clientX - x0, my = e.touches[0].clientY - y0;
+        if (on === null) on = Math.abs(mx) > 8 && Math.abs(mx) > Math.abs(my);
+        if (!on) return;
+        dx = Math.max(-110, Math.min(0, mx + (row.dataset.open ? -96 : 0))); row.style.transition = 'none'; row.style.transform = `translateX(${dx}px)`;
+      }, { passive: true });
+      row.addEventListener('touchend', () => { if (!on) return; row.style.transition = ''; if (dx < -45) { row.style.transform = 'translateX(-96px)'; row.dataset.open = 1; } else bdClose(row); });
+    });
+    $$('[data-del]', box).forEach(b => b.onclick = async () => {
+      const it = list.find(x => x.id === b.dataset.del); if (!it) return;
+      try {
+        await rapi('/bdays/delete', { method: 'POST', body: { id: it.id } });
+        list.splice(list.indexOf(it), 1); occ.splice(occ.findIndex(o => o.b.id === it.id), 1); LS.del('bdays'); draw();
+        undoToast(it.name + ' supprimé', async () => { const c = Object.assign({}, it); delete c.id; await rapi('/bdays', { method: 'POST', body: c }); LS.del('bdays'); });
+      } catch (e) { toast(e.message); }
+    });
   };
+  const bdClose = r => { r.style.transition = ''; r.style.transform = ''; delete r.dataset.open; };
   $('#bd-q').oninput = draw; draw();
 }
 function bdSheet(b) {
@@ -697,8 +718,8 @@ function bdSheet(b) {
     <input id="bs-name" placeholder="Nom et prénom" value="${esc(b.name)}" autocomplete="off">
     <div class="seg" id="bs-type">${Object.entries({ anniv: 'Anniversaire', mariage: 'Mariage', autre: 'Autre' }).map(([k, n]) => `<button type="button" data-t="${k}" class="${b.type === k ? 'on' : ''}">${n}</button>`).join('')}</div>
     <div style="display:grid;grid-template-columns:1fr 1.6fr 1.2fr;gap:8px"><select id="bs-d">${[...Array(31)].map((_, i) => `<option ${i + 1 === d0 ? 'selected' : ''}>${i + 1}</option>`).join('')}</select><select id="bs-m">${months.map((x, i) => `<option value="${i + 1}" ${i + 1 === m0 ? 'selected' : ''}>${x}</option>`).join('')}</select><input id="bs-y" inputmode="numeric" placeholder="Année" value="${b.year || ''}"></div>
-    <label class="fhint" style="margin:0">Rappel le jour J à 08:00, et en plus :</label>
-    <select id="bs-x"><option value="0" ${!b.extra ? 'selected' : ''}>Rien d’autre</option><option value="1" ${b.extra === 1 ? 'selected' : ''}>La veille à 08:00</option><option value="7" ${b.extra === 7 ? 'selected' : ''}>Une semaine avant</option></select>
+    <label class="fhint" style="margin:0">Rappel le jour J à 07:30, et en plus :</label>
+    <select id="bs-x"><option value="0" ${!b.extra ? 'selected' : ''}>Rien d’autre</option><option value="1" ${b.extra === 1 ? 'selected' : ''}>La veille à 07:30</option><option value="7" ${b.extra === 7 ? 'selected' : ''}>Une semaine avant</option></select>
     <input id="bs-mail" type="email" inputmode="email" placeholder="Adresse mail (facultatif, pour lui écrire)" value="${esc(b.email || '')}" autocomplete="off">
     <button class="btn primary" id="bs-ok">Enregistrer</button>
     ${b.id ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${b.email ? '<button class="btn" id="bs-write">Lui écrire</button>' : '<span></span>'}<button class="btn danger" id="bs-del">Supprimer</button></div>` : ''}

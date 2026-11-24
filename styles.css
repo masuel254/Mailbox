@@ -693,3 +693,7 @@ body{overflow-x:clip}
 .bd-t{flex:1;min-width:0;display:flex;flex-direction:column}.bd-t b{font-size:1rem}.bd-t small{color:var(--muted);font-size:.8rem}
 .bd-n{flex:none;font-weight:800;font-size:.85rem;padding:6px 10px;border-radius:10px;background:rgba(242,184,75,.16);color:#f2c46b}
 .bd-row.today .bd-n{background:rgba(242,184,75,.35)}
+.bd-wrap{position:relative;overflow:hidden;border-bottom:1px solid var(--line)}.bd-wrap:last-child{border-bottom:0}
+.bd-wrap .bd-row{position:relative;z-index:1;background:var(--surface);border-bottom:0;transition:transform .2s;padding-left:2px;padding-right:2px}
+.bd-del{position:absolute;top:0;right:0;bottom:0;width:96px;border:0;background:#d9534f;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-weight:700;cursor:pointer}
+.bd-del svg{width:20px;height:20px}.bd-del small{font-size:.75rem}

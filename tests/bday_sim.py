@@ -41,6 +41,20 @@ async def main():
         pg.on('dialog', lambda d: asyncio.ensure_future(d.accept()))
         await pg.click('#bs-del'); await pg.wait_for_timeout(800)
         check(len(req('/bdays')['list']) == 4, 'suppression')
+        # glisser vers la gauche sur la première ligne, puis Supprimer
+        n0 = len(req('/bdays')['list'])
+        await pg.fill('#bd-q', ''); await pg.wait_for_timeout(200)
+        await pg.evaluate("""async () => { const a = document.querySelector('.bd-row'); const r = a.getBoundingClientRect(); const y = r.top + r.height / 2;
+          const T = x => new Touch({ identifier: 1, target: a, clientX: x, clientY: y });
+          a.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, touches: [T(300)], changedTouches: [T(300)] }));
+          for (let x = 290; x >= 180; x -= 10) { a.dispatchEvent(new TouchEvent('touchmove', { bubbles: true, touches: [T(x)], changedTouches: [T(x)] })); await new Promise(r => setTimeout(r, 16)); }
+          a.dispatchEvent(new TouchEvent('touchend', { bubbles: true, touches: [], changedTouches: [T(180)] })); await new Promise(r => setTimeout(r, 300)); }""")
+        check(await pg.evaluate("!!document.querySelector('.bd-row[data-open]')"), 'glisser à gauche : bouton Supprimer visible')
+        await pg.screenshot(path='/tmp/bd3.png')
+        await pg.click('.bd-wrap .bd-del'); await pg.wait_for_timeout(800)
+        check(len(req('/bdays')['list']) == n0 - 1, 'supprimé par glissement')
+        await pg.click('#toast button'); await pg.wait_for_timeout(1200)
+        check(len(req('/bdays')['list']) == n0, 'Annuler le remet')
         check(not errs, 'aucune erreur JavaScript ' + (errs[0] if errs else ''))
         await b.close()
     print('\nTOUT EST BON' if not fails else '\nÉCHEC'); sys.exit(1 if fails else 0)
