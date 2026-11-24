@@ -686,7 +686,6 @@ body{overflow-x:clip}
 .bd-banner{display:flex;align-items:center;gap:10px;padding:10px 12px;margin:4px 0 10px;border-radius:12px;border:1px solid rgba(242,184,75,.45);background:rgba(242,184,75,.14);color:#f2c46b;text-decoration:none}
 .bd-banner .bd-ic{font-size:1.4rem}.bd-banner .bd-tx{flex:1;min-width:0;display:flex;flex-direction:column}
 .bd-banner b{font-size:.95rem}.bd-banner small{font-size:.8rem;opacity:.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.mcell.bd{position:relative}.mcell.bd::after{content:'🎂';position:absolute;top:2px;right:3px;font-size:.62rem}
 .bd-card{padding:4px 12px}
 .bd-row{display:flex;align-items:center;gap:12px;width:100%;padding:10px 0;border:0;border-bottom:1px solid var(--line);background:none;color:var(--text);text-align:left;cursor:pointer}
 .bd-row:last-child{border-bottom:0}.bd-row .av{width:40px;height:40px;border-radius:50%;background:var(--surface2,#2a2e36);display:grid;place-items:center;font-weight:800;font-size:.8rem;flex:none}
@@ -697,3 +696,12 @@ body{overflow-x:clip}
 .bd-wrap .bd-row{position:relative;z-index:1;background:var(--surface);border-bottom:0;transition:transform .2s;padding-left:2px;padding-right:2px}
 .bd-del{position:absolute;top:0;right:0;bottom:0;width:96px;border:0;background:#d9534f;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-weight:700;cursor:pointer}
 .bd-del svg{width:20px;height:20px}.bd-del small{font-size:.75rem}
+/* Agenda : en-tête resserré */
+.ag-sticky{padding-bottom:0}
+.ag-top{padding:0 4px 6px}.ag-top h1{font-size:1.3rem}.ag-top .icon-btn{width:38px;height:38px;min-width:38px}
+#ag-seg button{height:34px;font-size:.82rem}
+.ag-sticky .ag-head{margin:4px 0 2px}.ag-sticky .ag-head .icon-btn{width:34px;height:34px;min-width:34px;font-size:1.2rem}.ag-sticky .ag-head b{font-size:.9rem}
+.ag-ai{margin:6px 0 2px;gap:6px}.ag-ai .btn{height:32px;min-height:32px;font-size:.76rem;padding:0 6px}
+.bd-banner{padding:6px 10px;margin:2px 0 8px;gap:8px;border-radius:10px}.bd-banner .bd-ic{font-size:1.05rem}
+.bd-banner .bd-tx{flex-direction:row;align-items:baseline;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.bd-banner b{font-size:.82rem}.bd-banner small{font-size:.76rem}

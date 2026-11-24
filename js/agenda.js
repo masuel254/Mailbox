@@ -209,7 +209,7 @@ async function renderAgenda() {
   const hq = new URLSearchParams(location.hash.split('?')[1] || '');
   const mode = LS.get('agMode', 'week');
   state.agDay = state.agDay || startOfDay(new Date());
-  v.innerHTML = `<div class="sticky-head"><div class="top"><h1>Agenda</h1><button class="icon-btn" id="ag-bd" aria-label="Anniversaires">🎂</button><button class="icon-btn" id="ag-new" aria-label="Nouvel événement">${ICON.plus}</button><button class="icon-btn" id="ag-ref" aria-label="Actualiser">${ICON.refresh}</button></div>
+  v.innerHTML = `<div class="sticky-head ag-sticky"><div class="top ag-top"><h1>Agenda</h1><button class="icon-btn" id="ag-bd" aria-label="Anniversaires">🎂</button><button class="icon-btn" id="ag-new" aria-label="Nouvel événement">${ICON.plus}</button><button class="icon-btn" id="ag-ref" aria-label="Actualiser">${ICON.refresh}</button></div>
     <div class="seg" id="ag-seg">${[['day', 'Jour'], ['week', 'Semaine'], ['month', 'Mois'], ['list', 'Liste']].map(([k, n]) => `<button data-m="${k}" class="${mode === k ? 'on' : ''}">${n}</button>`).join('')}</div>
     <div id="ag-nav"></div></div>${settings.ai && relayOn() ? '<div class="ag-ai"><button class="btn" id="ag-ai-day">✦ Ma journée</button><button class="btn" id="ag-ai-week">✦ Ma semaine</button><button class="btn" id="ag-ai-we">✦ Week-end</button></div><div id="ag-ai-out"></div>' : ''}<div id="ag-sug"></div><div id="ag-list"><div class="loading">Chargement…</div></div>`;
   $$('#ag-seg button').forEach(b => b.onclick = () => { LS.set('agMode', b.dataset.m); renderAgenda(); });
@@ -663,7 +663,7 @@ function bdBanner(list) {
   if (!up.length) return '';
   const today = up.filter(o => daysTo(o.s) === 0), next = up.filter(o => daysTo(o.s) > 0).slice(0, 4);
   const short = o => esc(o.b.name.split(' ')[0]) + ' ' + esc(o.s.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric' }).replace('.', ''));
-  return `<a class="bd-banner" href="#/bdays"><span class="bd-ic">🎂</span><span class="bd-tx"><b>${today.length ? 'Aujourd’hui : ' + today.map(o => esc(o.b.name)).join(', ') : 'Cette semaine'}</b>${next.length ? `<small>${today.length ? 'Puis ' : ''}${next.map(short).join(' · ')}</small>` : ''}</span><span class="chev-r" aria-hidden="true"></span></a>`;
+  return `<a class="bd-banner" href="#/bdays"><span class="bd-ic">🎂</span><span class="bd-tx">${today.length ? '<b>Auj. ' + today.map(o => esc(o.b.name)).join(', ') + '</b>' : ''}${next.length ? `<small>${today.length ? ' · ' : ''}${next.map(short).join(' · ')}</small>` : ''}</span><span class="chev-r" aria-hidden="true"></span></a>`;
 }
 async function renderBdays() {
   const v = $('#view');
