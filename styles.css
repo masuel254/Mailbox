@@ -682,3 +682,14 @@ body.zoomed .reply-bar,body.zoomed #tabbar,body.zoomed #selbar,body.zoomed #toas
 /* Un mail trop large défile dans son cadre au lieu d'élargir toute la page */
 .msg .content{max-width:100%;overflow-x:auto}
 body{overflow-x:clip}
+/* Anniversaires */
+.bd-banner{display:flex;align-items:center;gap:10px;padding:10px 12px;margin:4px 0 10px;border-radius:12px;border:1px solid rgba(242,184,75,.45);background:rgba(242,184,75,.14);color:#f2c46b;text-decoration:none}
+.bd-banner .bd-ic{font-size:1.4rem}.bd-banner .bd-tx{flex:1;min-width:0;display:flex;flex-direction:column}
+.bd-banner b{font-size:.95rem}.bd-banner small{font-size:.8rem;opacity:.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mcell.bd{position:relative}.mcell.bd::after{content:'🎂';position:absolute;top:2px;right:3px;font-size:.62rem}
+.bd-card{padding:4px 12px}
+.bd-row{display:flex;align-items:center;gap:12px;width:100%;padding:10px 0;border:0;border-bottom:1px solid var(--line);background:none;color:var(--text);text-align:left;cursor:pointer}
+.bd-row:last-child{border-bottom:0}.bd-row .av{width:40px;height:40px;border-radius:50%;background:var(--surface2,#2a2e36);display:grid;place-items:center;font-weight:800;font-size:.8rem;flex:none}
+.bd-t{flex:1;min-width:0;display:flex;flex-direction:column}.bd-t b{font-size:1rem}.bd-t small{color:var(--muted);font-size:.8rem}
+.bd-n{flex:none;font-weight:800;font-size:.85rem;padding:6px 10px;border-radius:10px;background:rgba(242,184,75,.16);color:#f2c46b}
+.bd-row.today .bd-n{background:rgba(242,184,75,.35)}

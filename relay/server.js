@@ -940,7 +940,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.16.3';
+const RELAY_V = '4.17.0';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -1483,7 +1483,46 @@ async function menageEmpty() {
   log('Ménage IA : dossier vidé (' + (out.gmail + out.free) + ' mails à la corbeille)');
   return out;
 }
+/* ---------- Anniversaires ----------
+   Liste chiffrée sur le serveur ; rappel le jour J à 08:00 (heure de Paris), et en option 1 ou 7 jours avant */
+const bdGet = () => { try { return S.bdEnc ? JSON.parse(dec(S.bdEnc)) : []; } catch (e) { return []; } };
+const bdSet = l => { S.bdEnc = enc(JSON.stringify(l)); save(); };
+const BD_TYPES = ['anniv', 'mariage', 'autre'];
+function bdClean(b, old) {
+  const name = String(b.name || '').trim().slice(0, 80); if (!name) throw Object.assign(new Error('Nom manquant'), { code: 400 });
+  const m = /^(\d{1,2})-(\d{1,2})$/.exec(String(b.date || '')); if (!m || +m[1] < 1 || +m[1] > 12 || +m[2] < 1 || +m[2] > 31) throw Object.assign(new Error('Date invalide'), { code: 400 });
+  const y = +b.year || 0;
+  return Object.assign({}, old || {}, { id: (old && old.id) || crypto.randomBytes(6).toString('hex'), name, date: String(m[1]).padStart(2, '0') + '-' + String(m[2]).padStart(2, '0'),
+    year: y > 1900 && y <= new Date().getFullYear() ? y : 0, type: BD_TYPES.includes(b.type) ? b.type : 'anniv', extra: [0, 1, 7].includes(+b.extra) ? +b.extra : 0,
+    email: String(b.email || '').trim().slice(0, 120) });
+}
+// Import d'une liste collée : « 24/11 Olivier Henot », « 17/02/1961 Laurence Morieux », « 28/09/1971 Laurent Van Holderbeke mariage »
+function bdParse(text) {
+  const out = [];
+  String(text || '').split(/\r?\n/).forEach(l => {
+    const m = /^\s*(\d{1,2})[\/.-](\d{1,2})(?:[\/.-](\d{4}))?\s+(.+?)\s*$/.exec(l); if (!m) return;
+    let name = m[4], type = 'anniv';
+    if (/\s(\(?mariage\)?)$/i.test(name)) { type = 'mariage'; name = name.replace(/\s\(?mariage\)?$/i, ''); }
+    try { out.push(bdClean({ name, date: m[2] + '-' + m[1], year: m[3], type })); } catch (e) {}
+  });
+  return out;
+}
+function parisNow() { const p = Object.fromEntries(new Intl.DateTimeFormat('fr-FR', { timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false }).formatToParts(new Date()).map(x => [x.type, x.value])); return { y: +p.year, m: +p.month, d: +p.day, h: +p.hour, key: p.year + '-' + p.month + '-' + p.day }; }
+const bdLabel = (b, y) => (b.type === 'mariage' ? 'Anniversaire de mariage' : b.type === 'autre' ? 'Date à fêter' : 'Anniversaire') + (/^[aeiouyhàâéèêëîïôöûü]/i.test(b.name) ? ' d’' : ' de ') + b.name + (b.year ? ' (' + (y - b.year) + (b.type === 'mariage' ? ' ans de mariage)' : ' ans)') : '');
+async function bdTick() {
+  const n = parisNow(); if (n.h < 8 || S.bdDone === n.key || !S.subs.length) return;
+  S.bdDone = n.key; save();
+  const md = (dd) => { const x = new Date(Date.UTC(n.y, n.m - 1, n.d + dd)); return [x.getUTCFullYear(), String(x.getUTCMonth() + 1).padStart(2, '0') + '-' + String(x.getUTCDate()).padStart(2, '0')]; };
+  const leap = (n.y % 4 === 0 && n.y % 100 !== 0) || n.y % 400 === 0;
+  const isOn = (b, key) => b.date === key || (!leap && b.date === '02-29' && key === '02-28');
+  const list = bdGet(), today = md(0)[1], msgs = [];
+  list.filter(b => isOn(b, today)).forEach(b => msgs.push({ title: '🎂 ' + b.name, body: bdLabel(b, n.y) + ', aujourd’hui', tag: 'mailbox-bd-' + b.id }));
+  [1, 7].forEach(k => { const [yy, key] = md(k); list.filter(b => b.extra === k && isOn(b, key)).forEach(b => msgs.push({ title: '🎂 ' + b.name + (k === 1 ? ' demain' : ' dans 7 jours'), body: bdLabel(b, yy), tag: 'mailbox-bd-' + b.id + '-' + k })); });
+  for (const m of msgs) await push(Object.assign({ url: C.appUrl + '#/bdays', badge: total(), silent: false }, m)).catch(e => log('anniversaire', e.message));
+  if (msgs.length) log('Anniversaires : ' + msgs.length + ' rappel(s) envoyé(s)');
+}
 async function checkTimers() {
+  try { await bdTick(); } catch (e) { log('anniversaires', e.message); }
   const now = Date.now();
   for (const it of (S.scheduled || []).filter(x => x.at <= now && !x.failed)) {
     try { await sendScheduled(it); S.scheduled = S.scheduled.filter(x => x.id !== it.id); save(); }
@@ -1853,6 +1892,14 @@ const routes = {
   },
   'GET /free/resweep': async () => resweep,
   'GET /menage': async () => mjPublic(),
+  'GET /bdays': async () => ({ list: bdGet() }),
+  'POST /bdays': async (q, b) => { const l = bdGet(), i = l.findIndex(x => x.id === b.id); const it = bdClean(b, i >= 0 ? l[i] : null); if (i >= 0) l[i] = it; else l.push(it); bdSet(l); return { ok: true, item: it }; },
+  'POST /bdays/delete': async (q, b) => { bdSet(bdGet().filter(x => x.id !== String(b.id))); return { ok: true }; },
+  'POST /bdays/import': async (q, b) => {
+    const l = bdGet(), add = bdParse(b.text); let n = 0;
+    add.forEach(a => { if (!l.some(x => x.name.toLowerCase() === a.name.toLowerCase() && x.date === a.date)) { l.push(a); n++; } });
+    bdSet(l); return { ok: true, added: n, read: add.length };
+  },
   // Tu corriges l'IA : un expéditeur gardé passe « à virer » (ou l'inverse). Les garde-fous restent appliqués au rangement.
   'POST /menage/verdict': async (q, b) => {
     const g = (MJ.groups || []).find(x => x.key === String(b.key || ''));

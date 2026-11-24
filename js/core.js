@@ -2,8 +2,8 @@
    Le code est découpé par domaine ; les fichiers sont chargés dans l'ordre de index.html et partagent la même portée. */
 'use strict';
 
-const APP_VERSION = '4.16.3';
-const APP_DATE = '23/11/2026';
+const APP_VERSION = '4.17.0';
+const APP_DATE = '24/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
 const BLOCK_LABEL = 'Indésirables';
@@ -50,7 +50,7 @@ async function fastFetch(key, fetcher, changed) {
   return cachedFetch(key, fetcher);
 }
 // Version minimale du relais attendue par cette appli (à relever quand le relais change)
-const MIN_RELAY = '4.16.3';
+const MIN_RELAY = '4.17.0';
 const verLt = (a, b) => { const x = String(a || '0').split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) < (y[i] || 0); } return false; };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const settings = Object.assign({ clientId: '', fontSize: 18, theme: 'auto', images: true, readable: true, email: '', relayUrl: 'https://vps-444b360b.vps.ovh.net/mailbox', relayToken: '', relayGmail: false, freeEmail: '', acc: 'all', vapid: '', primaryOnly: false }, LS.get('settings', {}));
@@ -327,7 +327,7 @@ function route() {
   exitSelect(true);
   document.body.classList.toggle('no-tabbar', view === 'thread' || view === 'compose' || view === 'free');
   const lk = parts[1] === 'UNREAD' ? 'INBOX' : (parts[1] || 'INBOX');
-  $$('#tabbar a').forEach(a => a.classList.toggle('on', a.dataset.tab === (view === 'list' ? (lk === 'INBOX' ? 'INBOX' : lk === 'SENT' ? 'SENT' : 'labels') : ['waiting', 'tasks', 'scheduled', 'outbox', 'blocked', 'menage'].includes(view) ? 'labels' : view === 'today' ? 'INBOX' : ['guide', 'settings'].includes(view) ? 'INBOX' : view)));
+  $$('#tabbar a').forEach(a => a.classList.toggle('on', a.dataset.tab === (view === 'list' ? (lk === 'INBOX' ? 'INBOX' : lk === 'SENT' ? 'SENT' : 'labels') : ['waiting', 'tasks', 'scheduled', 'outbox', 'blocked', 'menage'].includes(view) ? 'labels' : view === 'today' ? 'INBOX' : view === 'bdays' ? 'agenda' : ['guide', 'settings'].includes(view) ? 'INBOX' : view)));
   $('#view').scrollTop = 0;
   if (!settings.clientId && !relayGmailOn() && view !== 'settings') return renderWelcome();
   if (view === 'thread') return renderThread(decodeURIComponent(parts[1]));
@@ -344,6 +344,7 @@ function route() {
   if (view === 'today') return renderToday();
   if (view === 'contacts') return renderContacts();
   if (view === 'agenda') return renderAgenda();
+  if (view === 'bdays') return renderBdays();
   if (view === 'smart') return renderSmart(decodeURIComponent(parts.slice(1).join('/')));
   if (view === 'settings') return renderSettings();
   if (view === 'search') return renderList('SEARCH', decodeURIComponent(parts.slice(1).join('/')));

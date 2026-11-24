@@ -209,10 +209,11 @@ async function renderAgenda() {
   const hq = new URLSearchParams(location.hash.split('?')[1] || '');
   const mode = LS.get('agMode', 'week');
   state.agDay = state.agDay || startOfDay(new Date());
-  v.innerHTML = `<div class="sticky-head"><div class="top"><h1>Agenda</h1><button class="icon-btn" id="ag-new" aria-label="Nouvel événement">${ICON.plus}</button><button class="icon-btn" id="ag-ref" aria-label="Actualiser">${ICON.refresh}</button></div>
+  v.innerHTML = `<div class="sticky-head"><div class="top"><h1>Agenda</h1><button class="icon-btn" id="ag-bd" aria-label="Anniversaires">🎂</button><button class="icon-btn" id="ag-new" aria-label="Nouvel événement">${ICON.plus}</button><button class="icon-btn" id="ag-ref" aria-label="Actualiser">${ICON.refresh}</button></div>
     <div class="seg" id="ag-seg">${[['day', 'Jour'], ['week', 'Semaine'], ['month', 'Mois'], ['list', 'Liste']].map(([k, n]) => `<button data-m="${k}" class="${mode === k ? 'on' : ''}">${n}</button>`).join('')}</div>
     <div id="ag-nav"></div></div>${settings.ai && relayOn() ? '<div class="ag-ai"><button class="btn" id="ag-ai-day">✦ Ma journée</button><button class="btn" id="ag-ai-week">✦ Ma semaine</button><button class="btn" id="ag-ai-we">✦ Week-end</button></div><div id="ag-ai-out"></div>' : ''}<div id="ag-sug"></div><div id="ag-list"><div class="loading">Chargement…</div></div>`;
   $$('#ag-seg button').forEach(b => b.onclick = () => { LS.set('agMode', b.dataset.m); renderAgenda(); });
+  $('#ag-bd').onclick = () => { location.hash = '#/bdays'; };
   $('#ag-new').onclick = () => eventSheet({ start: defaultStart(state.agDay) }, () => renderAgenda());
   $('#ag-ref').onclick = () => { state.agCache = null; renderAgenda(); };
   if (hq.get('new')) { history.replaceState(null, '', '#/agenda'); eventSheet({ title: hq.get('title') || '', note: hq.get('with') ? 'Avec ' + hq.get('with') : '', start: defaultStart(state.agDay) }, () => renderAgenda()); }
@@ -231,13 +232,16 @@ async function renderAgenda() {
       state.agCache = { k: ck, at: Date.now(), evs };
     }
   } catch (e) { if (e.message === 'auth') return; gErr = e; }
+  const bdJob = bdLoad().catch(() => []);
   await ttJob;
+  const bdList = await bdJob;
   if (gErr && !(ttInfo && ttInfo.enabled)) { $('#ag-list').innerHTML = googleHelp(gErr, 'Agenda'); bindHelp(); return; }
   if (relayOn()) { try { tasks = ((await rapi('/tasks')).tasks || []).filter(t => !t.done && t.due && t.due >= range[0].getTime() && t.due < range[1].getTime()); } catch (e) {} }
   const items = evs.filter(e => e.status !== 'cancelled').map(e => Object.assign({ kind: 'ev', ev: e }, evTimes(e)))
     .concat(tasks.map(t => ({ kind: 'task', t, s: new Date(t.due), e: new Date(t.due), allDay: false })))
     .concat(tt.map(x => x.allDay ? { kind: 'tt', x, s: new Date(x.date + 'T00:00'), e: addDays(new Date(x.endDate + 'T00:00'), 1), allDay: true } : { kind: 'tt', x, s: new Date(x.start), e: new Date(x.end), allDay: false }))
-    .sort((a, b) => (b.allDay - a.allDay) || (a.s - b.s));
+    .concat(bdOccur(bdList, range[0], range[1]))
+    .sort((a, b) => (b.allDay - a.allDay) || ((b.kind === 'bd') - (a.kind === 'bd')) || (a.s - b.s));
   const byDay = new Map();
   items.forEach(it => {
     // un événement sur plusieurs jours apparaît chaque jour
@@ -249,9 +253,9 @@ async function renderAgenda() {
   const away = dayKey(d0) !== tk;
   const head = (lbl, prev, next, pl, nl) => { nav.innerHTML = `<div class="ag-head"><button class="icon-btn" id="ag-prev" aria-label="${pl}">‹</button><div class="ag-mid"><b>${esc(lbl)}</b>${away ? '<button class="today-pill" id="ag-today">Revenir à aujourd’hui</button>' : ''}</div><button class="icon-btn" id="ag-next" aria-label="${nl}">›</button></div>`; $('#ag-prev').onclick = () => { state.agDay = prev; renderAgenda(); }; $('#ag-next').onclick = () => { state.agDay = next; renderAgenda(); }; const tb = $('#ag-today'); if (tb) tb.onclick = () => { state.agDay = startOfDay(new Date()); renderAgenda(); }; };
   // titre et couleur d'un élément (Google, TimeTree ou tâche), pour les pastilles des vues Semaine et Mois
-  const itTitle = it => it.kind === 'tt' ? it.x.title : it.kind === 'task' ? it.t.title : (it.ev.summary || '(sans titre)');
-  const itColor = it => it.kind === 'tt' ? (it.x.color || '#4caf8f') : it.kind === 'task' ? '#9be3b4' : (EV_COLORS[it.ev.colorId] || '#8fb6ff');
-  const itAttr = it => it.kind === 'tt' ? `data-tt="${esc(it.x.id)}"` : it.kind === 'task' ? `data-task="${esc(it.t.id)}"` : `data-ev="${esc(it.ev.id)}"`;
+  const itTitle = it => it.kind === 'bd' ? '🎂 ' + it.b.name.split(' ')[0] : it.kind === 'tt' ? it.x.title : it.kind === 'task' ? it.t.title : (it.ev.summary || '(sans titre)');
+  const itColor = it => it.kind === 'bd' ? '#f2b84b' : it.kind === 'tt' ? (it.x.color || '#4caf8f') : it.kind === 'task' ? '#9be3b4' : (EV_COLORS[it.ev.colorId] || '#8fb6ff');
+  const itAttr = it => it.kind === 'bd' ? `data-bd="${esc(it.b.id)}"` : it.kind === 'tt' ? `data-tt="${esc(it.x.id)}"` : it.kind === 'task' ? `data-task="${esc(it.t.id)}"` : `data-ev="${esc(it.ev.id)}"`;
   let days = [], pre = '';
   if (mode === 'day') {
     head(d0.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) + (dayKey(d0) === tk ? ' (auj.)' : ''), addDays(d0, -1), addDays(d0, 1), 'Jour précédent', 'Jour suivant');
@@ -273,17 +277,18 @@ async function renderAgenda() {
     // cases hautes avec le début des titres ; la dernière ligne n'est affichée que si elle contient des jours du mois
     const n = addDays(st, 35).getMonth() === f.getMonth() ? 42 : 35;
     pre = `<div class="mgrid">${['L', 'M', 'M', 'J', 'V', 'S', 'D'].map(x => `<span class="mh">${x}</span>`).join('')}${[...Array(n)].map((_, i) => { const d = addDays(st, i), k = dayKey(d), its = byDay.get(k) || [];
-      return `<button class="mcell ${d.getMonth() !== f.getMonth() ? 'out' : ''} ${k === dayKey(d0) ? 'on' : ''} ${k === tk ? 'today' : ''}" data-d="${k}"><b>${d.getDate()}</b>${its.slice(0, its.length > 3 ? 2 : 3).map(it => `<span style="--c:${esc(itColor(it))}">${esc(itTitle(it))}</span>`).join('')}${its.length > 3 ? `<small>+${its.length - 2}</small>` : ''}</button>`; }).join('')}</div>`;
+      return `<button class="mcell ${its.some(it => it.kind === 'bd') ? 'bd' : ''} ${d.getMonth() !== f.getMonth() ? 'out' : ''} ${k === dayKey(d0) ? 'on' : ''} ${k === tk ? 'today' : ''}" data-d="${k}"><b>${d.getDate()}</b>${its.slice(0, its.length > 3 ? 2 : 3).map(it => `<span style="--c:${esc(itColor(it))}">${esc(itTitle(it))}</span>`).join('')}${its.length > 3 ? `<small>+${its.length - 2}</small>` : ''}</button>`; }).join('')}</div>`;
     days = [startOfDay(d0)];
   } else { nav.innerHTML = ''; days = [...Array(60)].map((_, i) => addDays(startOfDay(new Date()), i)).filter(d => byDay.has(dayKey(d))); }
   const evRow = it => {
+    if (it.kind === 'bd') return `<button class="ev bd-ev" style="--c:#f2b84b" data-bd="${esc(it.b.id)}"><span class="t">🎂</span><span class="ev-b"><b>${esc(BD_KIND[it.b.type] || 'Anniversaire')} ${esc(deName(it.b.name))}</b><small>${esc([bdText(it), dayKey(it.s) === tk ? 'rappel envoyé à 08:00' : 'rappel le jour J à 08:00'].filter(Boolean).join(' · '))}</small></span></button>`;
     if (it.kind === 'tt') { const x = it.x; return `<button class="ev" style="--c:${esc(x.color || '#4caf8f')}" data-tt="${esc(x.id)}"><span class="t">${it.allDay ? 'Journée' : hhmm(it.s) + (it.e > it.s ? '<br>' + hhmm(it.e) : '')}</span><span class="ev-b"><b>${esc(x.title)}</b><small><span class="tt-tag">TimeTree</span> ${esc(x.cal)}${x.location || mapLinkIn(x.note) ? ' · ' + locChip(x.location || mapLinkIn(x.note)) : ''}</small></span></button>`; }
     if (it.kind === 'task') return `<button class="ev" style="--c:#9be3b4" data-task="${esc(it.t.id)}"><span class="t">${hhmm(it.s)}</span><span class="ev-b"><b>${esc(it.t.title)}</b><small>Tâche MailBox${it.t.ref && it.t.ref.from ? ' · mail de ' + esc(it.t.ref.from) : ''}</small></span></button>`;
     const e = it.ev;
     return `<button class="ev" style="--c:${EV_COLORS[e.colorId] || '#8fb6ff'}" data-ev="${esc(e.id)}"><span class="t">${it.allDay ? 'Journée' : hhmm(it.s) + '<br>' + hhmm(it.e)}</span><span class="ev-b"><b>${esc(e.summary || '(sans titre)')}</b>${e.location || e.description ? `<small>${e.location ? locChip(e.location) : ''}${e.location && e.description ? ' · ' : ''}${!e.location && mapLinkIn(e.description) ? locChip(mapLinkIn(e.description)) + ' · ' : ''}${e.description ? esc(String(e.description).replace(/<[^>]+>/g, ' ').replace(/https?:\/\/\S+/g, '').slice(0, 80)) : ''}</small>` : ''}</span></button>`;
   };
   const box = $('#ag-list');
-  box.innerHTML = pre + days.map(d => { const its = byDay.get(dayKey(d)) || []; return (mode === 'day' ? '' : `<div class="day-h">${esc(d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }))}${dayKey(d) === tk ? ' · aujourd’hui' : ''}</div>`) + (its.length ? its.map(evRow).join('') : '<p class="fhint" style="margin:2px 6px 8px">Rien de prévu</p>'); }).join('')
+  box.innerHTML = bdBanner(bdList) + pre + days.map(d => { const its = byDay.get(dayKey(d)) || []; return (mode === 'day' ? '' : `<div class="day-h">${esc(d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }))}${dayKey(d) === tk ? ' · aujourd’hui' : ''}</div>`) + (its.length ? its.map(evRow).join('') : '<p class="fhint" style="margin:2px 6px 8px">Rien de prévu</p>'); }).join('')
     || (mode === 'list' ? '<div class="empty">Rien de prévu sur les 60 prochains jours.</div>' : '');
   $$('[data-d]', box).forEach(b => b.onclick = () => { state.agDay = new Date(b.dataset.d + 'T00:00'); renderAgenda(); });
   // toucher l'en-tête d'un jour de la semaine ouvre la vue Jour
@@ -291,6 +296,7 @@ async function renderAgenda() {
   // toucher le lieu ouvre la carte (Plans ou le lien Maps collé), sans ouvrir l'événement
   $$('[data-ev]', box).forEach(b => b.onclick = () => { const e = evs.find(x => x.id === b.dataset.ev); if (e) eventSheet(e, () => { state.agCache = null; renderAgenda(); }); });
   $$('[data-task]', box).forEach(b => b.onclick = () => { location.hash = '#/tasks'; });
+  $$('[data-bd]', box).forEach(b => b.onclick = ev => { ev.stopPropagation(); bdSheet(bdList.find(x => x.id === b.dataset.bd)); });
   $$('[data-tt]', box).forEach(b => b.onclick = () => {
     const it = items.find(i => i.kind === 'tt' && i.x.id === b.dataset.tt); if (!it) return; const x = it.x;
     openSheet(`<span class="grip"></span><h2>${esc(x.title)}</h2><p class="fhint" style="margin:0"><span class="tt-tag">TimeTree</span> ${esc(x.cal)}</p>
@@ -628,4 +634,87 @@ async function agendaSuggestions() {
       eventSheet({ title: x.r.title || x.subject, start: s, end: e && e > s ? e : null, allDay: !!x.r.allDay, location: x.r.location || '', note: (x.r.note || '') + ' · ' + x.from, mailUrl: x.url, mailSubject: x.subject }, () => { const sc = LS.get('evScan', {}); if (sc[id]) sc[id].done = true; LS.set('evScan', sc); renderAgenda(); });
     };
   });
+}
+/* ---------- Anniversaires : liste sur le serveur, rappel le jour J à 08:00 ---------- */
+const deName = n => (/^[aeiouyhàâéèêëîïôöûü]/i.test(n) ? 'd’' : 'de ') + n;
+const BD_KIND = { anniv: 'Anniversaire', mariage: 'Anniversaire de mariage', autre: 'Date à fêter' };
+async function bdLoad(force) {
+  const c = LS.get('bdays', null);
+  if (!force && c && Date.now() - c.at < 300000) return c.list;
+  if (!relayOn()) return c ? c.list : [];
+  try { const r = await rapi('/bdays'); LS.set('bdays', { at: Date.now(), list: r.list || [] }); return r.list || []; } catch (e) { return c ? c.list : []; }
+}
+// Occurrences entre deux dates (le 29 février tombe le 28 les autres années)
+function bdOccur(list, from, to) {
+  const out = [];
+  for (let y = from.getFullYear(); y <= to.getFullYear(); y++) list.forEach(b => {
+    let [m, d] = b.date.split('-').map(Number);
+    if (m === 2 && d === 29 && !((y % 4 === 0 && y % 100 !== 0) || y % 400 === 0)) d = 28;
+    const s = new Date(y, m - 1, d);
+    if (s >= from && s < to) out.push({ kind: 'bd', b, s, e: addDays(s, 1), allDay: true, age: b.year ? y - b.year : 0 });
+  });
+  return out.sort((a, b) => a.s - b.s);
+}
+const bdText = o => (o.b.type === 'mariage' ? 'Mariage · ' : o.b.type === 'autre' ? '' : '') + (o.age ? (o.b.type === 'mariage' ? o.age + ' ans de mariage' : o.age + ' ans') : '');
+const daysTo = d => Math.round((startOfDay(d) - startOfDay(new Date())) / 864e5);
+// Bandeau des 7 prochains jours (agenda)
+function bdBanner(list) {
+  const t = startOfDay(new Date()), up = bdOccur(list, t, addDays(t, 8));
+  if (!up.length) return '';
+  const today = up.filter(o => daysTo(o.s) === 0), next = up.filter(o => daysTo(o.s) > 0).slice(0, 4);
+  const short = o => esc(o.b.name.split(' ')[0]) + ' ' + esc(o.s.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric' }).replace('.', ''));
+  return `<a class="bd-banner" href="#/bdays"><span class="bd-ic">🎂</span><span class="bd-tx"><b>${today.length ? 'Aujourd’hui : ' + today.map(o => esc(o.b.name)).join(', ') : 'Cette semaine'}</b>${next.length ? `<small>${today.length ? 'Puis ' : ''}${next.map(short).join(' · ')}</small>` : ''}</span><span class="chev-r" aria-hidden="true"></span></a>`;
+}
+async function renderBdays() {
+  const v = $('#view');
+  v.innerHTML = `<div class="top"><a class="back" href="#/agenda">${ICON.back}Agenda</a><button class="icon-btn" id="bd-add" aria-label="Ajouter un anniversaire">${ICON.plus}</button></div><h1 class="thread-title">🎂 Anniversaires</h1>
+    <p class="fhint">Rappel le jour J à 08:00. Toucher une ligne pour modifier ou supprimer.</p><input type="search" id="bd-q" class="blk-q" placeholder="Rechercher" autocomplete="off"><div id="bd-list"><div class="loading">Chargement…</div></div>
+    <button class="btn" id="bd-imp" style="width:100%;margin-top:14px">Importer une liste</button>`;
+  $('#bd-add').onclick = () => bdSheet(null);
+  $('#bd-imp').onclick = bdImportSheet;
+  const list = await bdLoad(true), box = $('#bd-list');
+  const t = startOfDay(new Date()), occ = bdOccur(list, t, addDays(t, 366)).filter((o, i, a) => a.findIndex(x => x.b.id === o.b.id) === i);
+  const draw = () => {
+    const q = ($('#bd-q').value || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const rows = occ.filter(o => !q || o.b.name.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').includes(q));
+    if (!list.length) { box.innerHTML = '<div class="empty">Aucun anniversaire. Ajoute-les avec + ou importe une liste.</div>'; return; }
+    let h = '', grp = '';
+    rows.forEach(o => {
+      const n = daysTo(o.s), g = n === 0 ? 'Aujourd’hui' : n <= 7 ? 'Cette semaine' : o.s.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+      if (g !== grp) { h += (grp ? '</div>' : '') + `<h2 class="sec">${esc(g)}</h2><div class="card bd-card">`; grp = g; }
+      h += `<button class="bd-row ${n === 0 ? 'today' : ''}" data-bd="${esc(o.b.id)}"><span class="av">${esc(initials(o.b.name))}</span><span class="bd-t"><b>${esc(o.b.name)}</b><small>${[o.b.type === 'mariage' ? 'Mariage' : '', o.age ? (o.b.type === 'mariage' ? o.age + ' ans de mariage' : 'Aura ' + o.age + ' ans') : '', o.s.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })].filter(Boolean).map(esc).join(' · ')}</small></span><span class="bd-n">${n === 0 ? '🎉' : n + ' j'}</span></button>`;
+    });
+    box.innerHTML = (h ? h + '</div>' : '<p class="fhint">Aucun résultat.</p>') + `<p class="fhint" style="text-align:center">${list.length} date${list.length > 1 ? 's' : ''} enregistrée${list.length > 1 ? 's' : ''}</p>`;
+    $$('[data-bd]', box).forEach(b => b.onclick = () => bdSheet(list.find(x => x.id === b.dataset.bd)));
+  };
+  $('#bd-q').oninput = draw; draw();
+}
+function bdSheet(b) {
+  b = b || { name: '', date: '', year: 0, type: 'anniv', extra: 0, email: '' };
+  const [m0, d0] = b.date ? b.date.split('-').map(Number) : [new Date().getMonth() + 1, new Date().getDate()];
+  const months = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+  openSheet(`<span class="grip"></span><h2>${b.id ? 'Modifier' : 'Nouvel anniversaire'}</h2>
+    <input id="bs-name" placeholder="Nom et prénom" value="${esc(b.name)}" autocomplete="off">
+    <div class="seg" id="bs-type">${Object.entries({ anniv: 'Anniversaire', mariage: 'Mariage', autre: 'Autre' }).map(([k, n]) => `<button type="button" data-t="${k}" class="${b.type === k ? 'on' : ''}">${n}</button>`).join('')}</div>
+    <div style="display:grid;grid-template-columns:1fr 1.6fr 1.2fr;gap:8px"><select id="bs-d">${[...Array(31)].map((_, i) => `<option ${i + 1 === d0 ? 'selected' : ''}>${i + 1}</option>`).join('')}</select><select id="bs-m">${months.map((x, i) => `<option value="${i + 1}" ${i + 1 === m0 ? 'selected' : ''}>${x}</option>`).join('')}</select><input id="bs-y" inputmode="numeric" placeholder="Année" value="${b.year || ''}"></div>
+    <label class="fhint" style="margin:0">Rappel le jour J à 08:00, et en plus :</label>
+    <select id="bs-x"><option value="0" ${!b.extra ? 'selected' : ''}>Rien d’autre</option><option value="1" ${b.extra === 1 ? 'selected' : ''}>La veille à 08:00</option><option value="7" ${b.extra === 7 ? 'selected' : ''}>Une semaine avant</option></select>
+    <input id="bs-mail" type="email" inputmode="email" placeholder="Adresse mail (facultatif, pour lui écrire)" value="${esc(b.email || '')}" autocomplete="off">
+    <button class="btn primary" id="bs-ok">Enregistrer</button>
+    ${b.id ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${b.email ? '<button class="btn" id="bs-write">Lui écrire</button>' : '<span></span>'}<button class="btn danger" id="bs-del">Supprimer</button></div>` : ''}
+    <button class="btn" data-close>Annuler</button>`);
+  let type = b.type;
+  $$('#bs-type button').forEach(x => x.onclick = () => { type = x.dataset.t; $$('#bs-type button').forEach(y => y.classList.toggle('on', y === x)); });
+  const done = () => { LS.del('bdays'); state.agCache = null; closeSheet(); (location.hash || '').startsWith('#/bdays') ? renderBdays() : renderAgenda(); };
+  $('#bs-ok').onclick = async () => {
+    const name = $('#bs-name').value.trim(); if (!name) { toast('Indique un nom'); return; }
+    try { await rapi('/bdays', { method: 'POST', body: { id: b.id, name, type, date: $('#bs-m').value + '-' + $('#bs-d').value, year: +$('#bs-y').value || 0, extra: +$('#bs-x').value, email: $('#bs-mail').value.trim() } }); toast('Enregistré'); done(); } catch (e) { toast(e.message); }
+  };
+  const del = $('#bs-del'); if (del) del.onclick = async () => { if (!confirm('Supprimer ' + b.name + ' ?')) return; try { await rapi('/bdays/delete', { method: 'POST', body: { id: b.id } }); toast('Supprimé'); done(); } catch (e) { toast(e.message); } };
+  const wr = $('#bs-write'); if (wr) wr.onclick = () => { closeSheet(); location.hash = '#/compose?' + new URLSearchParams({ to: b.email, subject: 'Joyeux anniversaire !' }); };
+}
+function bdImportSheet() {
+  openSheet(`<span class="grip"></span><h2>Importer une liste</h2><p class="fhint" style="margin:0">Une date par ligne : <b>24/11 Olivier Henot</b>, avec l’année si tu la connais (<b>17/02/1961 Laurence Morieux</b>), et « mariage » à la fin pour un anniversaire de mariage. Les doublons sont ignorés.</p>
+    <textarea id="bi-t" rows="10" placeholder="24/11 Olivier Henot"></textarea><button class="btn primary" id="bi-ok">Importer</button><button class="btn" data-close>Annuler</button>`);
+  $('#bi-ok').onclick = async () => { try { const o = await rapi('/bdays/import', { method: 'POST', body: { text: $('#bi-t').value } }); toast(o.added + ' ajouté(s) sur ' + o.read + ' ligne(s) lue(s)'); LS.del('bdays'); closeSheet(); renderBdays(); } catch (e) { toast(e.message); } };
 }
