@@ -713,3 +713,7 @@ body{overflow-x:clip}
 #list a.item.fol{background-color:color-mix(in srgb,#ff7a59 11%,var(--bg));box-shadow:inset 5px 0 0 #ff7a59}
 #list a.item.u.fol{background-color:color-mix(in srgb,#ff7a59 15%,var(--card))}
 #list a.item.fol .star.flag svg{width:17px;height:17px}
+.flag-pill{padding:0 12px;color:#ff7a59}.flag-pill svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2;stroke-linejoin:round}
+.flag-pill.on{border-color:#ff7a59;color:#ff7a59;background:color-mix(in srgb,#ff7a59 14%,var(--surface))}
+.tabrow{gap:8px}
+.tabrow .unr-pill{padding:0 10px}.tabrow .flag-pill{padding:0 9px}

@@ -28,13 +28,15 @@ async function renderList(key, q) {
     <form class="searchbar" id="searchbar" ${isSearch ? '' : 'hidden'}><input type="search" id="q" placeholder="Un mot ou une phrase" value="${esc(q || '')}" enterkeyhint="search" autocomplete="off"></form>
 
     ${(() => {
-      const inboxish = key === 'INBOX' || key === 'UNREAD';
+      const inboxish = key === 'INBOX' || key === 'UNREAD' || key === 'STARRED';
       const accs = freeOn() && !isFreeDir && (isSearch || freeFolderOf(key)) ? `<div class="accounts" role="tablist" aria-label="Comptes">
       ${[['all', 'Tous', ''], ['gmail', 'Gmail', 'var(--gmail)'], ['free', 'Free', 'var(--free)']].map(([k, n, c]) => `<button role="tab" aria-selected="${acc === k}" class="${acc === k ? 'on' : ''}" data-acc="${k}"><span class="acc-l">${c ? `<span class="dot" style="background:${c}"></span>` : ''}${n}</span>${inboxish ? `<small class="acc-n" data-n="${k}"></small>` : ''}</button>`).join('')}
     </div>` : '';
       if (!inboxish) return accs;
       const pill = `<a class="unr-pill ${key === 'UNREAD' ? 'on' : ''}" href="#/list/${key === 'UNREAD' ? 'INBOX' : 'UNREAD'}" aria-pressed="${key === 'UNREAD'}">Non lus<span class="fcount" id="fcount"></span>${key === 'UNREAD' ? '<span class="unr-x" aria-hidden="true"> ✕</span>' : ''}</a>`;
-      return `<div class="tabrow">${accs || '<div class="accounts one"><button class="on" aria-selected="true">Réception</button></div>'}${pill}</div>`;
+      // Drapeau : n'afficher que les mails suivis (Gmail et Free) ; un second toucher revient à la réception
+      const flag = `<a class="unr-pill flag-pill ${key === 'STARRED' ? 'on' : ''}" href="#/list/${key === 'STARRED' ? 'INBOX' : 'STARRED'}" aria-pressed="${key === 'STARRED'}" aria-label="${key === 'STARRED' ? 'Revenir à tous les mails' : 'Voir les mails suivis'}">${key === 'STARRED' ? ICON.flagOn : ICON.flag}</a>`;
+      return `<div class="tabrow">${accs || '<div class="accounts one"><button class="on" aria-selected="true">Réception</button></div>'}${key === 'STARRED' ? '' : pill}${flag}</div>`;
     })()}</div>
     ${contactQ ? `<div class="ai-note"><b>👤 ${esc(contactQ)}</b><span>Tous vos mails, dans les deux sens, Gmail et Free.</span>${settings.ai && relayOn() ? `<button class="btn" id="hist-go" style="margin-top:4px">${ICON.spark}Retracer l’historique</button>` : ''}</div><div id="hist-out"></div>` : ''}
     ${isSearch && state.aiNote && state.aiNote.q === q ? `<div class="ai-note"><b>✦ ${esc(state.aiNote.resume || 'Recherche de l’assistant')}</b><span>« ${esc(state.aiNote.ask)} » → <code>${esc(q)}</code></span><span class="ai-links"><a href="#/smart/${encodeURIComponent(state.aiNote.ask)}">✦ Pas trouvé ? Recherche par le sens</a><a href="#/search/${encodeURIComponent(state.aiNote.ask)}" id="ai-raw">Mots exacts</a></span></div>` : ''}
