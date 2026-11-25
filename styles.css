@@ -709,3 +709,7 @@ body{overflow-x:clip}
 .flag-btn{margin-left:auto;margin-right:6px;color:var(--muted)}.flag-btn svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2;stroke-linejoin:round}
 .flag-btn.on{color:#ff7a59;background:rgba(255,122,89,.15)}
 .star.flag{color:#ff7a59;display:inline-flex;margin-left:6px}.star.flag svg{width:15px;height:15px;stroke:currentColor;stroke-width:2;fill:none}
+/* Mails suivis : bande orange + fond teinté sur toute la ligne (repérables en défilant vite) */
+#list a.item.fol{background-color:color-mix(in srgb,#ff7a59 11%,var(--bg));box-shadow:inset 5px 0 0 #ff7a59}
+#list a.item.u.fol{background-color:color-mix(in srgb,#ff7a59 15%,var(--card))}
+#list a.item.fol .star.flag svg{width:17px;height:17px}

@@ -247,7 +247,7 @@ function itemHTML(it, cls, sentView) {
   const attSize = it.att && it.size && !sizeChip ? `<span class="att-size" aria-label="Pièce jointe, ${fmtMo(it.size)}">📎 ${fmtMo(it.size)}</span>` : '';
   const accChip = state.showAcc ? `<span class="chip acc-${it.acc === 'free' ? 'free' : 'gmail'}">${it.acc === 'free' ? 'Free' : 'Gmail'}</span>` : '';
   const auto = it.promo || NOREPLY_RE.test(it.fromEmail || '') ? ' auto' : '';
-  return `<a class="item ${cls}${sel}${auto}" data-id="${esc(it.id)}" href="${href}">
+  return `<a class="item ${cls}${sel}${auto}${it.starred ? ' fol' : ''}" data-id="${esc(it.id)}" href="${href}">
     <span class="mark" aria-hidden="true"></span>
     <span class="body">
       <span class="row1"><span class="who">${esc(who)}${it.count > 1 ? ` <span class="count">(${it.count})</span>` : ''}</span>${it.starred ? `<span class="star flag" role="button" aria-label="Ne plus suivre">${ICON.flagOn}</span>` : ''}<span class="when">${esc(state.dayMode ? new Date(it.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : fmtDate(it.date))}</span></span>
