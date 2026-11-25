@@ -721,3 +721,7 @@ body{overflow-x:clip}
 .th-top{position:sticky;top:0;z-index:30;background:var(--bg);margin:calc(-1 * (var(--safe-top) + 10px)) -12px 6px;padding:calc(var(--safe-top) + 10px) 16px 8px;border-bottom:1px solid transparent;transition:border-color .2s}
 .th-top.stuck{border-bottom-color:var(--line)}
 .th-top .flag-btn{margin-left:auto;margin-right:0}.th-top .fs-ctl{margin-left:0}
+.td-swipe{position:relative;overflow:hidden;border-top:1px solid var(--line)}.td-swipe:first-child{border-top:0}
+.td-swipe .td-w{position:relative;z-index:1;background:var(--card);border-top:0;transition:transform .2s}
+.td-del{position:absolute;top:0;right:0;bottom:0;width:96px;border:0;background:#8a8f98;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-weight:700;cursor:pointer}
+.td-del small{font-size:.75rem}

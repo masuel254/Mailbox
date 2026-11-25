@@ -61,7 +61,7 @@ async function renderToday(force, quiet) {
   const rb = $('#btn-refresh'); if (rb) rb.onclick = () => renderToday(true);
   const sn = $('#seg-n'); if (sn && state.counts && state.counts.own) sn.textContent = ' · ' + state.counts.own;
   state.listCtx = null; state.current = 'today';
-  const [mails, ag, wait, snz] = await Promise.all([
+  let [mails, ag, wait, snz] = await Promise.all([
     todayMails().catch(e => { if (e.message !== 'auth') toast(e.message); return []; }),
     todayAgenda().catch(() => []),
     todayWaiting(force).catch(() => []),
@@ -73,9 +73,25 @@ async function renderToday(force, quiet) {
   $('#td-ag').innerHTML = ag.length ? ag.map(x => { const soon = !x.allDay && x.s > now ? Math.round((x.s - now) / 60000) : null;
     return `<a class="td-ev" href="#/agenda" data-day="1"><span class="td-t">${x.allDay ? 'Journée' : hm(x.s)}</span><span class="td-eb" style="--c:${esc(x.color)}"><b>${esc(x.title)}</b><small>${x.loc ? locChip(x.loc) + ' · ' : ''}${esc(x.src)}${soon !== null && soon < 600 ? ' · dans ' + (soon >= 60 ? Math.floor(soon / 60) + ' h ' + String(soon % 60).padStart(2, '0') : soon + ' min') : ''}</small></span></a>`; }).join('') : '<div class="empty small">Rien de prévu aujourd’hui.</div>';
   $$('[data-day]', $('#td-ag')).forEach(a => a.onclick = () => { state.agDay = startOfDay(new Date()); LS.set('agMode', 'day'); });
-  // En attente de réponse
+  // En attente de réponse (sans les mails envoyés à soi-même, ni ceux retirés d'un glissement)
+  const hidden = new Set(LS.get('waitHide', []));
+  wait = wait.filter(w => !hidden.has(w.id) && !isMe(w.toEmail || ''));
   $('#td-wait').innerHTML = wait.length ? `<h2 class="sec">En attente de réponse · ${wait.length}</h2><div class="card td-card">${wait.map((w, i) => { const d = Math.floor((Date.now() - w.date) / 864e5);
-    return `<div class="td-w"><a href="${w.acc === 'free' ? '#/free/' + encodeURIComponent(w.folder) + '/' + w.uid : '#/thread/' + encodeURIComponent(w.id)}"><b>${esc(w.to || w.toEmail)} · ${esc(w.subject)}</b><small>Envoyé il y a ${d} jour${d > 1 ? 's' : ''}</small></a><button class="btn" data-rel="${i}">Relancer</button></div>`; }).join('')}</div>` : '';
+    return `<div class="td-swipe"><button type="button" class="td-del" data-hide="${esc(w.id)}"><span style="font-size:1.1rem">✕</span><small>Retirer</small></button><div class="td-w"><a href="${w.acc === 'free' ? '#/free/' + encodeURIComponent(w.folder) + '/' + w.uid : '#/thread/' + encodeURIComponent(w.id)}"><b>${esc(w.to || w.toEmail)} · ${esc(w.subject)}</b><small>Envoyé il y a ${d} jour${d > 1 ? 's' : ''}</small></a><button class="btn" data-rel="${i}">Relancer</button></div></div>`; }).join('')}</div>` : '';
+  // glisser à gauche : « Retirer » (n'est plus suivi ici ; le mail n'est pas supprimé)
+  $$('#td-wait .td-w').forEach(row => {
+    let x0 = 0, y0 = 0, dx = 0, on = null;
+    row.addEventListener('touchstart', e => { x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; dx = 0; on = null; $$('#td-wait .td-w[data-open]').forEach(r => { if (r !== row) { r.style.transform = ''; delete r.dataset.open; } }); }, { passive: true });
+    row.addEventListener('touchmove', e => { const mx = e.touches[0].clientX - x0, my = e.touches[0].clientY - y0; if (on === null) on = Math.abs(mx) > 8 && Math.abs(mx) > Math.abs(my); if (!on) return;
+      dx = Math.max(-110, Math.min(0, mx + (row.dataset.open ? -96 : 0))); row.style.transition = 'none'; row.style.transform = `translateX(${dx}px)`; }, { passive: true });
+    row.addEventListener('touchend', () => { if (!on) return; row.style.transition = ''; if (dx < -45) { row.style.transform = 'translateX(-96px)'; row.dataset.open = 1; } else { row.style.transform = ''; delete row.dataset.open; } });
+    row.addEventListener('click', e => { if (row.dataset.open) { e.preventDefault(); e.stopPropagation(); row.style.transform = ''; delete row.dataset.open; } }, true);
+  });
+  $$('[data-hide]').forEach(b => b.onclick = () => {
+    const id = b.dataset.hide, l = LS.get('waitHide', []); l.push(id); LS.set('waitHide', l.slice(-200));
+    b.closest('.td-swipe').remove(); const h = $('#td-wait .sec'); const n = $$('#td-wait .td-swipe').length; if (h) h.textContent = 'En attente de réponse · ' + n; if (!n) $('#td-wait').innerHTML = '';
+    undoToast('Retiré de « En attente »', () => { LS.set('waitHide', LS.get('waitHide', []).filter(x => x !== id)); renderToday(false, true); });
+  });
   $$('[data-rel]').forEach(b => b.onclick = () => { const w = wait[+b.dataset.rel]; state.composeFrom = { mode: 'new', to: w.to && w.to !== w.toEmail ? '"' + w.to.replace(/"/g, '') + '" <' + w.toEmail + '>' : w.toEmail, subject: /^re\s*:/i.test(w.subject) ? w.subject : 'Re: ' + w.subject, prefill: 'Bonjour,\n\nJe me permets de revenir vers vous concernant mon message du ' + new Date(w.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) + '. Avez-vous pu en prendre connaissance ?\n\nBien cordialement,\n' }; location.hash = '#/compose?mode=new&t=' + Date.now(); });
   // Revient aujourd'hui
   $('#td-snz').innerHTML = snz.length ? `<h2 class="sec">Revient aujourd’hui</h2><div class="card td-card">${snz.map(x => `<div class="td-w"><span><b>${esc(x.from || 'Mail')} · ${esc(x.subject)}</b><small>Revient à ${esc(new Date(x.until).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }))}</small></span></div>`).join('')}</div>` : '';
