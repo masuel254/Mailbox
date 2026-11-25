@@ -133,3 +133,5 @@ if (window.visualViewport) {
   // filet de sécurité : vérification légère toutes les 1,5 s quand l'appli est affichée
   setInterval(() => { if (document.visibilityState === 'visible') pin(); }, 1500);
 })();
+// Ligne du haut d'un mail figée : un trait apparaît sous elle quand on a défilé
+window.addEventListener('scroll', () => { const t = document.querySelector('.th-top'); if (t) t.classList.toggle('stuck', window.scrollY > 8); }, { passive: true });

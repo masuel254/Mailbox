@@ -55,7 +55,7 @@ async function renderThread(id) {
   const unsubH = hdr(lastM, 'List-Unsubscribe'), unsubP = hdr(lastM, 'List-Unsubscribe-Post');
   const chips = [...labels].map(l => l === 'INBOX' ? '<span class="chip">Réception</span>' : (labelById(l) ? `<span class="chip lab" style="--c:${esc(labelColor(labelById(l)))}">${esc(labelById(l).name)}</span>` : '')).join('');
   v.innerHTML = `
-    <div class="top"><a class="back" href="#" id="back">${ICON.back}Retour</a><button class="icon-btn flag-btn ${starred ? 'on' : ''}" id="t-flag" aria-pressed="${starred}" aria-label="${starred ? 'Ne plus suivre' : 'Suivre ce mail'}">${starred ? ICON.flagOn : ICON.flag}</button>${FS_CTL}</div>
+    <div class="top th-top"><a class="back" href="#" id="back">${ICON.back}Retour</a><button class="icon-btn flag-btn ${starred ? 'on' : ''}" id="t-flag" aria-pressed="${starred}" aria-label="${starred ? 'Ne plus suivre' : 'Suivre ce mail'}">${starred ? ICON.flagOn : ICON.flag}</button>${FS_CTL}</div>
     ${(() => { const lm = msgs[msgs.length - 1] || {}, fa = parseAddr(hdr(lm, 'From')); const tos = splitAddrs(hdr(lm, 'To')).concat(splitAddrs(hdr(lm, 'Cc'))).map(parseAddr).map(shortName);
       return senderTop(fa.name || fa.email, fa.email, tos.join(', '), +lm.internalDate, msgs.length); })()}
     <h1 class="thread-title">${esc(subject)}</h1>
@@ -128,7 +128,7 @@ async function renderFree(folder, uid) {
   if (!m.seen) { rapi('/free/flags', { method: 'POST', body: { folder, uids: [uid], seen: true } }).then(() => { ixTell([id], 'read'); badgeNow(1); }).catch(e => { if (isNetErr(e)) queueAction({ t: 'fflags', body: { folder, uids: [uid], seen: true } }); }); patchCached(id, i => Object.assign({}, i, { unread: false })); }
   state.freeMsg = m;
   v.innerHTML = `
-    <div class="top"><a class="back" href="#" id="back">${ICON.back}Retour</a><button class="icon-btn flag-btn ${m.flagged ? 'on' : ''}" id="t-flag" aria-pressed="${!!m.flagged}" aria-label="${m.flagged ? 'Ne plus suivre' : 'Suivre ce mail'}">${m.flagged ? ICON.flagOn : ICON.flag}</button>${FS_CTL}</div>
+    <div class="top th-top"><a class="back" href="#" id="back">${ICON.back}Retour</a><button class="icon-btn flag-btn ${m.flagged ? 'on' : ''}" id="t-flag" aria-pressed="${!!m.flagged}" aria-label="${m.flagged ? 'Ne plus suivre' : 'Suivre ce mail'}">${m.flagged ? ICON.flagOn : ICON.flag}</button>${FS_CTL}</div>
     ${senderTop(m.from.name || m.from.email, m.from.email, (m.to || '') + (m.cc ? ', ' + m.cc : ''), m.date, 1)}
     <h1 class="thread-title">${esc(m.subject)}</h1>
     <div class="thread-chips"><span class="chip acc-free">Free</span><span class="chip">${esc(folder === 'INBOX' ? 'Réception' : folder)}</span></div>

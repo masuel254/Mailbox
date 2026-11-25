@@ -717,3 +717,7 @@ body{overflow-x:clip}
 .flag-pill.on{border-color:#ff7a59;color:#ff7a59;background:color-mix(in srgb,#ff7a59 14%,var(--surface))}
 .tabrow{gap:8px}
 .tabrow .unr-pill{padding:0 10px}.tabrow .flag-pill{padding:0 9px}
+/* Mail ouvert : la ligne Retour / drapeau / A− A+ reste en haut pendant la lecture */
+.th-top{position:sticky;top:0;z-index:30;background:var(--bg);margin:calc(-1 * (var(--safe-top) + 10px)) -12px 6px;padding:calc(var(--safe-top) + 10px) 16px 8px;border-bottom:1px solid transparent;transition:border-color .2s}
+.th-top.stuck{border-bottom-color:var(--line)}
+.th-top .flag-btn{margin-left:auto;margin-right:0}.th-top .fs-ctl{margin-left:0}
