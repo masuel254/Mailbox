@@ -104,3 +104,32 @@ if (window.visualViewport) {
   const vvFix = () => document.body.classList.toggle('zoomed', window.visualViewport.scale > 1.02);
   window.visualViewport.addEventListener('resize', vvFix); window.visualViewport.addEventListener('scroll', vvFix);
 }
+/* iPhone : barres fixes du bas (Répondre, onglets, sélection) qui « remontent » au milieu de l'écran.
+   Cause : après un clavier, un retour d'arrière-plan ou un défilement à inertie, iOS garde parfois une ancienne
+   hauteur d'écran pour les éléments fixés en bas. On mesure où la barre est vraiment et on la recolle au bas
+   de l'écran visible ; on force aussi iOS à la redessiner quand le défilement s'arrête. */
+(() => {
+  const vv = window.visualViewport;
+  const typing = () => { const a = document.activeElement; return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable); };
+  const bars = () => ['.reply-bar', '#tabbar', '#selbar'].map(s => document.querySelector(s)).filter(el => el && el.getClientRects().length && getComputedStyle(el).position === 'fixed');
+  const pin = () => {
+    if (!vv || vv.scale > 1.02 || typing()) return;
+    const bottom = vv.offsetTop + vv.height;
+    bars().forEach(el => {
+      el.style.transform = '';
+      const d = Math.round(bottom - el.getBoundingClientRect().bottom);
+      if (d > 2 && d < 800) { el.style.transform = `translateY(${d}px)`; try { LS.set('pinDbg', { at: Date.now(), d, ih: innerHeight, vh: Math.round(vv.height), ot: Math.round(vv.offsetTop), el: el.id || el.className }); } catch (e) {} }
+    });
+  };
+  const repaint = () => { bars().forEach(el => { el.style.willChange = 'transform'; void el.offsetHeight; requestAnimationFrame(() => { el.style.willChange = ''; }); }); pin(); };
+  let t = 0; const soon = (ms) => { clearTimeout(t); t = setTimeout(repaint, ms); };
+  window.addEventListener('scroll', () => soon(120), { passive: true });
+  window.addEventListener('resize', () => soon(60));
+  if (vv) { vv.addEventListener('resize', () => soon(60)); vv.addEventListener('scroll', () => soon(120)); }
+  document.addEventListener('focusout', () => { setTimeout(() => { window.scrollTo(window.scrollX, window.scrollY); repaint(); }, 250); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setTimeout(repaint, 300); });
+  window.addEventListener('pageshow', () => setTimeout(repaint, 300));
+  window.addEventListener('hashchange', () => setTimeout(repaint, 350));
+  // filet de sécurité : vérification légère toutes les 1,5 s quand l'appli est affichée
+  setInterval(() => { if (document.visibilityState === 'visible') pin(); }, 1500);
+})();
