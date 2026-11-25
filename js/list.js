@@ -63,7 +63,8 @@ async function renderList(key, q) {
   if (isSearch && !contactQ && q) bestMatches(q).catch(() => { const b = $('#best'); if (b) b.innerHTML = ''; });
   $('#btn-select').onclick = () => state.sel ? exitSelect() : enterSelect();
   state.listCtx = { key, q, cacheKey, plain };
-  $$('.accounts button[data-acc]').forEach(b => b.onclick = () => { settings.acc = b.dataset.acc; saveSettings(); renderList(key, q); });
+  // Vue « Suivis » ouverte par le drapeau : toucher Tous / Gmail / Free ramène à la réception (avec ce compte)
+  $$('.accounts button[data-acc]').forEach(b => b.onclick = () => { settings.acc = b.dataset.acc; saveSettings(); if (key === 'STARRED') { location.hash = '#/list/INBOX'; return; } renderList(key, q); });
   const be = $('#btn-empty'); if (be) { be.onclick = () => key === 'TRASH' ? emptyTrash() : emptyLabel(key, title); new Promise(r => setTimeout(r, 2500)).then(() => labelSize(key)).then(t => { const el = $('#lab-size'); if (!el) return; if (t === 'Vide' && kids.length) { el.textContent = 'Tes mails sont dans ses ' + kids.length + ' sous-dossier' + (kids.length > 1 ? 's' : '') + ', ci-dessous'; be.hidden = true; } else el.textContent = t; if (t === 'Vide' && $$('#list a.item').length) { delete state.lists[cacheKey]; loadList(key, q, cacheKey, plain, true); } }); }
   bindListGestures($('#list'));
   let cached = state.lists[cacheKey];
