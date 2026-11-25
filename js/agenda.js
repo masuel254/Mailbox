@@ -685,7 +685,7 @@ async function renderBdays() {
       h += `<div class="bd-wrap"><button type="button" class="bd-del" data-del="${esc(o.b.id)}">${ICON.trash}<small>Supprimer</small></button><button class="bd-row ${n === 0 ? 'today' : ''}" data-bd="${esc(o.b.id)}"><span class="av">${esc(initials(o.b.name))}</span><span class="bd-t"><b>${esc(o.b.name)}</b><small>${[o.b.type === 'mariage' ? 'Mariage' : '', o.age ? (o.b.type === 'mariage' ? o.age + ' ans de mariage' : 'Aura ' + o.age + ' ans') : '', o.s.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })].filter(Boolean).map(esc).join(' · ')}</small></span><span class="bd-n">${n === 0 ? '🎉' : n + ' j'}</span></button></div>`;
     });
     box.innerHTML = (h ? h + '</div>' : '<p class="fhint">Aucun résultat.</p>') + `<p class="fhint" style="text-align:center">${list.length} date${list.length > 1 ? 's' : ''} enregistrée${list.length > 1 ? 's' : ''}</p>`;
-    $$('[data-bd]', box).forEach(b => b.onclick = () => { if (b.dataset.open) { bdClose(b); return; } bdSheet(list.find(x => x.id === b.dataset.bd)); });
+    $$('[data-bd]', box).forEach(b => b.onclick = () => { if (Date.now() - (+b.dataset.sw || 0) < 500) return; if (b.dataset.open) { bdClose(b); return; } bdSheet(list.find(x => x.id === b.dataset.bd)); });
     // glisser vers la gauche : bouton Supprimer (annulable)
     $$('.bd-row', box).forEach(row => {
       let x0 = 0, y0 = 0, dx = 0, on = false;
@@ -696,7 +696,7 @@ async function renderBdays() {
         if (!on) return;
         dx = Math.max(-110, Math.min(0, mx + (row.dataset.open ? -96 : 0))); row.style.transition = 'none'; row.style.transform = `translateX(${dx}px)`;
       }, { passive: true });
-      row.addEventListener('touchend', () => { if (!on) return; row.style.transition = ''; if (dx < -45) { row.style.transform = 'translateX(-96px)'; row.dataset.open = 1; } else bdClose(row); });
+      row.addEventListener('touchend', () => { if (!on) return; row.dataset.sw = Date.now(); row.style.transition = ''; if (dx < -45) { row.style.transform = 'translateX(-96px)'; row.dataset.open = 1; } else bdClose(row); });
     });
     $$('[data-del]', box).forEach(b => b.onclick = async () => {
       const it = list.find(x => x.id === b.dataset.del); if (!it) return;
