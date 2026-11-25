@@ -705,3 +705,7 @@ body{overflow-x:clip}
 .bd-banner{padding:6px 10px;margin:2px 0 8px;gap:8px;border-radius:10px}.bd-banner .bd-ic{font-size:1.05rem}
 .bd-banner .bd-tx{flex-direction:row;align-items:baseline;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
 .bd-banner b{font-size:.82rem}.bd-banner small{font-size:.76rem}
+/* Drapeau « Suivre » */
+.flag-btn{margin-left:auto;margin-right:6px;color:var(--muted)}.flag-btn svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2;stroke-linejoin:round}
+.flag-btn.on{color:#ff7a59;background:rgba(255,122,89,.15)}
+.star.flag{color:#ff7a59;display:inline-flex;margin-left:6px}.star.flag svg{width:15px;height:15px;stroke:currentColor;stroke-width:2;fill:none}

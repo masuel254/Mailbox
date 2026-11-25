@@ -252,10 +252,12 @@ const addr = a => (a && a[0]) ? { name: a[0].name || a[0].address || '', email: 
 const addrList = a => (a || []).map(x => (x.name ? `"${x.name.replace(/"/g, '')}" <${x.address}>` : x.address)).join(', ');
 async function freeList(folderKey, unread, before, limit) {
   return withImap(async client => {
-    const folder = await resolveFolder(client, folderKey);
+    // « Suivis » : mails de la réception marqués d'un drapeau
+    const flaggedOnly = folderKey === 'FLAGGED';
+    const folder = flaggedOnly ? 'INBOX' : await resolveFolder(client, folderKey);
     const lock = await client.getMailboxLock(folder);
     try {
-      let uids = await client.search(unread ? { seen: false } : { all: true }, { uid: true }) || [];
+      let uids = await client.search(flaggedOnly ? { flagged: true } : unread ? { seen: false } : { all: true }, { uid: true }) || [];
       uids.sort((a, b) => b - a);
       if (before) uids = uids.filter(u => u < before);
       const total = uids.length;
@@ -437,7 +439,7 @@ async function freeMessage(folderKey, uid) {
         uid, folder, subject: p.subject || '(sans objet)', from: p.from ? { name: p.from.value[0].name || p.from.value[0].address, email: (p.from.value[0].address || '').toLowerCase() } : { name: '', email: '' },
         fromRaw: p.from ? p.from.text : '', to: p.to ? p.to.text : '', cc: p.cc ? p.cc.text : '', replyTo: p.replyTo ? p.replyTo.text : '',
         date: +(p.date || Date.now()), html: p.html || null, text: p.text || '', messageId: p.messageId || '', references: [].concat(p.references || []).join(' '),
-        seen: m.flags.has('\\Seen'),
+        seen: m.flags.has('\\Seen'), flagged: m.flags.has('\\Flagged'),
         unsub: headerText(m.source, 'List-Unsubscribe'),
         unsubPost: headerText(m.source, 'List-Unsubscribe-Post'),
         attachments: (p.attachments || []).map((a, i) => ({ idx: i, name: a.filename || 'piece-jointe-' + (i + 1), mime: a.contentType, size: a.size, cid: a.cid || '', data: a.size < 300000 && a.cid ? a.content.toString('base64') : undefined,
@@ -940,7 +942,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.17.1';
+const RELAY_V = '4.18.0';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */

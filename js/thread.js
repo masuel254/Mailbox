@@ -55,7 +55,7 @@ async function renderThread(id) {
   const unsubH = hdr(lastM, 'List-Unsubscribe'), unsubP = hdr(lastM, 'List-Unsubscribe-Post');
   const chips = [...labels].map(l => l === 'INBOX' ? '<span class="chip">Réception</span>' : (labelById(l) ? `<span class="chip lab" style="--c:${esc(labelColor(labelById(l)))}">${esc(labelById(l).name)}</span>` : '')).join('');
   v.innerHTML = `
-    <div class="top"><a class="back" href="#" id="back">${ICON.back}Retour</a>${FS_CTL}</div>
+    <div class="top"><a class="back" href="#" id="back">${ICON.back}Retour</a><button class="icon-btn flag-btn ${starred ? 'on' : ''}" id="t-flag" aria-pressed="${starred}" aria-label="${starred ? 'Ne plus suivre' : 'Suivre ce mail'}">${starred ? ICON.flagOn : ICON.flag}</button>${FS_CTL}</div>
     ${(() => { const lm = msgs[msgs.length - 1] || {}, fa = parseAddr(hdr(lm, 'From')); const tos = splitAddrs(hdr(lm, 'To')).concat(splitAddrs(hdr(lm, 'Cc'))).map(parseAddr).map(shortName);
       return senderTop(fa.name || fa.email, fa.email, tos.join(', '), +lm.internalDate, msgs.length); })()}
     <h1 class="thread-title">${esc(subject)}</h1>
@@ -100,12 +100,13 @@ async function renderThread(id) {
     catch (e) { if (isNetErr(e)) { queueAction({ t: 'act', ids: [id], kind: 'trash' }); toast('Hors connexion : supprimé au retour du réseau'); } else { gone.delete(id); if (e.message !== 'auth') toast(e.message); refreshVisibleList(); } }
   };
   $('#t-unread').onclick = () => { setLocal([id], { unread: true }); patchCached(id, i => Object.assign({}, i, { unread: true })); threadAction(id, { addLabelIds: ['UNREAD'] }, 'Marqué non lu', true); };
+  $('#t-flag').onclick = () => $('#t-star').click();
   $('#t-star').onclick = async () => {
     try {
       if (starred) await api('threads/' + id + '/modify', { method: 'POST', body: { removeLabelIds: ['STARRED'] } });
       else await api('messages/' + last.id + '/modify', { method: 'POST', body: { addLabelIds: ['STARRED'] } });
-      patchCached(id, i => Object.assign({}, i, { starred: !starred }));
-      renderThread(id);
+      patchCached(id, i => Object.assign({}, i, { starred: !starred })); setLocal([id], { starred: !starred });
+      toast(starred ? 'Plus suivi' : 'Suivi : il est dans Dossiers › Suivis'); renderThread(id);
     } catch (e) { if (e.message !== 'auth') toast(e.message); }
   };
   $('#t-label').onclick = () => labelSheet(id, labels);
@@ -122,11 +123,12 @@ async function renderFree(folder, uid) {
   try { m = await fastFetch('fm:' + folder + ':' + uid, () => rapi('/free/message?' + new URLSearchParams({ folder, uid })), () => false); }
   catch (e) { v.querySelector('.loading').outerHTML = `<div class="empty">Impossible d'ouvrir : ${esc(e.message)}</div>`; return; }
   const id = 'f:' + uid + ':' + folder;
+  { const lp = localPatch.get(id); if (lp && lp.p && 'starred' in lp.p) m.flagged = lp.p.starred; }  // copie en cache parfois en retard
   setLocal([id], { unread: false });
   if (!m.seen) { rapi('/free/flags', { method: 'POST', body: { folder, uids: [uid], seen: true } }).then(() => { ixTell([id], 'read'); badgeNow(1); }).catch(e => { if (isNetErr(e)) queueAction({ t: 'fflags', body: { folder, uids: [uid], seen: true } }); }); patchCached(id, i => Object.assign({}, i, { unread: false })); }
   state.freeMsg = m;
   v.innerHTML = `
-    <div class="top"><a class="back" href="#" id="back">${ICON.back}Retour</a>${FS_CTL}</div>
+    <div class="top"><a class="back" href="#" id="back">${ICON.back}Retour</a><button class="icon-btn flag-btn ${m.flagged ? 'on' : ''}" id="t-flag" aria-pressed="${!!m.flagged}" aria-label="${m.flagged ? 'Ne plus suivre' : 'Suivre ce mail'}">${m.flagged ? ICON.flagOn : ICON.flag}</button>${FS_CTL}</div>
     ${senderTop(m.from.name || m.from.email, m.from.email, (m.to || '') + (m.cc ? ', ' + m.cc : ''), m.date, 1)}
     <h1 class="thread-title">${esc(m.subject)}</h1>
     <div class="thread-chips"><span class="chip acc-free">Free</span><span class="chip">${esc(folder === 'INBOX' ? 'Réception' : folder)}</span></div>
@@ -167,6 +169,12 @@ async function renderFree(folder, uid) {
   $('#t-unread').onclick = async () => { setLocal([id], { unread: true }); patchCached(id, i => Object.assign({}, i, { unread: true })); goBack(); toast('Marqué non lu'); try { await rapi('/free/flags', { method: 'POST', body: { folder, uids: [uid], seen: false } }); ixTell([id], 'unread'); badgeNow(0); } catch (e) { localPatch.delete(id); toast(e.message); } };
   $('#t-block').onclick = () => { goBack(); quickBlock({ id, fromEmail: m.from.email, fromName: m.from.name }); };
   $('#t-fmove').onclick = () => freeMoveSheet(id, folder, uid);
+  $('#t-flag').onclick = async () => {
+    const v = !m.flagged;
+    try { await rapi('/free/flags', { method: 'POST', body: { folder, uids: [uid], flagged: v } }); m.flagged = v; patchCached(id, i => Object.assign({}, i, { starred: v })); setLocal([id], { starred: v });
+      const b = $('#t-flag'); b.classList.toggle('on', v); b.setAttribute('aria-pressed', v); b.innerHTML = v ? ICON.flagOn : ICON.flag; toast(v ? 'Suivi : il est dans Dossiers › Suivis' : 'Plus suivi'); }
+    catch (e) { toast(e.message); }
+  };
   state.thread = null; state.freeCtx = { id, folder, uid };
   bindReadTools();
   state.unsub = m.unsub ? { h: m.unsub, post: m.unsubPost, acc: 'free' } : null;

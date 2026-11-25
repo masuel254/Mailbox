@@ -2,7 +2,7 @@
    Le code est découpé par domaine ; les fichiers sont chargés dans l'ordre de index.html et partagent la même portée. */
 'use strict';
 
-const APP_VERSION = '4.17.3';
+const APP_VERSION = '4.18.0';
 const APP_DATE = '25/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
@@ -50,7 +50,7 @@ async function fastFetch(key, fetcher, changed) {
   return cachedFetch(key, fetcher);
 }
 // Version minimale du relais attendue par cette appli (à relever quand le relais change)
-const MIN_RELAY = '4.17.1';
+const MIN_RELAY = '4.18.0';
 const verLt = (a, b) => { const x = String(a || '0').split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) < (y[i] || 0); } return false; };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const settings = Object.assign({ clientId: '', fontSize: 18, theme: 'auto', images: true, readable: true, email: '', relayUrl: 'https://vps-444b360b.vps.ovh.net/mailbox', relayToken: '', relayGmail: false, freeEmail: '', acc: 'all', vapid: '', primaryOnly: false }, LS.get('settings', {}));
@@ -92,6 +92,8 @@ const ICON = {
   trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 7V4h4v3M6 7l1 13h10l1-13"/></svg>',
   tag: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12V4h8l10 10-8 8L3 12z"/><circle cx="7.5" cy="7.5" r="1.2"/></svg>',
   unread: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>',
+  flag: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/></svg>',
+  flagOn: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5z" style="fill:currentColor"/></svg>',
   star: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>',
   starOn: '<svg viewBox="0 0 24 24" aria-hidden="true" style="fill:currentColor"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>',
   clip: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11l-8.5 8.5a5 5 0 0 1-7-7L13 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L14 7"/></svg>',
@@ -295,7 +297,7 @@ const toUrlB64 = s => s.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '
 /* ---------- Routage ---------- */
 const state = { lists: {}, current: null, me: null };
 const keyOf = ck => String(ck).split('|').pop();
-const FREE_FOLDERS = { INBOX: 'INBOX', UNREAD: 'INBOX', SENT: 'SENT', TRASH: 'TRASH', SPAM: 'JUNK' };
+const FREE_FOLDERS = { INBOX: 'INBOX', UNREAD: 'INBOX', SENT: 'SENT', TRASH: 'TRASH', SPAM: 'JUNK', STARRED: 'FLAGGED' };
 const isBlockLabel = key => { try { return (labelById(key) || {}).name === BLOCK_LABEL; } catch (e) { return false; } };
 const isFolderView = key => String(key).startsWith('F:') || (!SYSTEM[key] && key !== 'SEARCH' && !String(key).startsWith('S:'));
 const freeFolderOf = key => FREE_FOLDERS[key] || (String(key).startsWith('F:') ? decodeURIComponent(key.slice(2)) : null) || (isBlockLabel(key) ? 'BLOCKED' : null) || (isMenageLabel(key) ? 'MENAGE' : null);

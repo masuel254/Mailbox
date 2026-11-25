@@ -250,7 +250,7 @@ function itemHTML(it, cls, sentView) {
   return `<a class="item ${cls}${sel}${auto}" data-id="${esc(it.id)}" href="${href}">
     <span class="mark" aria-hidden="true"></span>
     <span class="body">
-      <span class="row1"><span class="who">${esc(who)}${it.count > 1 ? ` <span class="count">(${it.count})</span>` : ''}</span>${it.starred ? '<span class="star" role="button" aria-label="Ne plus suivre">★</span>' : ''}<span class="when">${esc(state.dayMode ? new Date(it.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : fmtDate(it.date))}</span></span>
+      <span class="row1"><span class="who">${esc(who)}${it.count > 1 ? ` <span class="count">(${it.count})</span>` : ''}</span>${it.starred ? `<span class="star flag" role="button" aria-label="Ne plus suivre">${ICON.flagOn}</span>` : ''}<span class="when">${esc(state.dayMode ? new Date(it.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : fmtDate(it.date))}</span></span>
       <span class="subj${attSize ? ' has-att' : ''}"><span class="subj-t">${it.unread ? '<span class="sr">Non lu : </span>' : ''}${esc(it.subject)}</span>${attSize}</span>
       <span class="row3"><span class="snip">${esc(it.snippet)}</span><span class="chips">${it.att && !attSize ? '<span class="chip att-chip" title="Pièce jointe">📎</span>' : ''}${sizeChip}${accChip}${chips}</span></span>
     </span></a>`;
@@ -306,7 +306,7 @@ function drawList(data, plain) {
   const m = $('#more');
   if (m) m.onclick = () => { m.disabled = true; m.textContent = 'Chargement…'; const base = keyOf(state.current); loadList(base.startsWith('S:') ? 'SEARCH' : base, base.startsWith('S:') ? base.slice(2) : null, state.current, plain, false); };
 }
-function patchCached(id, fn) { Object.values(state.lists).forEach(d => { d.items = d.items.map(i => i.id === id ? fn(i) : i).filter(Boolean); }); }
+function patchCached(id, fn) { Object.values(state.lists).forEach(d => { if (d && Array.isArray(d.items)) d.items = d.items.filter(Boolean).map(i => i.id === id ? fn(i) : i).filter(Boolean); }); }
 
 async function readAll(btn) {
   const ck = String(state.current), acc = ck.includes('|') ? ck.split('|')[0] : 'gmail', key = keyOf(ck);
