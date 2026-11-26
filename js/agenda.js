@@ -38,12 +38,13 @@ async function loadContacts(force) {
   if (c && !force && Date.now() - c.at < 10 * 60000) return c.list;
   const people = []; let page = null;
   do {
-    const p = new URLSearchParams({ personFields: 'names,emailAddresses,phoneNumbers,organizations', pageSize: 1000, sortOrder: 'FIRST_NAME_ASCENDING' });
+    const p = new URLSearchParams({ personFields: 'names,emailAddresses,phoneNumbers,organizations,birthdays', pageSize: 1000, sortOrder: 'FIRST_NAME_ASCENDING' });
     if (page) p.set('pageToken', page);
     const r = (await gx('https://people.googleapis.com/v1/people/me/connections?' + p)) || {};
     (r.connections || []).forEach(x => people.push({
       rn: x.resourceName, name: ((x.names || [])[0] || {}).displayName || '', emails: (x.emailAddresses || []).map(e => (e.value || '').toLowerCase()).filter(Boolean),
-      phones: (x.phoneNumbers || []).map(e => e.value).filter(Boolean), org: ((x.organizations || [])[0] || {}).name || ''
+      phones: (x.phoneNumbers || []).map(e => e.value).filter(Boolean), org: ((x.organizations || [])[0] || {}).name || '',
+      bday: (() => { const d = ((x.birthdays || []).find(b => b.date && b.date.month && b.date.day) || {}).date; return d ? { d: d.day, m: d.month, y: d.year || 0 } : null; })()
     }));
     page = r.nextPageToken;
   } while (page && people.length < 5000);
@@ -109,7 +110,7 @@ function contactSheet(p, onChange) {
   const e0 = p.emails[0], ph = p.phones[0];
   openSheet(`<span class="grip"></span>
     <div style="display:flex;gap:12px;align-items:center"><span class="av big" style="background:${avColor(p.name)}">${esc(initials(p.name))}</span><div style="min-width:0"><h2 style="margin:0">${esc(p.name)}</h2>${p.org && p.org !== p.name ? `<div class="fhint" style="margin:0">${esc(p.org)}</div>` : ''}</div></div>
-    <div class="ct-info">${p.emails.map(e => `<div>✉️ ${esc(e)}</div>`).join('')}${p.phones.map(t => `<div>📞 ${esc(t)}</div>`).join('')}
+    <div class="ct-info">${p.emails.map(e => `<div>✉️ ${esc(e)}</div>`).join('')}${p.phones.map(t => `<div>📞 ${esc(t)}</div>`).join('')}${p.bday ? `<div>🎂 ${esc(bdFmt(p.bday))}</div>` : ''}
     ${p.count ? `<div class="fhint" style="margin:4px 0 0">${p.count} mail${p.count > 1 ? 's' : ''} échangé${p.count > 1 ? 's' : ''}${p.last ? ' · dernier le ' + new Date(p.last).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : ''}</div>` : ''}
     ${!p.rn ? '<div class="fhint" style="margin:4px 0 0">Correspondant trouvé dans tes mails, pas encore enregistré dans tes contacts.</div>' : ''}</div>
     <div class="ct-acts">
@@ -159,6 +160,7 @@ function contactEdit(p, onChange) {
     <label class="f">Société<input id="ce-org" autocomplete="off" value="${esc(p.org || '')}"></label>
     ${multi('ce-mails', 'Mails', p.emails, 'email')}
     ${multi('ce-tels', 'Téléphones', p.phones, 'tel')}
+    <div class="f-multi"><span class="f-lab">Date de naissance</span><div style="display:grid;grid-template-columns:1fr 1.6fr 1.2fr;gap:8px"><select id="ce-bd">${['<option value="">Jour</option>', ...[...Array(31)].map((_, i) => `<option ${p.bday && p.bday.d === i + 1 ? 'selected' : ''}>${i + 1}</option>`)].join('')}</select><select id="ce-bm">${['<option value="">Mois</option>', ...BD_MONTHS.map((x, i) => `<option value="${i + 1}" ${p.bday && p.bday.m === i + 1 ? 'selected' : ''}>${x}</option>`)].join('')}</select><input id="ce-by" inputmode="numeric" placeholder="Année" value="${p.bday && p.bday.y ? p.bday.y : ''}"></div><span class="fhint" style="margin:2px 0 0">Ajoute l’anniversaire à ton agenda, avec rappel le jour J à 07:30.</span></div>
     <p class="fhint" style="margin:0">Enregistré dans tes contacts Google : visible aussi dans Contacts sur l’iPhone si ton compte Google y est synchronisé.</p>
     <div style="display:grid;grid-template-columns:${p.rn ? '1fr 1fr 1fr' : '1fr 1fr'};gap:10px">${p.rn ? '<button class="btn danger" id="ce-del">Supprimer</button>' : ''}<button class="btn" data-close>Annuler</button><button class="btn primary" id="ce-ok">Enregistrer</button></div>`);
   $$('[data-add]').forEach(b => b.onclick = () => { const box = $('#' + b.dataset.add); const first = $('input', box); const n = first.cloneNode(); n.value = ''; box.insertBefore(n, b); n.focus(); });
@@ -168,19 +170,46 @@ function contactEdit(p, onChange) {
     const name = $('#ce-name').value.trim(), org = $('#ce-org').value.trim(), mails = vals('ce-mails').map(x => x.toLowerCase()), tels = vals('ce-tels');
     if (!name && !org && !mails.length && !tels.length) { toast('Indique au moins un nom, un mail ou un numéro'); return; }
     const bad = mails.find(m => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m)); if (bad) { toast('Mail invalide : ' + bad); return; }
+    const bd = +$('#ce-bd').value, bm = +$('#ce-bm').value, byRaw = +$('#ce-by').value || 0;
+    if (!!bd !== !!bm) { toast('Choisis le jour et le mois de naissance'); return; }
+    const by = byRaw > 1900 && byRaw <= new Date().getFullYear() ? byRaw : 0;
+    if ($('#ce-by').value.trim() && !by) { toast('Année de naissance invalide'); return; }
+    if (bd && bm && bd > new Date(2000, bm, 0).getDate()) { toast('Ce jour n’existe pas dans ce mois'); return; }
     const sp = name.split(/\s+/);
-    const body = { names: name ? [{ givenName: sp[0], familyName: sp.slice(1).join(' ') }] : [], organizations: org ? [{ name: org }] : [], emailAddresses: mails.map(value => ({ value })), phoneNumbers: tels.map(value => ({ value })) };
+    const body = { names: name ? [{ givenName: sp[0], familyName: sp.slice(1).join(' ') }] : [], organizations: org ? [{ name: org }] : [], emailAddresses: mails.map(value => ({ value })), phoneNumbers: tels.map(value => ({ value })), birthdays: bd ? [{ date: Object.assign({ month: bm, day: bd }, by ? { year: by } : {}) }] : [] };
     const b = $('#ce-ok'); b.disabled = true; b.textContent = 'Enregistrement…';
     try {
       if (p.rn) {
         const cur = await gx('https://people.googleapis.com/v1/' + p.rn + '?personFields=metadata');
-        await gx('https://people.googleapis.com/v1/' + p.rn + ':updateContact?updatePersonFields=names,organizations,emailAddresses,phoneNumbers', { method: 'PATCH', body: Object.assign({ etag: cur.etag }, body) });
+        await gx('https://people.googleapis.com/v1/' + p.rn + ':updateContact?updatePersonFields=names,organizations,emailAddresses,phoneNumbers,birthdays', { method: 'PATCH', body: Object.assign({ etag: cur.etag }, body) });
       } else await gx('https://people.googleapis.com/v1/people:createContact', { method: 'POST', body });
-      LS.del('gcontacts'); closeSheet(); toast(p.rn ? 'Contact modifié' : 'Contact créé');
+      const synced = await bdSyncContact(p, name || org, bd ? { d: bd, m: bm, y: by } : null, mails[0] || '');
+      LS.del('gcontacts'); closeSheet(); toast((p.rn ? 'Contact modifié' : 'Contact créé') + (synced === 'add' ? ', anniversaire ajouté à l’agenda' : synced === 'upd' ? ', anniversaire mis à jour' : synced === 'del' ? ', anniversaire retiré de l’agenda' : ''));
       if (onChange) onChange();
     } catch (e) { b.disabled = false; b.textContent = 'Enregistrer'; fail(e); }
   };
   const del = $('#ce-del'); if (del) del.onclick = () => deleteContact(p, onChange);
+}
+const BD_MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+function bdFmt(b) {
+  const now = new Date(); let age = 0;
+  if (b.y) { age = now.getFullYear() - b.y; if (now.getMonth() + 1 < b.m || (now.getMonth() + 1 === b.m && now.getDate() < b.d)) age--; }
+  return b.d + ' ' + BD_MONTHS[b.m - 1] + (b.y ? ' ' + b.y + ' (' + age + ' ans)' : '');
+}
+/* La date de naissance d'un contact alimente la liste Anniversaires (agenda + rappel 07:30) : même personne = même nom */
+async function bdSyncContact(p, name, bday, email) {
+  if (!relayOn() || !name) return '';
+  const k = s => nrm(s).replace(/\s+/g, ' ').trim();
+  const names = new Set([k(name), k(p.name)].filter(Boolean));
+  let list; try { list = await bdLoad(true); } catch (e) { return ''; }
+  const cur = list.find(b => (b.type || 'anniv') === 'anniv' && names.has(k(b.name)));
+  try {
+    if (!bday) { if (cur && p.bday) { await rapi('/bdays/delete', { method: 'POST', body: { id: cur.id } }); LS.del('bdays'); state.agCache = null; return 'del'; } return ''; }
+    const date = bday.m + '-' + bday.d;
+    if (cur && cur.name === name && cur.date === String(bday.m).padStart(2, '0') + '-' + String(bday.d).padStart(2, '0') && (cur.year || 0) === bday.y && (cur.email || '') === (email || cur.email || '')) return '';
+    await rapi('/bdays', { method: 'POST', body: { id: cur ? cur.id : undefined, name, type: 'anniv', date, year: bday.y, extra: cur ? cur.extra || 0 : 0, email: email || (cur && cur.email) || '' } });
+    LS.del('bdays'); state.agCache = null; return cur ? 'upd' : 'add';
+  } catch (e) { toast('Anniversaire non ajouté : ' + e.message); return ''; }
 }
 async function deleteContact(p, onChange) {
   if (!confirm('Supprimer définitivement « ' + (p.name || 'ce contact') + ' » de tes contacts Google ?')) return;
