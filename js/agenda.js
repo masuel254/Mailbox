@@ -42,7 +42,7 @@ async function loadContacts(force) {
     if (page) p.set('pageToken', page);
     const r = (await gx('https://people.googleapis.com/v1/people/me/connections?' + p)) || {};
     (r.connections || []).forEach(x => people.push({
-      rn: x.resourceName, name: ((x.names || [])[0] || {}).displayName || '', emails: (x.emailAddresses || []).map(e => (e.value || '').toLowerCase()).filter(Boolean),
+      rn: x.resourceName, name: ((x.names || [])[0] || {}).displayName || '', first: ((x.names || [])[0] || {}).givenName || '', last: ((x.names || [])[0] || {}).familyName || '', emails: (x.emailAddresses || []).map(e => (e.value || '').toLowerCase()).filter(Boolean),
       phones: (x.phoneNumbers || []).map(e => e.value).filter(Boolean), org: ((x.organizations || [])[0] || {}).name || '',
       bday: (() => { const d = ((x.birthdays || []).find(b => b.date && b.date.month && b.date.day) || {}).date; return d ? { d: d.day, m: d.month, y: d.year || 0 } : null; })()
     }));
@@ -154,9 +154,12 @@ async function contactFeed(p) {
   $$('a.cs-row', box).forEach(a => a.addEventListener('click', () => closeSheet()));
 }
 function contactEdit(p, onChange) {
+  // Prénom / nom : ceux de Google s'ils existent, sinon le nom affiché coupé au premier espace
+  const full = p.rn || (p.name !== p.emails[0] && p.name !== p.phones[0]) ? (p.name === '(sans nom)' || p.name === p.org ? '' : p.name) : '';
+  const nm = p.first || p.last ? { first: p.first || '', last: p.last || '' } : { first: full.split(/\s+/)[0] || '', last: full.split(/\s+/).slice(1).join(' ') };
   const multi = (id, label, vals, type) => `<div class="f-multi" id="${id}"><span class="f-lab">${label}</span>${(vals.length ? vals : ['']).map(v => `<input type="${type}" ${type === 'email' ? 'inputmode="email"' : 'inputmode="tel"'} autocomplete="off" value="${esc(v)}">`).join('')}<button type="button" class="linkish" data-add="${id}">+ Ajouter ${type === 'email' ? 'un mail' : 'un numéro'}</button></div>`;
   openSheet(`<span class="grip"></span><h2>${p.rn ? 'Modifier le contact' : 'Nouveau contact'}</h2>
-    <label class="f">Nom<input id="ce-name" autocomplete="off" value="${esc(p.rn || (p.name !== p.emails[0] && p.name !== p.phones[0]) ? (p.name === '(sans nom)' ? '' : p.name) : '')}"></label>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><label class="f">Prénom<input id="ce-first" autocomplete="off" autocapitalize="words" value="${esc(nm.first)}"></label><label class="f">Nom<input id="ce-last" autocomplete="off" autocapitalize="words" value="${esc(nm.last)}"></label></div>
     <label class="f">Société<input id="ce-org" autocomplete="off" value="${esc(p.org || '')}"></label>
     ${multi('ce-mails', 'Mails', p.emails, 'email')}
     ${multi('ce-tels', 'Téléphones', p.phones, 'tel')}
@@ -167,16 +170,15 @@ function contactEdit(p, onChange) {
   const vals = id => $$('#' + id + ' input').map(x => x.value.trim()).filter(Boolean);
   const fail = e => { if (e.message === 'auth') return; if (e.kind) { closeSheet(); openSheet('<span class="grip"></span>' + googleHelp(e, 'Contacts') + '<button class="btn" data-close>Fermer</button>'); bindHelp(); } else toast('Échec : ' + e.message); };
   $('#ce-ok').onclick = async () => {
-    const name = $('#ce-name').value.trim(), org = $('#ce-org').value.trim(), mails = vals('ce-mails').map(x => x.toLowerCase()), tels = vals('ce-tels');
-    if (!name && !org && !mails.length && !tels.length) { toast('Indique au moins un nom, un mail ou un numéro'); return; }
+    const first = $('#ce-first').value.trim(), last = $('#ce-last').value.trim(), name = [first, last].filter(Boolean).join(' '), org = $('#ce-org').value.trim(), mails = vals('ce-mails').map(x => x.toLowerCase()), tels = vals('ce-tels');
+    if (!name && !org && !mails.length && !tels.length) { toast('Indique au moins un prénom, un nom, un mail ou un numéro'); return; }
     const bad = mails.find(m => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m)); if (bad) { toast('Mail invalide : ' + bad); return; }
     const bd = +$('#ce-bd').value, bm = +$('#ce-bm').value, byRaw = +$('#ce-by').value || 0;
     if (!!bd !== !!bm) { toast('Choisis le jour et le mois de naissance'); return; }
     const by = byRaw > 1900 && byRaw <= new Date().getFullYear() ? byRaw : 0;
     if ($('#ce-by').value.trim() && !by) { toast('Année de naissance invalide'); return; }
     if (bd && bm && bd > new Date(2000, bm, 0).getDate()) { toast('Ce jour n’existe pas dans ce mois'); return; }
-    const sp = name.split(/\s+/);
-    const body = { names: name ? [{ givenName: sp[0], familyName: sp.slice(1).join(' ') }] : [], organizations: org ? [{ name: org }] : [], emailAddresses: mails.map(value => ({ value })), phoneNumbers: tels.map(value => ({ value })), birthdays: bd ? [{ date: Object.assign({ month: bm, day: bd }, by ? { year: by } : {}) }] : [] };
+    const body = { names: name ? [Object.assign({}, first ? { givenName: first } : {}, last ? { familyName: last } : {})] : [], organizations: org ? [{ name: org }] : [], emailAddresses: mails.map(value => ({ value })), phoneNumbers: tels.map(value => ({ value })), birthdays: bd ? [{ date: Object.assign({ month: bm, day: bd }, by ? { year: by } : {}) }] : [] };
     const b = $('#ce-ok'); b.disabled = true; b.textContent = 'Enregistrement…';
     try {
       if (p.rn) {

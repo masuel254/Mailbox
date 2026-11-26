@@ -18,10 +18,12 @@ async def main():
         await pg.click('.ct-row:has-text("Antoine Martin")'); await pg.wait_for_timeout(300)
         await pg.click('#cs-edit'); await pg.wait_for_timeout(300)
         check(await pg.is_visible('#ce-bd'), 'champ Date de naissance présent')
+        check(await pg.input_value('#ce-first') == 'Antoine' and await pg.input_value('#ce-last') == 'Martin', 'prénom et nom séparés')
         await pg.screenshot(path='/tmp/ctbd1.png')
         await pg.select_option('#ce-bd', '12'); await pg.select_option('#ce-bm', '3'); await pg.fill('#ce-by', '1971')
         await pg.click('#ce-ok'); await pg.wait_for_timeout(1500)
         w = await pg.evaluate('window.__w')
+        check(any('"givenName":"Antoine","familyName":"Martin"' in x for x in w), 'prénom/nom envoyés à Google')
         check(any('updateContact' in x and 'birthdays' in x and '"month":3' in x and '"day":12' in x and '"year":1971' in x for x in w), 'envoyé à Google : ' + (w[-1][:160] if w else 'rien'))
         l = req('/bdays')['list']; a = [x for x in l if x['name'] == 'Antoine Martin']
         check(len(a) == 1 and a[0]['date'] == '03-12' and a[0]['year'] == 1971 and a[0]['email'] == 'a.martin@gmail.com', 'ajouté aux Anniversaires ' + str(a))
