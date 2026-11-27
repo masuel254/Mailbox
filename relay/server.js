@@ -942,7 +942,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.18.0';
+const RELAY_V = '4.18.9';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -999,6 +999,16 @@ function ixApplyPatches() {
       if (i < 0) continue;
       if (p.kind === 'trash' || p.kind === 'archive') { IX.f.splice(i, 1); ch = true; }
       else { const seen = p.kind === 'read'; if (IX.f[i].seen !== seen) { IX.f[i] = Object.assign({}, IX.f[i], { seen }); ch = true; } }
+    } else if (id.includes('.')) {
+      // Un seul mail d'un fil (l'appli affiche séparément les mails d'un fil où Samuel n'a pas répondu)
+      const [tid, mid] = id.split('.'), i = IX.g.findIndex(t => t.id === tid);
+      if (i < 0) continue;
+      const t = IX.g[i], msgs = t.messages || [], k = msgs.findIndex(m => m.id === mid);
+      if (k < 0) continue;
+      const m = msgs[k], lab = m.labelIds || [];
+      if (p.kind === 'trash' || p.kind === 'archive') { const rest = msgs.filter(x => x.id !== mid); if (rest.length && rest.some(x => (x.labelIds || []).includes('INBOX'))) IX.g[i] = Object.assign({}, t, { messages: rest }); else IX.g.splice(i, 1); ch = true; continue; }
+      const nl = p.kind === 'read' ? lab.filter(l => l !== 'UNREAD') : lab.includes('UNREAD') ? lab : lab.concat('UNREAD');
+      if (nl.length !== lab.length) { IX.g[i] = Object.assign({}, t, { messages: msgs.map((x, j) => j === k ? Object.assign({}, x, { labelIds: nl }) : x) }); ch = true; }
     } else {
       const i = IX.g.findIndex(t => t.id === id);
       if (i < 0) continue;

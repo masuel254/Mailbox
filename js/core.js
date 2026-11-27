@@ -2,8 +2,8 @@
    Le code est découpé par domaine ; les fichiers sont chargés dans l'ordre de index.html et partagent la même portée. */
 'use strict';
 
-const APP_VERSION = '4.18.8';
-const APP_DATE = '26/11/2026';
+const APP_VERSION = '4.18.9';
+const APP_DATE = '27/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
 const BLOCK_LABEL = 'Indésirables';
@@ -50,7 +50,7 @@ async function fastFetch(key, fetcher, changed) {
   return cachedFetch(key, fetcher);
 }
 // Version minimale du relais attendue par cette appli (à relever quand le relais change)
-const MIN_RELAY = '4.18.0';
+const MIN_RELAY = '4.18.9';
 const verLt = (a, b) => { const x = String(a || '0').split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) < (y[i] || 0); } return false; };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const settings = Object.assign({ clientId: '', fontSize: 18, theme: 'auto', images: true, readable: true, email: '', relayUrl: 'https://vps-444b360b.vps.ovh.net/mailbox', relayToken: '', relayGmail: false, freeEmail: '', acc: 'all', vapid: '', primaryOnly: false }, LS.get('settings', {}));
@@ -173,8 +173,15 @@ async function accessToken() {
 }
 
 /* ---------- API Gmail ---------- */
+/* Ligne « fil.message » (un mail d'un fil découpé) : les actions visent ce seul message, et l'ouvrir ne montre que lui */
 async function api(path, opt, tries) {
   opt = opt || {}; tries = tries || 0;
+  const one = /^threads\/([^/.?%]+)(?:\.|%2E)([^/.?%]+)(\/[a-z]+)?(\?.*)?$/i.exec(path);
+  if (one) {
+    if (one[3]) return api('messages/' + one[2] + one[3] + (one[4] || ''), opt, tries);
+    const m = await api('messages/' + one[2] + (one[4] || '').replace(/&?metadataHeaders=[^&]*/g, '').replace(/format=metadata/, 'format=full'), opt, tries);
+    return m ? { id: one[1] + '.' + one[2], historyId: m.historyId, messages: [m] } : m;
+  }
   const t = await accessToken();
   if (!t) { auth.login(); throw new Error('auth'); }
   const r = await fetch(API + path, {

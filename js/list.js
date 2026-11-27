@@ -114,7 +114,7 @@ async function loadList(key, q, cacheKey, plain, reset) {
         if (more && prev.next) p.set('pageToken', prev.next);
         const [r] = await Promise.all([api('threads?' + p.toString()), getLabels().catch(() => [])]);
         const threads = await pool(r.threads || [], 12, t => threadMeta(t));
-        gItems = threads.filter(Boolean).map(t => Object.assign(summarize(t), { acc: 'gmail' }));
+        gItems = threads.filter(Boolean).flatMap(t => gRows(t, key === 'SEARCH' ? '' : key === 'UNREAD' ? 'INBOX' : sys ? (sys.ids || [])[0] : key));
         next = r.nextPageToken || null;
         // Indésirables commun : on y montre aussi le spam Gmail (sans le déplacer, pour ne pas dérégler le filtre de Gmail)
         if (isBlockLabel(key) && !more) {
@@ -145,7 +145,7 @@ async function loadList(key, q, cacheKey, plain, reset) {
       if (acc !== 'free' && !settings.primaryOnly) xs.push((async () => {
         const r = (await api('threads?' + new URLSearchParams({ labelIds: 'UNREAD', q: 'in:inbox', maxResults: 30 })).catch(() => null)) || {};
         const ts = await pool(r.threads || [], 8, t => threadMeta(t).catch(() => null));
-        ts.filter(Boolean).forEach(t => extraUnread.push(Object.assign(summarize(t), { acc: 'gmail' })));
+        ts.filter(Boolean).forEach(t => gRows(t, 'INBOX').forEach(i => extraUnread.push(i)));
       })());
       if (acc !== 'gmail' && freeOn()) xs.push(rapi('/free/list?' + new URLSearchParams({ folder: 'INBOX', unread: '1', limit: '30' })).then(r => (r.items || []).forEach(x => extraUnread.push(freeItem(x)))).catch(() => {}));
       xs.push(Promise.all(jobs));
@@ -176,7 +176,7 @@ const useIndex = acc => relayOn() && (relayGmailOn() || (acc === 'free' && freeO
 function applyIndex(ix, direct) {
   if (!ix || !ix.v) return;
   state.ixV = ix.v;
-  const g = (ix.g || []).map(t => Object.assign(summarize(t), { acc: 'gmail' }));
+  const g = (ix.g || []).flatMap(t => gRows(t, 'INBOX'));
   const f = (ix.f || []).map(freeItem);
   confirmLocal(g.concat(f), ix.at || 0);
   const accs = freeOn() ? ['all', 'gmail', 'free'] : ['gmail'];
@@ -207,6 +207,16 @@ async function watchInbox() {
       if (r && r.same) { if (r.badge) paintBadge(r.badge); } else if (r && r.gReady !== false && r.fReady !== false) applyIndex(r); else if (r) { state.ixV = r.v; if (r.badge) paintBadge(r.badge); }
     }
   } finally { ixLoop = false; }
+}
+/* Gmail regroupe en conversation les mails qui ont le même objet. Quand je n'ai jamais répondu (avis, notifications
+   envoyés plusieurs fois), chaque mail a sa propre ligne : id « fil.message », traité message par message (voir gPath dans core.js) */
+function gRows(t, label) {
+  const all = t.messages || [];
+  let msgs = all.filter(m => !(m.labelIds || []).some(l => l === 'TRASH' || l === 'DRAFT'));
+  if (label && msgs.some(m => (m.labelIds || []).includes(label))) msgs = msgs.filter(m => (m.labelIds || []).includes(label));
+  const conv = all.some(m => (m.labelIds || []).includes('SENT') || isMe(parseAddr(hdr(m, 'From')).email));
+  if (msgs.length < 2 || conv) return [Object.assign(summarize(t), { acc: 'gmail' })];
+  return msgs.map(m => Object.assign(summarize({ id: t.id + '.' + m.id, messages: [m] }), { acc: 'gmail', tid: t.id }));
 }
 function summarize(t) {
   const msgs = t.messages || [];

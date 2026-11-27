@@ -6,11 +6,11 @@ async function todayMails() {
   let done = false;
   if (useIndex(curAcc())) {
     const ix = await rapi('/inbox').catch(() => null);
-    if (ix && ix.v && ix.gReady !== false && ix.fReady !== false && !(ix.err && (ix.err.gmail || ix.err.free))) { applyIndex(ix); items = (ix.g || []).map(t => Object.assign(summarize(t), { acc: 'gmail' })).concat((ix.f || []).map(freeItem)); done = true; }
+    if (ix && ix.v && ix.gReady !== false && ix.fReady !== false && !(ix.err && (ix.err.gmail || ix.err.free))) { applyIndex(ix); items = (ix.g || []).flatMap(t => gRows(t, 'INBOX')).concat((ix.f || []).map(freeItem)); done = true; }
   }
   if (!done) {
     const jobs = [];
-    if (settings.clientId || relayGmailOn()) jobs.push((async () => { const r = (await api('threads?' + new URLSearchParams({ q: 'in:inbox is:unread', maxResults: 30 }))) || {}; const ts = await pool(r.threads || [], 8, t => threadMeta(t).catch(() => null)); ts.filter(Boolean).forEach(t => items.push(Object.assign(summarize(t), { acc: 'gmail' }))); })());
+    if (settings.clientId || relayGmailOn()) jobs.push((async () => { const r = (await api('threads?' + new URLSearchParams({ q: 'in:inbox is:unread', maxResults: 30 }))) || {}; const ts = await pool(r.threads || [], 8, t => threadMeta(t).catch(() => null)); ts.filter(Boolean).forEach(t => gRows(t, 'INBOX').forEach(i => items.push(i))); })());
     if (freeOn()) jobs.push(rapi('/free/list?' + new URLSearchParams({ folder: 'INBOX', unread: '1', limit: '30' })).then(r => (r.items || []).forEach(x => items.push(freeItem(x)))).catch(() => {}));
     await Promise.all(jobs);
   }
