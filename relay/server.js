@@ -676,6 +676,12 @@ async function ttGetCsrf() {
   if (!m) throw new Error('TimeTree : jeton d’écriture introuvable');
   return (ttCsrf = m[1]);
 }
+// TimeTree limite le lieu à 200 caractères : un long lien Google Maps irait dans la note au lieu d'être coupé (lien cassé)
+function ttLoc(b) {
+  let loc = String(b.location || '').trim(), note = String(b.note || '');
+  if (loc.length > 200) { if (/^https?:\/\//i.test(loc)) { if (!note.includes(loc)) note = loc + (note ? '\n' + note : ''); loc = ''; } else loc = loc.slice(0, 200); }
+  return { location: loc, note: note.slice(0, 2000) };
+}
 async function ttCreate(calId, ev, retried) {
   if (!ttSess) ttSess = await ttLogin();
   const csrf = ttCsrf || await ttGetCsrf();
@@ -942,7 +948,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.20.0';
+const RELAY_V = '4.20.1';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -1691,7 +1697,7 @@ const routes = {
       start_at = Date.UTC(y1, m1 - 1, d1); end_at = Date.UTC(y2, m2 - 1, d2); tz = 'UTC';
     } else { start_at = +b.start; end_at = Math.max(+b.end || 0, start_at); }
     if (!start_at || isNaN(start_at)) throw Object.assign(new Error('Date invalide'), { code: 400 });
-    const r = await ttCreate(cal.id, { title, all_day: !!b.allDay, start_at, start_timezone: tz, end_at, end_timezone: tz, category: 1, note: String(b.note || '').slice(0, 2000), location: String(b.location || '').slice(0, 200), attendees: [], recurrences: [], alerts: [], file_uuids: [] });
+    const r = await ttCreate(cal.id, { title, all_day: !!b.allDay, start_at, start_timezone: tz, end_at, end_timezone: tz, category: 1, note: ttLoc(b).note, location: ttLoc(b).location, attendees: [], recurrences: [], alerts: [], file_uuids: [] });
     log('TimeTree : événement « ' + title + ' » créé dans ' + cal.name);
     setTimeout(() => ttSync().catch(() => {}), 1500);
     return { ok: true, cal: cal.name, uuid: (r.event || {}).uuid || null };
@@ -1713,7 +1719,7 @@ const routes = {
     if (!ev) throw Object.assign(new Error('Événement TimeTree introuvable, actualise l’agenda'), { code: 404 });
     const title = String(b.title || '').trim().slice(0, 200);
     if (!title) throw Object.assign(new Error('Titre manquant'), { code: 400 });
-    const body = { title, note: String(b.note || '').slice(0, 2000), location: String(b.location || '').slice(0, 200) };
+    const body = { title, note: ttLoc(b).note, location: ttLoc(b).location };
     // Pour une série récurrente, on ne touche pas aux dates (elles déplaceraient toute la série)
     const isRec = (ev.rec || []).some(x => /^RRULE/i.test(x));
     if (!isRec) {

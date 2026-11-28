@@ -332,6 +332,7 @@ async function renderAgenda() {
     const it = items.find(i => i.kind === 'tt' && i.x.id === b.dataset.tt); if (!it) return; const x = it.x;
     openSheet(`<span class="grip"></span><h2>${esc(x.title)}</h2><p class="fhint" style="margin:0"><span class="tt-tag">TimeTree</span> ${esc(x.cal)}</p>
       <div class="ct-info"><div>📅 ${esc(it.s.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }))}${it.allDay ? ' · journée entière' : ' · ' + hhmm(it.s) + (it.e > it.s ? ' – ' + hhmm(it.e) : '')}</div>${x.location ? `<div>${locChip(x.location)}</div>` : ''}${x.note ? `<div>📝 ${noteLinks(x.note)}</div>` : ''}</div>
+      ${x.location || mapLinkIn(x.note) ? '' : '<button class="btn" id="tt-loc" style="width:100%">📍 Ajouter un lieu ou un lien Google Maps</button>'}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn primary" id="tt-edit">✏️ Modifier</button><button class="btn" id="tt-copy">Copier vers Google</button></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn danger" id="tt-del">🗑 Supprimer</button><button class="btn" data-close>Fermer</button></div>`);
     $('#tt-del').onclick = async () => {
@@ -341,6 +342,7 @@ async function renderAgenda() {
       catch (e) { db.disabled = false; db.textContent = '🗑 Supprimer'; toast(e.message); }
     };
     $('#tt-edit').onclick = () => { closeSheet(); eventSheet({ ttEdit: x, title: x.title, start: it.s, end: it.allDay ? addDays(it.e, -1) : it.e, allDay: it.allDay, location: x.location || '', note: x.note || '' }, () => { state.agCache = null; renderAgenda(); }); };
+    const tl = $('#tt-loc'); if (tl) tl.onclick = () => { $('#tt-edit').click(); setTimeout(() => { const l = $('#ev-loc'); if (l) { l.scrollIntoView({ block: 'center' }); l.focus(); } }, 150); };
     $('#tt-copy').onclick = () => { closeSheet(); eventSheet({ title: x.title, start: it.s, end: it.allDay ? null : it.e, allDay: it.allDay, location: x.location, note: (x.note ? x.note + ' · ' : '') + 'Depuis TimeTree (' + x.cal + ')' }, () => { state.agCache = null; renderAgenda(); }); };
   });
   if (gErr) box.insertAdjacentHTML('afterbegin', googleHelp(gErr, 'Agenda')), bindHelp();
@@ -515,7 +517,7 @@ function bindAgendaSwipe(box, evs, items) {
 }
 // Lieu : texte (adresse) ou lien Maps collé (Google Maps, Plans, Waze)
 const isMapUrl = l => /^https?:\/\/\S+$/i.test(String(l || '').trim());
-const mapUrl = l => isMapUrl(l) ? String(l).trim() : 'https://maps.apple.com/?q=' + encodeURIComponent(l);
+const mapUrl = l => isMapUrl(l) ? String(l).trim() : 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(l);
 const locChip = l => `<span class="loc-chip" data-map="${esc(l)}">📍 ${isMapUrl(l) ? 'Itinéraire' : esc(l)}</span>`;
 // lien Maps glissé dans une note : on le retrouve pour en faire un bouton « Itinéraire »
 const MAP_HOST_RE = /^https?:\/\/(maps\.app\.goo\.gl|goo\.gl\/maps|(www\.)?google\.[a-z.]+\/maps|maps\.google\.[a-z.]+|maps\.apple\.com|(www\.)?waze\.com)/i;
@@ -537,8 +539,9 @@ function eventSheet(ev, onDone) {
     <label class="f">Titre<input id="ev-title" autocomplete="off" value="${esc(isNew || tt ? ev.title || '' : ev.summary || '')}" placeholder="ex. Point avec Claire"></label>
     <label class="switch" ${ttRec ? 'style="display:none"' : ''}>Journée entière<input type="checkbox" id="ev-all" ${allDay ? 'checked' : ''}></label>
     <div class="ev-grid" ${ttRec ? 'style="display:none"' : ''}><label class="f">Date<input type="date" id="ev-d" value="${toInputDate(s)}"></label><label class="f ev-tm">Début<input type="time" id="ev-s" value="${toInputTime(s)}"></label><label class="f ev-tm">Fin<input type="time" id="ev-e" value="${toInputTime(e)}"></label></div>
-    <label class="f">Lieu<input id="ev-loc" autocomplete="off" value="${esc(ev.location || '')}" placeholder="Adresse, visio ou lien Maps"></label>
-    <div class="ev-locbar"><button type="button" class="linkish" id="ev-paste">📋 Coller un lien Maps</button><button type="button" class="linkish" id="ev-map">🗺 Voir sur la carte</button></div>
+    <label class="f">Lieu ou lien Google Maps<input id="ev-loc" autocomplete="off" value="${esc(ev.location || mapLinkIn(ev.note || ev.description || ''))}" placeholder="Adresse ou lien Google Maps"></label>
+    <div class="ev-locbar"><button type="button" class="linkish" id="ev-gm">🔎 Chercher dans Google Maps</button><button type="button" class="linkish" id="ev-paste">📋 Coller le lien</button><button type="button" class="linkish" id="ev-map">🗺 Voir</button></div>
+    <p class="fhint" id="ev-gm-tip" hidden style="margin:-4px 2px 0">Dans Google Maps : touche le lieu › Partager › Copier le lien, puis reviens ici et touche « Coller le lien ».</p>
     <label class="f">Note<input id="ev-note" autocomplete="off" value="${esc(isNew || tt ? ev.note || '' : String(ev.description || '').replace(/<[^>]+>/g, ' '))}"></label>
     ${isNew && state.ttCals && state.ttCals.length ? `<label class="f">Enregistrer dans<select id="ev-dest"><option value="g">Google Agenda</option>${state.ttCals.map(c => `<option value="t:${esc(c.id)}">TimeTree · ${esc(c.name)}</option><option value="b:${esc(c.id)}">Google + TimeTree · ${esc(c.name)}</option>`).join('')}</select></label>` : ''}
     ${tt ? '' : (() => {
@@ -564,6 +567,8 @@ function eventSheet(ev, onDone) {
   };
   const repS = $('#ev-rep'); if (repS) repS.onchange = () => { $('#ev-until-l').hidden = !repS.value; };
   const destS = $('#ev-dest'), moreD = $('#ev-more'); if (destS && moreD) { const syncD = () => { moreD.hidden = destS.value.startsWith('t:'); }; destS.onchange = syncD; syncD(); }
+  // Chercher le lieu dans Google Maps (adresse tapée, sinon le titre), puis revenir coller le lien
+  $('#ev-gm').onclick = () => { const q = $('#ev-loc').value.trim(); $('#ev-gm-tip').hidden = false; openMap(q && !isMapUrl(q) ? q : ($('#ev-title').value.trim() || 'Calais')); };
   $('#ev-map').onclick = () => { const l = $('#ev-loc').value.trim(); if (!l) { toast('Indique d’abord un lieu'); return; } openMap(l); };
   const syncAll = () => $$('.ev-tm').forEach(x => { x.style.display = $('#ev-all').checked ? 'none' : ''; });
   $('#ev-all').onchange = syncAll; syncAll();
@@ -583,6 +588,7 @@ function eventSheet(ev, onDone) {
       start = { dateTime: sd.toISOString(), timeZone: tz }; end = { dateTime: ed.toISOString(), timeZone: tz };
     }
     let note = $('#ev-note').value.trim();
+    { const lv = $('#ev-loc').value.trim(); if (isMapUrl(lv) && note.includes(lv)) note = note.split(lv).join('').replace(/\s{2,}/g, ' ').trim(); }
     if (ev.mailUrl) note = (note ? note + '\n' : '') + 'Mail : ' + location.origin + location.pathname + ev.mailUrl;
     const body = { summary: title, location: $('#ev-loc').value.trim(), description: note, start, end };
     let invite = false;
