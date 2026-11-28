@@ -942,7 +942,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.18.9';
+const RELAY_V = '4.20.0';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -1236,6 +1236,44 @@ const KEEP_RE = /factur|invoice|contrat|devis|relev[ée]|imp[oô]t|attestation|m
 // Confirmations (commande, livraison, réservation…) sans pièce jointe : gardées 90 jours, jetables ensuite
 const TRANS_RE = /re[çc]u\b|re[çc]us\b|commande|billet|receipt|order|r[ée]servation|booking|livraison|exp[ée]di|confirm|rendez-vous|\bcode\b/i;
 const TRANS_DAYS = 90;
+/* Tri par nature du mail (même chez les expéditeurs gardés) : chaque type devient jetable après un certain âge.
+   Lu sur l'objet et l'expéditeur seulement ; jamais les pièces jointes, réponses, suivis ni correspondants. */
+const ADMIN_RE = /\.gouv\.fr$|impots|dgfip|caf\.fr|ameli|urssaf|ants\.|service-public|francetravail|pole-emploi|msa\.fr|cnav|lassuranceretraite|agirc|justice\.fr|interieur/i;
+const MJ_TYPES = [
+  { k: 'codes', name: '🔑 Codes et liens de connexion', days: 7, why: 'plus de 7 jours, déjà utilisés',
+    re: /\b(code|otp|pin)\b.{0,30}(v[ée]rif|connexion|s[ée]curit|confirm|unique|usage|acc[eè]s|validation|login|sign)|(v[ée]rification|verification|security|login|sign-?in|one[- ]time|confirmation|validation|acc[eè]s|connexion|s[ée]curit[ée]) code|votre code|your code|lien (de connexion|s[ée]curis)|secure link|magic link|sign[- ]?in link|login link|nouvelle connexion|new (sign-?in|login|device)|connexion depuis un nouvel|r[ée]initialis\w*.{0,20}mot de passe|password reset|reset (your )?password|mot de passe oubli|mot de passe (a [ée]t[ée] )?(modifi|chang)|password (was )?changed|\b2fa\b|double authentification|authentification|confirm(ez|er|e)? (votre|ton) (adresse|e-?mail|inscription|compte)|verify (your )?(email|account|identity)|v[ée]rifi(ez|e|er) (votre|ton) (adresse|e-?mail|compte|identit)|activ(ez|er|ation de) (votre |ton )?compte|activate your account/i },
+  { k: 'social', name: '💬 Notifications d’applis et réseaux', days: 14, why: 'plus de 14 jours',
+    from: /linkedin|facebook|facebookmail|instagram|twitter|x\.com|strava|pinterest|tiktok|youtube|reddit|quora|meetup|nextdoor|snapchat|threads\.net|tripadvisor|garmin|polar|discord|slack|duolingo/i,
+    re: /a comment[ée]|commented|a aim[ée]|liked your|vous a mentionn|mentioned you|new follower|nouvel? abonn[ée]|a consult[ée] votre profil|viewed your profile|apparu dans .* recherches|appeared in .* searches|invitation à (se connecter|rejoindre)|wants to connect|anniversaire de travail|work anniversary|souhaitez.? .* anniversaire|a publi[ée]|posted|nouveaux? messages? non lus|unread messages?|a partag[ée]|shared a/i },
+  { k: 'colis', name: '📦 Suivi de colis et livraisons', days: 30, why: 'plus de 30 jours, colis reçu',
+    from: /colissimo|chronopost|mondialrelay|mondial-relay|relais-colis|dpd|\bups\b|ups\.com|dhl|gls|laposte.*suivi|cainiao|17track|aftership|parcel|colisprive|colis-prive|vinted.*(livr|colis)/i,
+    re: /colis|livraison (pr[ée]vue|en cours|effectu|r[ée]ussie)|(a [ée]t[ée]|est|sera) livr[ée]|en cours de livraison|en cours d.?acheminement|(a [ée]t[ée]|est) exp[ée]di[ée]|vient d.?[êe]tre exp[ée]di|shipped|has shipped|delivered|out for delivery|in transit|tracking|suivi de (votre |ton )?(commande|envoi|colis)|avis de passage|point relais|disponible en (point|relais)|retrait (de votre|du) colis/i },
+  { k: 'ar', name: '📨 Accusés de réception', days: 30, adminDays: 365, why: 'plus de 30 jours (1 an pour l’administration)',
+    re: /accus[ée] de r[ée]ception|bien re[çc]u|avons (bien )?re[çc]u|r[ée]ception de (votre|ton) (demande|message|dossier|candidature|courrier)|(demande|message|dossier|r[ée]clamation|candidature) (a bien [ée]t[ée] |est )?(enregistr|prise? en compte|re[çc]ue|transmise)|ticket (n°|#|cr[ée]{2}|ouvert)|we('ve| have) received|request (has been )?received|merci pour (votre|ton) (message|demande|retour|candidature)|prise en compte de (votre|ton)|confirmation de (r[ée]ception|d[ée]p[ôo]t|votre demande)/i },
+  { k: 'dispo', name: '📄 « Document disponible sur votre espace »', days: 180, why: 'plus de 6 mois, le document reste sur le site',
+    re: /(facture|relev[ée]|document|avis|bulletin|attestation|e-?relev[ée]|courrier|message|[ée]ch[ée]ancier|contrat|d[ée]compte|r[ée]capitulatif)s? .{0,45}(disponible|en ligne|consultable|vous attend|est arriv)|nouveaux? (document|message|courrier)s? .{0,25}(dans|sur) (votre|ton|l.?)(espace|messagerie|compte)|(is|are) (now )?available|est disponible|sont disponibles|vient d.?[êe]tre (d[ée]pos|mis[e]? en ligne)/i },
+  { k: 'rappels', name: '⏰ Rappels, invitations et alertes passés', days: 30, why: 'plus de 30 jours, date passée',
+    re: /^\s*(rappel|reminder)\b|\brappel\s*:|votre rendez-vous|ton rendez-vous|\brdv\b|n.?oubliez pas|^\s*(invitation|invitation mise à jour|updated invitation|accept[ée]e?|refus[ée]e?|accepted|declined|tentative|provisoire|annul[ée]e?|canceled|cancelled)\s*:|alerte|\balert\b|notification de|seuil|solde (de|du) (votre|ton) compte|d[ée]tection|m[ée]t[ée]o|vigilance|eedomus|batterie faible|low battery|panne|coupure (pr[ée]vue|programm)/i },
+];
+// Doublons : seulement les envois automatiques (une personne ou une entreprise qui t'écrit réutilise souvent le même objet)
+const AUTO_RE = /no-?reply|ne-?pas-?r[ée]pondre|nepasrepondre|donotreply|do-not-reply|notification|notify|alert|mailer|automat|robot|bounce/i;
+const MJ_DUP = { k: 'doublons', name: '♻️ Mails en double', why: 'envois automatiques identiques : le plus récent est gardé' };
+const MJ_NEWS = { k: 'vieux', name: '📰 Lettres d’info de plus de 6 mois', days: 180, why: 'expéditeurs gardés, mais lettres d’info anciennes' };
+// Type d'un mail jetable par son âge (null : pas concerné, ou trop récent)
+function mjType(subject, email, date, unsub) {
+  subject = String(subject || ''); email = String(email || '').toLowerCase();
+  const age = date ? (Date.now() - date) / 864e5 : 0;
+  for (const t of MJ_TYPES) {
+    if (!(t.re.test(subject) || (t.from && t.from.test(email) && (t.k !== 'colis' || !KEEP_RE.test(subject))))) continue;
+    // une vraie facture, un contrat, un sinistre… ne sont jamais rangés comme simple notification (sauf avis « disponible »)
+    if (t.k !== 'codes' && t.k !== 'dispo' && KEEP_RE.test(subject)) return null;
+    if (t.k === 'dispo' && /sinistre|litige|contentieux|mise en demeure|r[ée]siliation|recommand[ée]|huissier|tribunal|amende|contravention/i.test(subject)) return null;
+    const days = t.adminDays && ADMIN_RE.test(email) ? t.adminDays : t.days;
+    return age >= days ? t.k : null;
+  }
+  return null;
+}
+const normSubj = s => String(s || '').toLowerCase().replace(/^((re|tr|fw|fwd)\s*:\s*)+/i, '').replace(/\s+/g, ' ').trim();
 // Adresse d'un en-tête Gmail en texte (« Nom <a@b.fr> » ou « a@b.fr »)
 const hAddr = v => { v = String(v || '').trim(); const m = /^\s*"?([^"<]*?)"?\s*<([^>]+)>/.exec(v); if (m) return { name: m[1].trim() || m[2].trim(), email: m[2].trim().toLowerCase() }; const e = (/[^\s<>"]+@[^\s<>"]+/.exec(v) || [''])[0].toLowerCase(); return { name: e, email: e }; };
 let MJ = { status: 'idle' };
@@ -1338,6 +1376,20 @@ async function menageScan(acc, opts) {
   const useG = !!S.gmail && acc !== 'free', useF = !!S.free && acc !== 'gmail';
   MJ = { status: 'running', phase: 'Préparation', at: Date.now(), g: { done: 0, total: 0 }, f: { done: 0, total: 0 }, scanned: 0, excluded: 0, acc, auto: !!opts.auto, applied: MJ.applied || 0 };
   const groups = new Map();
+  const tgroups = new Map(), dupSeen = new Map();
+  // un mail classé par type ; renvoie true s'il a été pris
+  const typed = (name, email, subject, unsub, ref, date) => {
+    const k = mjType(subject, email, date, unsub);
+    if (!k) return false;
+    const T = MJ_TYPES.find(x => x.k === k) || (k === 'vieux' ? MJ_NEWS : MJ_DUP);
+    let g = tgroups.get(k); if (!g) { g = { key: 't:' + k, type: true, name: T.name, why: T.why, emails: new Set(), count: 0, kept: 0, subjects: [], unsub: false, g: [], f: {} }; tgroups.set(k, g); }
+    g.count++;
+    if (g.subjects.length < 5 && subject && !g.subjects.some(x => x.startsWith(String(subject).slice(0, 40)))) g.subjects.push(String(subject).slice(0, 70) + ' · ' + (name || email).slice(0, 24));
+    if (ref.g) g.g.push(ref.g); else (g.f[ref.folder] = g.f[ref.folder] || []).push(ref.uid);
+    return true;
+  };
+  // doublons et vieilles lettres d'info : décidés après coup, une fois tous les mails vus
+  const later = [];
   const BASEQ_G = '-in:sent -in:drafts -in:trash -in:spam -in:chats -is:starred -has:attachment -label:"' + MENAGE + '" -label:"' + BLOCK_LABEL + '" -subject:(facture OR invoice OR contrat OR devis OR relevé OR impôts OR attestation OR remboursement OR sinistre OR ordonnance OR échéancier)';
   const keyOf = (name, email) => { const n = normName(name); return n && n.length >= 3 && !n.includes('@') ? 'n:' + n : 'e:' + email; };
   const add = (name, email, subject, unsub, ref, date) => {
@@ -1347,6 +1399,7 @@ async function menageScan(acc, opts) {
     g.emails.add(email);
     if (KEEP_RE.test(subject || '') || (TRANS_RE.test(subject || '') && (!date || Date.now() - date < TRANS_DAYS * 864e5))) { g.kept++; MJ.excluded++; return; }
     g.count++; if (unsub) g.unsub = true;
+    if (unsub && date && Date.now() - date > MJ_NEWS.days * 864e5) (g.old = g.old || []).push(ref);
     if (g.subjects.length < 6 && subject && !g.subjects.includes(subject)) g.subjects.push(String(subject).slice(0, 90));
     if (ref.g) g.g.push(ref.g); else (g.f[ref.folder] = g.f[ref.folder] || []).push(ref.uid);
   };
@@ -1364,12 +1417,16 @@ async function menageScan(acc, opts) {
       fillSent();
       MJ.phase = 'Gmail : garde-fous';
       const sentThreads = new Set((await gListAll('in:sent')).map(m => m.threadId));
-      const elig = await gListAll(BASEQ_G);
+      // plus large que la liste « pub » : les avis « facture disponible », codes… sont triés par type ci-dessous
+      const elig = await gListAll('-in:sent -in:drafts -in:trash -in:spam -in:chats -is:starred -has:attachment -label:"' + MENAGE + '" -label:"' + BLOCK_LABEL + '"');
+      const pubOk = new Set((await gListAll(BASEQ_G)).map(m => m.id));
       MJ.gAll = Object.keys(SX.m).length; MJ.scanned = MJ.gAll + MJ.f.done; MJ.excluded += Math.max(0, MJ.gAll - elig.length);
       for (const { id, threadId } of elig) {
         const x = SX.m[id]; if (!x) continue;
         if (sentThreads.has(threadId) || sentTo.has(x[1])) { MJ.excluded++; continue; }
-        add(x[0], x[1], x[2], !!x[4], { g: id }, x[3]);
+        if (typed(x[0], x[1], x[2], !!x[4], { g: id }, x[3])) continue;
+        if (!pubOk.has(id)) { MJ.excluded++; continue; }
+        later.push([x[0], x[1], x[2], !!x[4], { g: id }, x[3]]);
       }
     } else if (S.gmail) fillSent();
     if (useF) {
@@ -1388,11 +1445,24 @@ async function menageScan(acc, opts) {
               const f = addr(m.envelope.from), fl = m.flags || new Set();
               const att = JSON.stringify(m.bodyStructure || {}).match(/"disposition":"attachment"|"type":"application\/pdf"|"type":"image\//i);
               if (fl.has('\\Flagged') || fl.has('\\Answered') || att || sentTo.has(String(f.email).toLowerCase())) { MJ.excluded++; continue; }
-              add(f.name, f.email, m.envelope.subject, /list-unsubscribe/i.test(String(m.headers || '')), { folder: b.path, uid: m.uid }, m.envelope.date ? new Date(m.envelope.date).getTime() : 0);
+              const a = [f.name, f.email, m.envelope.subject, /list-unsubscribe/i.test(String(m.headers || '')), { folder: b.path, uid: m.uid }, m.envelope.date ? new Date(m.envelope.date).getTime() : 0];
+              if (!typed(...a)) later.push(a);
             }
           } catch (e) { log('ménage IA ' + b.path, e.message); } finally { if (lock) lock.release(); }
         }
       });
+    }
+    // Doublons : même expéditeur et même objet, plus de 7 jours ; seul le plus récent reste (jamais une facture, un contrat…)
+    const dk = a => String(a[1] || '').toLowerCase() + '|' + normSubj(a[2]);
+    const newest = new Map(); later.forEach(a => { const k = dk(a); if (normSubj(a[2]).length >= 8 && (!newest.has(k) || a[5] > newest.get(k)[5])) newest.set(k, a); });
+    const cnt = new Map(); later.forEach(a => cnt.set(dk(a), (cnt.get(dk(a)) || 0) + 1));
+    for (const a of later) {
+      const k = dk(a), age = a[5] ? (Date.now() - a[5]) / 864e5 : 0;
+      const T = cnt.get(k) > 1 && newest.get(k) !== a && age >= 7 && AUTO_RE.test(a[1] || '') && !ADMIN_RE.test(a[1] || '') && !KEEP_RE.test(a[2] || '') && !TRANS_RE.test(a[2] || '') && !MJ_TYPES.some(t => t.re.test(a[2] || '')) ? MJ_DUP : null;
+      if (T) { let g = tgroups.get(T.k); if (!g) { g = { key: 't:' + T.k, type: true, name: T.name, why: T.why, emails: new Set(), count: 0, kept: 0, subjects: [], unsub: false, g: [], f: {} }; tgroups.set(T.k, g); }
+        g.count++; if (g.subjects.length < 5 && !g.subjects.some(x => x.startsWith(String(a[2]).slice(0, 40)))) g.subjects.push(String(a[2]).slice(0, 70) + ' · ' + String(a[0] || a[1]).slice(0, 24) + ' (×' + cnt.get(k) + ')');
+        if (a[4].g) g.g.push(a[4].g); else (g.f[a[4].folder] = g.f[a[4].folder] || []).push(a[4].uid); continue; }
+      add(...a);
     }
     // Les expéditeurs rares (moins de 3 mails) sont souvent des personnes : on ne les propose pas, sauf lien de désabonnement
     const cands = [...groups.values()].filter(g => g.count >= 3 || (g.count >= 2 && g.unsub)).sort((a, b) => b.count - a.count).slice(0, 800);
@@ -1410,13 +1480,25 @@ async function menageScan(acc, opts) {
       }
       MJ.phase = 'L’IA examine ' + cands.length + ' expéditeurs (' + Math.min(i + 25, cands.length) + ')';
     }
+    // Lettres d'info de plus de 6 mois chez les expéditeurs que l'IA garde (banque, assurance…)
+    const news = { key: 't:' + MJ_NEWS.k, type: true, name: MJ_NEWS.name, why: MJ_NEWS.why, emails: new Set(), count: 0, kept: 0, subjects: [], unsub: false, g: [], f: {} };
+    for (const g of cands) {
+      const v = verdict.get(g.key); if (!v || v.v === 'virer' || !g.unsub) continue;
+      const rf = g.old || [];
+      rf.forEach(o => { news.count++; if (o.g) news.g.push(o.g); else (news.f[o.folder] = news.f[o.folder] || []).push(o.uid); });
+      if (rf.length && news.subjects.length < 5) news.subjects.push(g.subjects[0] + ' · ' + g.name);
+    }
+    if (news.count) tgroups.set(MJ_NEWS.k, news);
     MJ.refs = {};
-    MJ.groups = cands.map(g => { const v = verdict.get(g.key) || { v: 'garder', why: 'non examiné' }; MJ.refs[g.key] = { g: g.g, f: g.f };
-      return { key: g.key, name: g.name, emails: [...g.emails].slice(0, 8), count: g.count, kept: g.kept, unsub: g.unsub, subjects: g.subjects.slice(0, 3), v: v.v, why: v.why, gCount: g.g.length, fCount: Object.values(g.f).reduce((a, x) => a + x.length, 0) }; });
+    const order = ['codes', 'doublons', 'colis', 'ar', 'social', 'rappels', 'dispo', 'vieux'];
+    const tg = [...tgroups.values()].sort((a, b) => order.indexOf(a.key.slice(2)) - order.indexOf(b.key.slice(2))).map(g => { MJ.refs[g.key] = { g: g.g, f: g.f };
+      return { key: g.key, type: true, name: g.name, emails: [], count: g.count, kept: 0, unsub: false, subjects: g.subjects, v: 'virer', why: g.why, gCount: g.g.length, fCount: Object.values(g.f).reduce((a, x) => a + x.length, 0) }; });
+    MJ.groups = tg.concat(cands.map(g => { const v = verdict.get(g.key) || { v: 'garder', why: 'non examiné' }; MJ.refs[g.key] = { g: g.g, f: g.f };
+      return { key: g.key, name: g.name, emails: [...g.emails].slice(0, 8), count: g.count, kept: g.kept, unsub: g.unsub, subjects: g.subjects.slice(0, 3), v: v.v, why: v.why, gCount: g.g.length, fCount: Object.values(g.f).reduce((a, x) => a + x.length, 0) }; }));
     MJ.status = 'done'; MJ.end = Date.now(); MJ.phase = 'Terminé';
-    const vir = MJ.groups.filter(g => g.v === 'virer'), n = vir.reduce((a, g) => a + g.count, 0);
+    const vir = MJ.groups.filter(g => g.v === 'virer'), n = vir.reduce((a, g) => a + g.count, 0), nt = tg.reduce((a, g) => a + g.count, 0);
     log('Ménage IA : ' + MJ.scanned + ' mails lus, ' + n + ' proposés au ménage');
-    if (S.subs.length && (!opts.auto || n)) push({ title: '✦ Ménage IA ' + (opts.auto ? 'du mois' : 'terminé'), body: vir.length + ' expéditeurs de pub, ' + n + ' mails proposés au ménage. Ouvre l’appli pour valider.', url: C.appUrl + '#/menage', tag: 'mailbox-menage', badge: total() }).catch(() => {});
+    if (S.subs.length && (!opts.auto || n)) push({ title: '✦ Ménage IA ' + (opts.auto ? 'du mois' : 'terminé'), body: n.toLocaleString('fr-FR') + ' mails proposés au ménage (' + nt.toLocaleString('fr-FR') + ' par type : codes, doublons, colis…). Ouvre l’appli pour valider.', url: C.appUrl + '#/menage', tag: 'mailbox-menage', badge: total() }).catch(() => {});
   } catch (e) { MJ.status = 'error'; MJ.error = e.message; log('Ménage IA', e.message); }
   mjSave();
 }

@@ -729,3 +729,7 @@ body{overflow-x:clip}
 /* iPhone : un champ en dessous de 16 px fait zoomer la page au clavier, et les barres du bas disparaissent */
 input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{font-size:max(16px,1rem)!important}
 .chip.dir-out{color:var(--accent);border-color:var(--accent)}.chip.dir-in{color:var(--muted)}
+.mj-type .mj-nm{display:flex;flex-direction:column;gap:2px;min-width:0}
+.mj-ex{display:flex;flex-direction:column;gap:1px;margin-top:4px}.mj-ex span{font-size:.75rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mj-n{margin-left:auto;font-weight:700;color:var(--accent);padding-left:8px;flex:none}
+.mj-type .mj-nm b{white-space:normal;overflow:visible}
