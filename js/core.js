@@ -2,8 +2,8 @@
    Le code est découpé par domaine ; les fichiers sont chargés dans l'ordre de index.html et partagent la même portée. */
 'use strict';
 
-const APP_VERSION = '4.18.9';
-const APP_DATE = '27/11/2026';
+const APP_VERSION = '4.19.0';
+const APP_DATE = '28/11/2026';
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic';
 const BLOCK_LABEL = 'Indésirables';
@@ -262,6 +262,12 @@ function dayLabel(ms) {
 function byDay(items, render) {
   let last = '', h = '';
   items.forEach(i => { const dl = dayLabel(i.date); if (dl !== last) { h += `<div class="day-h">${esc(dl)}</div>`; last = dl; } h += render(i); });
+  return h;
+}
+/* Résultats de recherche : intertitre par mois, date complète sur chaque mail */
+function byMonth(items, render) {
+  let last = '', h = '';
+  items.forEach(i => { const d = new Date(i.date), ml = d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }); if (ml !== last) { h += `<div class="day-h">${esc(ml.charAt(0).toUpperCase() + ml.slice(1))}</div>`; last = ml; } h += render(i); });
   return h;
 }
 function fmtDate(ms, long) {

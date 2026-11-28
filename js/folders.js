@@ -1,16 +1,21 @@
 'use strict';
 /* ---------- Classement (libellés Gmail) ---------- */
 async function labelSheet(threadId, current) {
+  current = current instanceof Set ? current : new Set(current || []);
   let labels;
-  try { labels = await getLabels(true); } catch (e) { return; }
-  const rows = [{ id: 'INBOX', name: 'Boîte de réception', c: 'var(--gmail)' }].concat(labels.map(l => ({ id: l.id, name: l.name, c: labelColor(l) })));
+  try { labels = await getLabels(true); } catch (e) { toast(e.message); return; }
+  labels = labels.filter(l => l.name !== BLOCK_LABEL);
+  // Tes dossiers tels que tu les as rangés : « Maison › Chaudière », sous-dossiers en retrait sous leur parent
+  const rows = [{ id: 'INBOX', name: 'Boîte de réception', c: 'var(--gmail)', d: 0, leaf: 'Boîte de réception' }].concat(labels.map(l => { const p = l.name.split('/'); return { id: l.id, name: l.name, c: labelColor(l), d: p.length - 1, leaf: p[p.length - 1], par: p.slice(0, -1).join(' › ') }; }));
   openSheet(`<span class="grip"></span><h2>Classer dans…</h2>
     <div id="lab-sug"></div>
-    <p style="margin:0 0 6px;color:var(--muted);font-size:.8rem">Ce sont tes libellés Gmail : le classement apparaît aussi dans Gmail.</p>
-    ${rows.map(r => `<label class="check"><input type="checkbox" value="${esc(r.id)}" ${current.has(r.id) ? 'checked' : ''}><span class="sw" style="--c:${esc(r.c)}"></span>${esc(r.name)}</label>`).join('')}
+    ${rows.length > 10 ? '<label class="f" style="margin:0 0 6px"><span class="sr">Chercher un dossier</span><input id="lab-find" type="search" placeholder="Chercher un dossier (ex. chaudière)" autocomplete="off"></label>' : ''}
+    <div id="lab-rows">${rows.map(r => `<label class="check" data-n="${esc(nrm(r.name))}" style="padding-left:${r.d * 22}px"><input type="checkbox" value="${esc(r.id)}" ${current.has(r.id) ? 'checked' : ''}><span class="sw" style="--c:${esc(r.c)}"></span><span>${r.d ? `<small style="display:block;color:var(--muted);font-size:.75rem">${esc(r.par)} ›</small>` : ''}${esc(r.leaf)}</span></label>`).join('')}</div>
+    <p style="margin:6px 0;color:var(--muted);font-size:.8rem">Ce sont tes dossiers Gmail : le classement apparaît aussi dans Gmail. Pour un sous-dossier, écris par exemple « Maison/Chaudière ».</p>
     <form id="newlab" style="display:flex;gap:8px;margin-top:6px"><label class="f" style="flex:1"><span class="sr">Nouveau libellé</span><input id="newlab-name" placeholder="Nouveau libellé"></label><button class="btn" type="submit">Créer</button></form>
     ${state.thread && state.thread.id === threadId ? `<label class="switch" style="margin-top:6px">Toujours ranger les mails de cet expéditeur dans le dossier coché<input type="checkbox" id="lab-rule"></label>` : ''}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><button class="btn" data-close>Annuler</button><button class="btn primary" id="lab-ok">Valider</button></div>`);
+  const lf = $('#lab-find'); if (lf) lf.oninput = () => { const v = nrm(lf.value.trim()); $$('#lab-rows .check').forEach(r => { r.hidden = v && !r.dataset.n.includes(v); }); };
   const ctx = state.thread && state.thread.id === threadId ? readCtx() : null;
   if (ctx) suggestFolder(ctx, labels.map(l => ({ key: l.id, name: l.name })), (key, why) => {
     const box = $('#lab-sug'); if (!box) return;

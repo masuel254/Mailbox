@@ -8,12 +8,12 @@ if (auth.token() || relayGmailOn()) {
   updateBadge();
 }
 /* Retour dans l'appli après l'avoir quittée : on repart de la réception (sauf mail en cours d'écriture, sauf retour éclair) */
-let hiddenAt = 0;
+let hiddenAt = 0, hiddenAtPrev = 0;
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') hiddenAt = Date.now(); });
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
-  const away = hiddenAt && Date.now() - hiddenAt > 20000; hiddenAt = 0;
-  if (away && !/^#\/(compose|reply|fwd|list\/INBOX$)/.test(location.hash || '') && !document.querySelector('#sheet.open')) {
+  const away = hiddenAt && Date.now() - hiddenAt > 20000; hiddenAtPrev = hiddenAt; hiddenAt = 0;
+  if (away && !/^#\/(compose|reply|fwd|search\/|smart\/|list\/INBOX$)/.test(location.hash || '') && !(/^#\/(thread|free)\//.test(location.hash || '') && /^#\/(search|smart)\//.test(state.lastList || '') && Date.now() - hiddenAtPrev < 600000) && !document.querySelector('#sheet.open')) {
     const home = (settings.home === 'today' ? '#/today' : '#/list/INBOX');
     if (location.hash !== home) { history.replaceState(null, '', home); window.dispatchEvent(new HashChangeEvent('hashchange')); }
     window.scrollTo(0, 0);
@@ -118,7 +118,7 @@ if (window.visualViewport) {
     bars().forEach(el => {
       el.style.transform = '';
       const d = Math.round(bottom - el.getBoundingClientRect().bottom);
-      if (d > 2 && d < 800) { el.style.transform = `translateY(${d}px)`; try { LS.set('pinDbg', { at: Date.now(), d, ih: innerHeight, vh: Math.round(vv.height), ot: Math.round(vv.offsetTop), el: el.id || el.className }); } catch (e) {} }
+      if ((d > 2 && d < 800) || (d < -2 && d > -800)) { el.style.transform = `translateY(${d}px)`; try { LS.set('pinDbg', { at: Date.now(), d, ih: innerHeight, vh: Math.round(vv.height), ot: Math.round(vv.offsetTop), el: el.id || el.className }); } catch (e) {} }
     });
   };
   const repaint = () => { bars().forEach(el => { el.style.willChange = 'transform'; void el.offsetHeight; requestAnimationFrame(() => { el.style.willChange = ''; }); }); pin(); };
@@ -126,7 +126,9 @@ if (window.visualViewport) {
   window.addEventListener('scroll', () => soon(120), { passive: true });
   window.addEventListener('resize', () => soon(60));
   if (vv) { vv.addEventListener('resize', () => soon(60)); vv.addEventListener('scroll', () => soon(120)); }
-  document.addEventListener('focusout', () => { setTimeout(() => { window.scrollTo(window.scrollX, window.scrollY); repaint(); }, 250); });
+  // Après le clavier : si iOS a zoomé sur le champ, on revient à l'échelle normale (sinon les barres restent masquées)
+  const unzoom = () => { if (!vv || vv.scale <= 1.02) return; const m = document.querySelector('meta[name=viewport]'); if (!m) return; const c = m.content; m.content = c + ', maximum-scale=1'; setTimeout(() => { m.content = c; document.body.classList.toggle('zoomed', vv.scale > 1.02); repaint(); }, 60); };
+  document.addEventListener('focusout', () => { setTimeout(() => { if (typing()) return; unzoom(); window.scrollTo(window.scrollX, window.scrollY); repaint(); }, 250); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setTimeout(repaint, 300); });
   window.addEventListener('pageshow', () => setTimeout(repaint, 300));
   window.addEventListener('hashchange', () => setTimeout(repaint, 350));

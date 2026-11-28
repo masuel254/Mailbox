@@ -42,7 +42,6 @@ async function renderList(key, q) {
     ${isSearch && state.aiNote && state.aiNote.q === q ? `<div class="ai-note"><b>✦ ${esc(state.aiNote.resume || 'Recherche de l’assistant')}</b><span>« ${esc(state.aiNote.ask)} » → <code>${esc(q)}</code></span><span class="ai-links"><a href="#/smart/${encodeURIComponent(state.aiNote.ask)}">✦ Pas trouvé ? Recherche par le sens</a><a href="#/search/${encodeURIComponent(state.aiNote.ask)}" id="ai-raw">Mots exacts</a></span></div>` : ''}
     ${isFolderView(key) || key === 'TRASH' ? `<div class="banner"><span style="display:flex;flex-direction:column;gap:2px"><span>${key === 'TRASH' ? 'Corbeille' + (freeOn() ? ' Gmail + Free' : '') : title === BLOCK_LABEL ? 'Expéditeurs bloqués et spam' : 'Dossier « ' + esc(title) + ' »'}</span><b id="lab-size" style="color:var(--accent)">Calcul de la taille…</b></span><button class="btn danger" id="btn-empty">${ICON.trash}${key === 'TRASH' ? 'Vider' : 'Tout supprimer'}</button></div>` : ''}
     <div id="subdirs"></div>
-    ${isSearch && !contactQ ? '<div id="best"></div>' : ''}
     <div id="list"><div class="loading">Chargement…</div></div>`;
   // Sous-dossiers du dossier ouvert : un dossier « thème » ne contient souvent rien lui-même, ses mails sont dans ses sous-dossiers
   let kids = [];
@@ -56,11 +55,17 @@ async function renderList(key, q) {
     }
     if (kids.length) $('#subdirs').innerHTML = `<h2 class="sec">Sous-dossiers · ${kids.length}</h2><div class="card fold">${kids.sort((a, c) => a.full.localeCompare(c.full, 'fr')).map(x => `<a class="frow" href="${x.href}">${FOLD_ICON}<span class="nm">${esc(x.full.split(x.delim || '/').pop())}</span>${x.n ? `<span class="fnb">${x.n}</span>` : ''}<span class="chev-r" aria-hidden="true"></span></a>`).join('')}</div>`;
   }
-  $('#btn-search').onclick = () => { const s = $('#searchbar'); s.hidden = !s.hidden; if (!s.hidden) $('#q').focus(); };
+  // Loupe : la dernière recherche est reprise (champ pré-rempli, résultats gardés en mémoire)
+  $('#btn-search').onclick = () => {
+    const s = $('#searchbar'); s.hidden = !s.hidden; if (s.hidden) return;
+    const ls = LS.get('lastSearch', null);
+    if (ls && ls.q && !isSearch && Date.now() - ls.at < 86400000) { location.hash = '#/search/' + encodeURIComponent(ls.q); return; }
+    $('#q').focus();
+  };
   $('#searchbar').onsubmit = e => { e.preventDefault(); const val = $('#q').value.trim(); $('#q').blur(); if (val) runSearch(val); };
   const brf = $('#btn-refresh'); if (brf) brf.onclick = () => loadList(key, q, cacheKey, plain, 'fresh');
   const hg = $('#hist-go'); if (hg) hg.onclick = () => contactHistory(contactQ, cacheKey, hg);
-  if (isSearch && !contactQ && q) bestMatches(q).catch(() => { const b = $('#best'); if (b) b.innerHTML = ''; });
+  if (isSearch && q) LS.set('lastSearch', { q, at: Date.now() });
   $('#btn-select').onclick = () => state.sel ? exitSelect() : enterSelect();
   state.listCtx = { key, q, cacheKey, plain };
   // Vue « Suivis » ouverte par le drapeau : toucher Tous / Gmail / Free ramène à la réception (avec ce compte)
@@ -252,7 +257,7 @@ function itemHTML(it, cls, sentView) {
   const who = sentView && it.to ? 'À : ' + it.to : it.from;
   const curKey = keyOf(state.current);
   const blocked = it.folder === BLOCK_LABEL || it.labels.some(id => (labelById(id) || {}).name === BLOCK_LABEL);
-  const chips = (it.spam ? '<span class="chip blocked">Spam</span>' : blocked ? '<span class="chip blocked">Bloqué</span>' : '') + it.labels.map(id => { const l = labelById(id); return l && l.name !== BLOCK_LABEL && id !== curKey ? `<span class="chip lab" style="--c:${esc(labelColor(l))}">${esc(l.name)}</span>` : ''; }).join('');
+  const chips = (/^(SEARCH$|S:)/.test(curKey) ? (sentView ? '<span class="chip dir-out">↗ Envoyé</span>' : '<span class="chip dir-in">↙ Reçu</span>') : '') + (it.spam ? '<span class="chip blocked">Spam</span>' : blocked ? '<span class="chip blocked">Bloqué</span>' : '') + it.labels.map(id => { const l = labelById(id); return l && l.name !== BLOCK_LABEL && id !== curKey ? `<span class="chip lab" style="--c:${esc(labelColor(l))}">${esc(l.name)}</span>` : ''; }).join('');
   const sel = state.sel && state.sel.has(it.id) ? ' sel' : '';
   const href = it.acc === 'free' ? '#/free/' + encodeURIComponent(it.folder) + '/' + it.uid : '#/thread/' + encodeURIComponent(it.id);
   const sizeChip = state.showSize && it.size ? `<span class="chip size">${it.size >= 1048576 ? (it.size / 1048576).toFixed(1).replace('.', ',') + ' Mo' : Math.max(1, Math.round(it.size / 1024)) + ' Ko'}</span>` : '';
@@ -310,9 +315,11 @@ function drawList(data, plain) {
   let h = '';
   const inboxView = ['INBOX', 'UNREAD'].includes(keyOf(state.current)) || isFolderView(keyOf(state.current));
   // Recherche : résultats du plus récent au plus ancien, lus ou non (sinon un vieux non-lu passe devant le mail cherché)
-  if (keyOf(state.current) === 'SEARCH') h += byDay(data.items, i => itemHTML(i, i.unread ? 'u' : (plain ? 'plain' : '')));
+  const srch = /^(SEARCH$|S:)/.test(keyOf(state.current));
+  // Recherche : du mois le plus récent au plus ancien, lus ou non, quel que soit le dossier
+  if (srch) { state.dayMode = false; h += byMonth(data.items.slice().sort((a, b) => b.date - a.date), i => itemHTML(i, i.unread ? 'u' : (plain ? 'plain' : ''), i.sentByMe || isMe(i.fromEmail || '') || (i.acc === 'free' && /sent|envoy/i.test(i.folder || '')))); }
   else if (unread.length) h += `<h2 class="sec unread">Non lus · ${unread.length}${inboxView ? '<button class="sec-btn" id="btn-readall" type="button">Tout marquer lu</button>' : ''}</h2>` + byDay(unread, i => itemHTML(i, 'u'));
-  if (read.length && keyOf(state.current) !== 'SEARCH') h += (unread.length ? '<h2 class="sec">Déjà lus</h2>' : '') + byDay(read, i => itemHTML(i, plain ? 'plain' : '', keyOf(state.current) === 'SENT'));
+  if (read.length && !srch) h += (unread.length ? '<h2 class="sec">Déjà lus</h2>' : '') + byDay(read, i => itemHTML(i, plain ? 'plain' : '', keyOf(state.current) === 'SENT'));
   if (data.next || data.freeMore) h += '<button class="more" id="more">Afficher plus</button>';
   l.innerHTML = h;
   const ra = $('#btn-readall'); if (ra) ra.onclick = e => { e.stopPropagation(); readAll(ra); };

@@ -726,3 +726,6 @@ body{overflow-x:clip}
 .td-swipe .td-w{position:relative;z-index:1;background:var(--card);border-top:0;transition:transform .2s}
 .td-del{position:absolute;top:0;right:0;bottom:0;width:96px;border:0;background:#8a8f98;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-weight:700;cursor:pointer}
 .td-del small{font-size:.75rem}
+/* iPhone : un champ en dessous de 16 px fait zoomer la page au clavier, et les barres du bas disparaissent */
+input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{font-size:max(16px,1rem)!important}
+.chip.dir-out{color:var(--accent);border-color:var(--accent)}.chip.dir-in{color:var(--muted)}

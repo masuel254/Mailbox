@@ -154,7 +154,7 @@ async function runSearch(val) {
       // garde-fous : pas de limite de date ni de recherche limitée à l'objet si la demande n'en parle pas
       if (!/\b(jour|semaine|mois|an|ans|année|hier|récent|dernier|derniers|depuis|avant|après|20\d\d|janv|févr|mars|avril|mai|juin|juil|août|sept|oct|nov|déc)/i.test(val)) r.q = r.q.replace(/\b(newer_than|older_than|after|before):\S+/gi, ' ');
       if (!/\b(objet|sujet|intitul)/i.test(val)) r.q = r.q.replace(/\bsubject:/gi, '');
-      r.q = r.q.replace(/\s+/g, ' ').trim() || val;
+      r.q = r.q.replace(/(^|\s)in:(inbox|anywhere)\b/gi, ' ').replace(/\s+/g, ' ').trim() || val;
       state.aiNote = { ask: val, q: r.q, resume: r.resume }; location.hash = '#/search/' + encodeURIComponent(r.q); return; }
     catch (er) { toast('Assistant : ' + er.message + ' · recherche simple'); }
   }
