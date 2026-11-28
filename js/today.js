@@ -35,10 +35,17 @@ async function todayWaiting(force) {
     ts.filter(Boolean).forEach(t => { const ms = t.messages || [], last = ms[ms.length - 1] || {}; const tos = splitAddrs(hdr(last, 'To')).map(parseAddr).filter(x => x.email && !isMe(x.email)); if ((last.labelIds || []).includes('SENT') && +last.internalDate < now - 3 * day && tos.length) items.push({ id: t.id, acc: 'gmail', subject: hdr(ms[0], 'Subject') || '(sans objet)', to: tos[0].name || tos[0].email, toEmail: tos[0].email.toLowerCase(), date: +last.internalDate }); });
   })().catch(() => {}));
   if (freeOn()) jobs.push(rapi('/free/waiting').then(r => (r.theirs || []).forEach(x => { const it = freeItem(x); items.push({ id: it.id, acc: 'free', folder: it.folder, uid: it.uid, subject: it.subject, to: it.to, toEmail: it.toEmail, date: it.date }); })).catch(() => {}));
+  let fol = [];
+  if (relayOn()) jobs.push(loadFollows(force).then(r => { fol = r; }).catch(() => {}));
   await Promise.all(jobs);
   items.sort((a, b) => a.date - b.date);
-  LS.set('todayWait', { at: Date.now(), items: items.slice(0, 8) });
-  return items.slice(0, 8);
+  // mails marqués « J'attends une réponse » : en tête, même envoyés aujourd'hui ; ils remplacent la détection automatique du même mail
+  const fItems = fol.map(f => ({ id: 'fw:' + f.id, fid: f.id, acc: f.acc, folder: f.folder, uid: f.uid, threadId: f.threadId, subject: f.subject, to: f.to, toEmail: f.toEmail, date: f.sentAt, due: f.due, done: f.done }));
+  const key = x => (x.toEmail || '').toLowerCase() + '|' + String(x.subject || '').replace(/^((re|tr|fwd?)\s*:\s*)+/i, '').trim().toLowerCase();
+  const fk = new Set(fItems.map(key));
+  const all = fItems.concat(items.filter(x => !fk.has(key(x))).slice(0, 8));
+  LS.set('todayWait', { at: Date.now(), items: all });
+  return all;
 }
 let todayT = null;
 function onIndexChange() { if ((location.hash || '').startsWith('#/today')) { clearTimeout(todayT); todayT = setTimeout(() => { if ((location.hash || '').startsWith('#/today')) renderToday(false, true); }, 1200); } }
@@ -79,7 +86,7 @@ async function renderToday(force, quiet) {
   // une ligne ouverte (bouton Retirer visible) : on ne redessine pas la liste par-dessus (actualisations automatiques)
   const keepOpen = !!document.querySelector('#td-wait .td-w[data-open]');
   if (!keepOpen) $('#td-wait').innerHTML = wait.length ? `<h2 class="sec">En attente de réponse · ${wait.length}</h2><div class="card td-card">${wait.map((w, i) => { const d = Math.floor((Date.now() - w.date) / 864e5);
-    return `<div class="td-swipe"><button type="button" class="td-del" data-hide="${esc(w.id)}"><span style="font-size:1.1rem">✕</span><small>Retirer</small></button><div class="td-w"><a href="${w.acc === 'free' ? '#/free/' + encodeURIComponent(w.folder) + '/' + w.uid : '#/thread/' + encodeURIComponent(w.id)}"><b>${esc(w.to || w.toEmail)} · ${esc(w.subject)}</b><small>Envoyé il y a ${d} jour${d > 1 ? 's' : ''}</small></a><button class="btn" data-rel="${i}">Relancer</button></div></div>`; }).join('')}</div>` : '';
+    return `<div class="td-swipe"><button type="button" class="td-del" data-hide="${esc(w.id)}"><span style="font-size:1.1rem">✕</span><small>Retirer</small></button><div class="td-w"><a href="${w.acc === 'free' ? '#/free/' + encodeURIComponent(w.folder) + '/' + w.uid : '#/thread/' + encodeURIComponent(w.threadId || w.id)}"><b>${w.fid ? '⏳ ' : ''}${esc(w.to || w.toEmail)} · ${esc(w.subject)}</b><small>${d < 1 ? 'Envoyé aujourd’hui' : 'Envoyé il y a ' + d + ' jour' + (d > 1 ? 's' : '')}${w.fid ? (w.done ? ' · relance faite, toujours rien' : ' · relance ' + esc(new Date(w.due).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }))) : ''}</small></a><button class="btn" data-rel="${i}">Relancer</button></div></div>`; }).join('')}</div>` : '';
   // glisser à gauche : « Retirer » (n'est plus suivi ici ; le mail n'est pas supprimé)
   if (!keepOpen) $$('#td-wait .td-w').forEach(row => {
     let x0 = 0, y0 = 0, dx = 0, on = null;
@@ -91,7 +98,14 @@ async function renderToday(force, quiet) {
     row.addEventListener('click', e => { if (Date.now() - (+row.dataset.sw || 0) < 500) { e.preventDefault(); e.stopPropagation(); return; } if (row.dataset.open) { e.preventDefault(); e.stopPropagation(); row.style.transform = ''; delete row.dataset.open; } }, true);
   });
   if (!keepOpen) $$('[data-hide]').forEach(b => b.onclick = () => {
-    const id = b.dataset.hide, l = LS.get('waitHide', []); l.push(id); LS.set('waitHide', l.slice(-200));
+    const id = b.dataset.hide;
+    // mail marqué « J'attends une réponse » : on arrête le suivi sur le relais (annulable)
+    if (id.startsWith('fw:')) { const fid = id.slice(3), w0 = wait.find(x => x.id === id);
+      rapi('/follow/cancel', { method: 'POST', body: { id: fid } }).then(() => loadFollows(true)).catch(e => toast(e.message));
+      b.closest('.td-swipe').remove(); LS.del('todayWait'); const h = $('#td-wait .sec'); const n = $$('#td-wait .td-swipe').length; if (h) h.textContent = 'En attente de réponse · ' + n; if (!n) $('#td-wait').innerHTML = '';
+      undoToast('Ne plus attendre', () => rapi('/follow', { method: 'POST', body: { acc: w0.acc, threadId: w0.threadId, folder: w0.folder, uid: w0.uid, to: w0.to, toEmail: w0.toEmail, subject: w0.subject, sentAt: w0.date, due: w0.due, days: Math.max(1, Math.round((w0.due - w0.date) / 864e5)), manual: true } }).then(() => { LS.del('todayWait'); return loadFollows(true); }).then(() => renderToday(false, true)));
+      return; }
+    const l = LS.get('waitHide', []); l.push(id); LS.set('waitHide', l.slice(-200));
     b.closest('.td-swipe').remove(); const h = $('#td-wait .sec'); const n = $$('#td-wait .td-swipe').length; if (h) h.textContent = 'En attente de réponse · ' + n; if (!n) $('#td-wait').innerHTML = '';
     undoToast('Retiré de « En attente »', () => { LS.set('waitHide', LS.get('waitHide', []).filter(x => x !== id)); renderToday(false, true); });
   });

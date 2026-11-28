@@ -52,6 +52,7 @@ async function renderThread(id) {
     patchCached(id, i => Object.assign({}, i, { unread: false }));
   }
   const lastM = msgs[msgs.length - 1] || {};
+  const mineLast = (lastM.labelIds || []).includes('SENT') || isMe(parseAddr(hdr(lastM, 'From')).email);
   const unsubH = hdr(lastM, 'List-Unsubscribe'), unsubP = hdr(lastM, 'List-Unsubscribe-Post');
   const chips = [...labels].map(l => l === 'INBOX' ? '<span class="chip">Réception</span>' : (labelById(l) ? `<span class="chip lab" style="--c:${esc(labelColor(labelById(l)))}">${esc(labelById(l).name)}</span>` : '')).join('');
   v.innerHTML = `
@@ -66,7 +67,7 @@ async function renderThread(id) {
     <div class="toolbar">
       <button id="t-trash">${ICON.trash}Supprimer</button>
       <button id="t-unread">${ICON.unread}Non lu</button>
-      <button id="t-block">${ICON.block}Bloquer</button>
+      ${mineLast ? `<button id="t-wait" class="${waitOf({ threadId: id.split('.')[0] }) ? 'on' : ''}">${ICON.clock}${waitOf({ threadId: id.split('.')[0] }) ? 'Attendue' : 'J’attends'}</button>` : `<button id="t-block">${ICON.block}Bloquer</button>`}
       <button id="t-label">${ICON.tag}Classer</button>
       <button id="t-more" aria-expanded="false" aria-controls="tb-more">${ICON.plus}Plus</button>
     </div>
@@ -111,7 +112,8 @@ async function renderThread(id) {
   };
   $('#t-label').onclick = () => labelSheet(id, labels);
   bindReadTools();
-  $('#t-block').onclick = () => { const it = Object.assign({ id }, summarize(t)); goBack(); quickBlock(it); };
+  const gb = $('#t-block'); if (gb) gb.onclick = () => { const it = Object.assign({ id }, summarize(t)); goBack(); quickBlock(it); };
+  const gw = $('#t-wait'); if (gw) gw.onclick = () => { const to = splitAddrs(hdr(lastM, 'To')).map(parseAddr).find(a => a.email && !isMe(a.email)) || {}; waitSheet({ acc: 'gmail', threadId: id.split('.')[0], to: to.name || to.email, toEmail: to.email, subject, sentAt: +lastM.internalDate }, gw); };
   state.unsub = unsubH ? { h: unsubH, post: unsubP, acc: 'gmail' } : null;
   const un = $('#t-unsub'); if (un) un.onclick = () => unsubscribe(unsubH, unsubP, 'gmail', (hdr(lastM, 'From').match(/^\s*"?([^"<]*?)"?\s*</) || [])[1] || hdr(lastM, 'From'));
 }
@@ -138,7 +140,7 @@ async function renderFree(folder, uid) {
     <div class="toolbar">
       <button id="t-trash">${ICON.trash}Supprimer</button>
       <button id="t-unread">${ICON.unread}Non lu</button>
-      <button id="t-block">${ICON.block}Bloquer</button>
+      ${isMe(m.from.email) || /^(sent|envoy|[ée]l[ée]ments envoy)/i.test(folder.split(/[/.]/).pop()) ? `<button id="t-wait" class="${waitOf({ uid, folder, messageId: m.messageId }) ? 'on' : ''}">${ICON.clock}${waitOf({ uid, folder, messageId: m.messageId }) ? 'Attendue' : 'J’attends'}</button>` : `<button id="t-block">${ICON.block}Bloquer</button>`}
       <button id="t-fmove">${ICON.tag}Classer</button>
       <button id="t-more" aria-expanded="false" aria-controls="tb-more">${ICON.plus}Plus</button>
     </div>
@@ -167,7 +169,8 @@ async function renderFree(folder, uid) {
   $('#t-archive').onclick = () => move('ARCHIVE', 'Archivé');
   $('#t-trash').onclick = () => move('TRASH', 'Placé dans la corbeille');
   $('#t-unread').onclick = async () => { setLocal([id], { unread: true }); patchCached(id, i => Object.assign({}, i, { unread: true })); goBack(); toast('Marqué non lu'); try { await rapi('/free/flags', { method: 'POST', body: { folder, uids: [uid], seen: false } }); ixTell([id], 'unread'); badgeNow(0); } catch (e) { localPatch.delete(id); toast(e.message); } };
-  $('#t-block').onclick = () => { goBack(); quickBlock({ id, fromEmail: m.from.email, fromName: m.from.name }); };
+  const fb = $('#t-block'); if (fb) fb.onclick = () => { goBack(); quickBlock({ id, fromEmail: m.from.email, fromName: m.from.name }); };
+  const fw = $('#t-wait'); if (fw) fw.onclick = () => { const t = splitAddrs(m.to || '').map(parseAddr).find(a => a.email && !isMe(a.email)) || {}; waitSheet({ acc: 'free', folder, uid, messageId: m.messageId, to: t.name || t.email, toEmail: t.email, subject: m.subject, sentAt: m.date }, fw); };
   $('#t-fmove').onclick = () => freeMoveSheet(id, folder, uid);
   $('#t-flag').onclick = async () => {
     const v = !m.flagged;
@@ -501,4 +504,39 @@ async function pdfViewer(blob, name) {
     }
     if (doc.numPages > 60) body.insertAdjacentHTML('beforeend', '<p class="fhint" style="text-align:center">Les 60 premières pages sont affichées. « Partager » pour le document complet.</p>');
   } catch (e) { body.innerHTML = `<div class="empty">Impossible d’afficher ce PDF ici (${esc(e.message)}). Touche « Partager » pour l’ouvrir dans une autre app.</div>`; }
+}
+
+/* « J'attends une réponse » : le mail envoyé reste dans « En attente de réponse » (Aujourd'hui), avec une notification
+   de relance au bout du délai choisi ; il en sort tout seul dès que la réponse arrive (vérifié par le relais) */
+function waitOf(k) {
+  return (LS.get('follows', { items: [] }).items || []).find(f => (k.threadId && f.threadId === k.threadId) || (k.messageId && f.messageId === k.messageId) || (k.uid && f.uid === k.uid && f.folder === k.folder)) || null;
+}
+async function loadFollows(force) {
+  const c = LS.get('follows', null);
+  if (c && !force && Date.now() - c.at < 120000) return c.items;
+  if (!relayOn()) return [];
+  const r = await rapi('/follows'); LS.set('follows', { at: Date.now(), items: r.items || [] }); return r.items || [];
+}
+function waitSheet(info, btn) {
+  if (!relayOn()) { toast('Le suivi passe par ton relais : configure-le dans Réglages'); return; }
+  const cur = waitOf(info);
+  const day = d => new Date(d).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+  openSheet(`<span class="grip"></span><h2>⏳ J’attends une réponse</h2>
+    <p class="fhint" style="margin:0">${esc(info.to || info.toEmail || '')} · ${esc(info.subject || '')}</p>
+    ${cur ? `<p style="margin:4px 0">${cur.done ? 'Relance envoyée, toujours sans réponse.' : 'Relance prévue ' + esc(day(cur.due)) + '.'} Le mail sort de la liste dès que la réponse arrive.</p>` : '<p class="fhint" style="margin:0">Le mail va tout de suite dans « En attente de réponse ». Je te préviens s’il n’y a pas de réponse au bout de :</p>'}
+    <div class="wait-opts">${[[2, '2 jours'], [3, '3 jours'], [5, '5 jours'], [7, '1 semaine'], [14, '2 semaines']].map(([d, l]) => `<button class="btn" data-wd="${d}">${cur ? 'Relancer dans ' : ''}${l}</button>`).join('')}</div>
+    <div style="display:grid;grid-template-columns:${cur ? '1fr 1fr' : '1fr'};gap:8px">${cur ? '<button class="btn danger" id="w-stop">Ne plus attendre</button>' : ''}<button class="btn" data-close>Fermer</button></div>`);
+  const mark = on => { if (!btn) return; btn.classList.toggle('on', on); btn.innerHTML = ICON.clock + (on ? 'Attendue' : 'J’attends'); };
+  $$('[data-wd]').forEach(b => b.onclick = async () => {
+    const d = +b.dataset.wd; b.disabled = true;
+    try {
+      await rapi('/follow', { method: 'POST', body: Object.assign({}, info, { days: d, due: Date.now() + d * 864e5, manual: true }) });
+      await loadFollows(true); LS.del('todayWait'); closeSheet(); mark(true);
+      toast('En attente de réponse · relance ' + day(Date.now() + d * 864e5));
+    } catch (e) { b.disabled = false; toast(e.message); }
+  });
+  const st = $('#w-stop'); if (st) st.onclick = async () => {
+    try { await rapi('/follow/cancel', { method: 'POST', body: { id: cur.id } }); await loadFollows(true); LS.del('todayWait'); closeSheet(); mark(false); toast('Ne plus attendre : retiré'); }
+    catch (e) { toast(e.message); }
+  };
 }

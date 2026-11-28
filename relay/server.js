@@ -948,7 +948,7 @@ async function pollFree() {
     return out;
   });
 }
-const RELAY_V = '4.20.1';
+const RELAY_V = '4.21.0';
 /* ---------- Index de la réception : source unique pour l'appli ----------
    Le relais tient la liste à jour (Gmail + Free) et l'appli la lit en un seul appel ; quand quelque chose change
    (nouveau mail, lu, supprimé, ailleurs ou dans l'appli), le numéro de version change et l'appli est prévenue tout de suite. */
@@ -1200,9 +1200,13 @@ async function gSendRaw(rawB64u, threadId) {
 function addFollow(f) {
   const days = Math.min(Math.max(+f.days || 0, 0), 60);
   if (!days) return null;
-  const it = { id: crypto.randomBytes(6).toString('hex'), acc: f.acc === 'free' ? 'free' : 'gmail', sentAt: +f.sentAt || Date.now(), due: (+f.sentAt || Date.now()) + days * 864e5, days,
-    to: String(f.to || '').slice(0, 300), toEmail: String(f.toEmail || '').toLowerCase().slice(0, 200), subject: String(f.subject || '').slice(0, 200), threadId: f.threadId || null, messageId: f.messageId || null };
-  S.follows = (S.follows || []).concat(it); save();
+  const sentAt = +f.sentAt || Date.now(), due = +f.due > Date.now() ? +f.due : sentAt + days * 864e5;
+  const it = { id: crypto.randomBytes(6).toString('hex'), acc: f.acc === 'free' ? 'free' : 'gmail', sentAt, due, days,
+    to: String(f.to || '').slice(0, 300), toEmail: String(f.toEmail || '').toLowerCase().slice(0, 200), subject: String(f.subject || '').slice(0, 200), threadId: f.threadId || null, messageId: f.messageId || null,
+    folder: f.folder ? String(f.folder).slice(0, 200) : null, uid: +f.uid || null, manual: !!f.manual };
+  // un seul suivi par mail : le nouveau remplace l'ancien
+  const same = x => !x.replied && ((it.threadId && x.threadId === it.threadId) || (it.messageId && x.messageId === it.messageId) || (it.uid && x.uid === it.uid && x.folder === it.folder));
+  S.follows = (S.follows || []).filter(x => !same(x)).concat(it); save();
   return it;
 }
 async function sendScheduled(it) {
@@ -1628,6 +1632,12 @@ async function checkTimers() {
     try { await sendScheduled(it); S.scheduled = S.scheduled.filter(x => x.id !== it.id); save(); }
     catch (e) { it.tries = (it.tries || 0) + 1; log('envoi programmé', e.message); if (it.tries >= 5) { it.failed = e.message; if (S.subs.length) await push({ title: '⚠️ Envoi programmé échoué', body: it.subject + ' : ' + e.message, url: C.appUrl + '#/scheduled', tag: 'mailbox-sched-' + it.id, badge: total() }).catch(() => {}); } save(); }
   }
+  // « J'attends une réponse » : dès que la réponse arrive, le mail sort de la liste (vérifié toutes les 30 min)
+  for (const f of (S.follows || []).filter(x => !x.replied && now - (x.chk || 0) > 30 * 60000)) {
+    f.chk = now;
+    try { if (await hasReply(f)) { f.done = true; f.replied = true; f.checkedAt = now; log('Réponse reçue : ' + f.subject); } } catch (e) { /* on réessaiera */ }
+    save();
+  }
   for (const f of (S.follows || []).filter(x => x.due <= now && !x.done)) {
     let replied = false;
     try { replied = await hasReply(f); } catch (e) { log('rappel sans réponse', e.message); continue; }
@@ -1920,6 +1930,7 @@ const routes = {
   'POST /schedule/cancel': async (q, b) => { S.scheduled = (S.scheduled || []).filter(x => x.id !== b.id); try { fs.unlinkSync(path.join(SCHED_DIR, String(b.id).replace(/[^a-f0-9]/g, ''))); } catch (e) {} save(); return { ok: true }; },
   'POST /schedule/now': async (q, b) => { const it = (S.scheduled || []).find(x => x.id === b.id); if (!it) throw Object.assign(new Error('Introuvable'), { code: 404 }); await sendScheduled(it); S.scheduled = S.scheduled.filter(x => x.id !== it.id); save(); return { ok: true }; },
   'POST /follow': async (q, b) => { const it = addFollow(b); return { ok: true, id: it && it.id }; },
+  'GET /follows': async () => ({ items: (S.follows || []).filter(f => !f.replied).slice().sort((a, b) => a.sentAt - b.sentAt) }),
   'POST /follow/cancel': async (q, b) => { S.follows = (S.follows || []).filter(x => x.id !== b.id); save(); return { ok: true }; },
   // Nettoyage par expéditeur : combien de mails, puis tout à la corbeille (Gmail + Free, récupérable 30 jours)
   'GET /sender/count': async q => senderPurge(String(q.get('email') || ''), true),
